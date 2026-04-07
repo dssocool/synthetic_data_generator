@@ -114,6 +114,11 @@ async Task RunExecutePlan(string planPath)
             totalRows += inserted;
             Console.WriteLine($"  {tablePlan.FullName,-40} {inserted,6} rows  ({tableStopwatch.ElapsedMilliseconds,5} ms)");
         }
+        catch (DataGenerationException ex)
+        {
+            tableStopwatch.Stop();
+            PrintDataGenerationError(tablePlan.FullName, ex);
+        }
         catch (Exception ex)
         {
             tableStopwatch.Stop();
@@ -167,6 +172,11 @@ async Task RunDirect()
             tableStopwatch.Stop();
             totalRows += inserted;
             Console.WriteLine($"  {table.FullName,-40} {inserted,6} rows  ({tableStopwatch.ElapsedMilliseconds,5} ms)");
+        }
+        catch (DataGenerationException ex)
+        {
+            tableStopwatch.Stop();
+            PrintDataGenerationError(table.FullName, ex);
         }
         catch (Exception ex)
         {
@@ -257,6 +267,56 @@ static bool IsTruthy(object? value)
     if (value is System.Text.Json.JsonElement je) return je.ValueKind == System.Text.Json.JsonValueKind.True;
     if (value is string str) return str.Equals("true", StringComparison.OrdinalIgnoreCase);
     return false;
+}
+
+static void PrintDataGenerationError(string tableName, DataGenerationException ex)
+{
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine($"  {tableName,-40} FAILED at row {ex.RowIndex}");
+    Console.ResetColor();
+
+    if (ex.FailedColumn is { } col)
+    {
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"    Likely failed column: [{col.ColumnName}]");
+        Console.WriteLine($"      SQL type:        {FormatSqlType(col)}");
+        Console.WriteLine($"      Generator:       {col.Generator}");
+        Console.WriteLine($"      Generated .NET:  {col.GeneratedValueType ?? "null"}");
+        Console.WriteLine($"      Generated value: {col.GeneratedValuePreview ?? "NULL"}");
+        Console.ResetColor();
+    }
+
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine($"    Error: {ex.InnerException?.Message ?? ex.Message}");
+    Console.ResetColor();
+
+    if (ex.RowSnapshot.Count > 0)
+    {
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine($"    Row data ({ex.RowSnapshot.Count} columns):");
+        foreach (var c in ex.RowSnapshot)
+        {
+            Console.WriteLine($"      [{c.ColumnName,-30}] {c.SqlType,-15} " +
+                              $"generator={c.Generator,-20} " +
+                              $".NET={c.GeneratedValueType ?? "null",-15} " +
+                              $"value={c.GeneratedValuePreview ?? "NULL"}");
+        }
+        Console.ResetColor();
+    }
+}
+
+static string FormatSqlType(ColumnFailureDetail col)
+{
+    var type = col.SqlType;
+    if (col.MaxLength > 0 &&
+        type.Contains("char", StringComparison.OrdinalIgnoreCase) ||
+        type.Contains("binary", StringComparison.OrdinalIgnoreCase))
+        return $"{type}({(col.MaxLength == -1 ? "MAX" : col.MaxLength.ToString())})";
+    if (col.Precision > 0 &&
+        (type.Equals("decimal", StringComparison.OrdinalIgnoreCase) ||
+         type.Equals("numeric", StringComparison.OrdinalIgnoreCase)))
+        return $"{type}({col.Precision},{col.Scale})";
+    return type;
 }
 
 static string MaskConnectionString(string cs)

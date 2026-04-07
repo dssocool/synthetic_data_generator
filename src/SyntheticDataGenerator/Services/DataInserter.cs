@@ -66,13 +66,33 @@ public class DataInserter
         {
             for (var i = 0; i < tablePlan.RowCount; i++)
             {
-                var row = BuildRowFromPlan(firstPassColumns, tablePlan);
+                Dictionary<string, object?> row;
+                try
+                {
+                    row = BuildRowFromPlan(firstPassColumns, tablePlan);
+                }
+                catch (Exception ex)
+                {
+                    throw new DataGenerationException(
+                        tablePlan.FullName, i, null, [], ex);
+                }
 
-                var pkValues = await InsertRowAsync(
-                    connection, transaction, table, firstPassColumnInfos, row);
+                try
+                {
+                    var pkValues = await InsertRowAsync(
+                        connection, transaction, table, firstPassColumnInfos, row);
 
-                if (pkValues != null)
-                    _generatedKeys[tablePlan.FullName].Add(pkValues);
+                    if (pkValues != null)
+                        _generatedKeys[tablePlan.FullName].Add(pkValues);
+                }
+                catch (DataGenerationException) { throw; }
+                catch (Exception ex)
+                {
+                    var snapshot = BuildColumnSnapshotFromPlan(firstPassColumns, row);
+                    var failedCol = DetectFailedColumn(ex, snapshot);
+                    throw new DataGenerationException(
+                        tablePlan.FullName, i, failedCol, snapshot, ex);
+                }
 
                 insertedCount++;
             }
@@ -140,13 +160,33 @@ public class DataInserter
         {
             for (var i = 0; i < rowCount; i++)
             {
-                var row = BuildRow(firstPassColumns, nonSelfRefFks, fkColumnNames, table);
+                Dictionary<string, object?> row;
+                try
+                {
+                    row = BuildRow(firstPassColumns, nonSelfRefFks, fkColumnNames, table);
+                }
+                catch (Exception ex)
+                {
+                    throw new DataGenerationException(
+                        table.FullName, i, null, [], ex);
+                }
 
-                var pkValues = await InsertRowAsync(
-                    connection, transaction, table, firstPassColumns, row);
+                try
+                {
+                    var pkValues = await InsertRowAsync(
+                        connection, transaction, table, firstPassColumns, row);
 
-                if (pkValues != null)
-                    _generatedKeys[table.FullName].Add(pkValues);
+                    if (pkValues != null)
+                        _generatedKeys[table.FullName].Add(pkValues);
+                }
+                catch (DataGenerationException) { throw; }
+                catch (Exception ex)
+                {
+                    var snapshot = BuildColumnSnapshot(firstPassColumns, row);
+                    var failedCol = DetectFailedColumn(ex, snapshot);
+                    throw new DataGenerationException(
+                        table.FullName, i, failedCol, snapshot, ex);
+                }
 
                 insertedCount++;
             }
@@ -321,6 +361,70 @@ public class DataInserter
         }
 
         return resolved;
+    }
+
+    private static List<ColumnFailureDetail> BuildColumnSnapshot(
+        List<ColumnInfo> columns,
+        Dictionary<string, object?> row)
+    {
+        return columns.Select(c =>
+        {
+            row.TryGetValue(c.Name, out var val);
+            return new ColumnFailureDetail
+            {
+                ColumnName = c.Name,
+                SqlType = c.SqlType,
+                MaxLength = c.MaxLength,
+                Precision = c.Precision,
+                Scale = c.Scale,
+                Generator = "(auto)",
+                GeneratedValueType = val is null or DBNull ? null : val.GetType().Name,
+                GeneratedValuePreview = FormatValuePreview(val),
+            };
+        }).ToList();
+    }
+
+    private static List<ColumnFailureDetail> BuildColumnSnapshotFromPlan(
+        List<ColumnPlan> columns,
+        Dictionary<string, object?> row)
+    {
+        return columns.Select(c =>
+        {
+            row.TryGetValue(c.Name, out var val);
+            return new ColumnFailureDetail
+            {
+                ColumnName = c.Name,
+                SqlType = c.SqlType,
+                MaxLength = c.MaxLength,
+                Precision = c.Precision,
+                Scale = c.Scale,
+                Generator = c.Generator,
+                GeneratedValueType = val is null or DBNull ? null : val.GetType().Name,
+                GeneratedValuePreview = FormatValuePreview(val),
+            };
+        }).ToList();
+    }
+
+    private static ColumnFailureDetail? DetectFailedColumn(
+        Exception ex,
+        IReadOnlyList<ColumnFailureDetail> snapshot)
+    {
+        var msg = ex.Message;
+        foreach (var col in snapshot)
+        {
+            if (msg.Contains(col.ColumnName, StringComparison.OrdinalIgnoreCase))
+                return col;
+        }
+        return null;
+    }
+
+    private static string? FormatValuePreview(object? value)
+    {
+        if (value is null or DBNull) return "NULL";
+        if (value is byte[] bytes)
+            return $"byte[{bytes.Length}]";
+        var s = value.ToString() ?? "null";
+        return s.Length > 80 ? s[..80] + "..." : s;
     }
 
     private static TableInfo TablePlanToTableInfo(TablePlan tablePlan)
