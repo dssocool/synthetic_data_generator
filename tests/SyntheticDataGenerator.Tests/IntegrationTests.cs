@@ -721,4 +721,85 @@ public class IntegrationTests
             Assert.Equal(i + 1, (int)rows[i]["Id"]!);
         }
     }
+
+    // ══════════════════════════════════════════════
+    // 21. Composite Foreign Key
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test21_CompositeForeignKey()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCompFKParent (
+                KeyA INT     NOT NULL,
+                KeyB INT     NOT NULL,
+                Label NVARCHAR(50) NOT NULL,
+                PRIMARY KEY (KeyA, KeyB)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCompFKChild (
+                ChildId INT IDENTITY(1,1) PRIMARY KEY,
+                RefA    INT NOT NULL,
+                RefB    INT NOT NULL,
+                Value   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_CompChild_Parent FOREIGN KEY (RefA, RefB)
+                    REFERENCES dbo.TestCompFKParent(KeyA, KeyB)
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestCompFKParent", "TestCompFKChild");
+        Assert.Equal(RowCount, results["dbo.TestCompFKParent"]);
+        Assert.Equal(RowCount, results["dbo.TestCompFKChild"]);
+
+        var orphans = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestCompFKChild c
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.TestCompFKParent p
+                WHERE p.KeyA = c.RefA AND p.KeyB = c.RefB
+            )
+            """))!;
+        Assert.Equal(0, orphans);
+    }
+
+    // ══════════════════════════════════════════════
+    // 22. Self-Referencing Composite Foreign Key
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test22_SelfReferencingCompositeForeignKey()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCompSelfRef (
+                KeyA      INT NOT NULL,
+                KeyB      INT NOT NULL,
+                ParentA   INT NULL,
+                ParentB   INT NULL,
+                Label     NVARCHAR(50) NOT NULL,
+                PRIMARY KEY (KeyA, KeyB),
+                CONSTRAINT FK_CompSelfRef FOREIGN KEY (ParentA, ParentB)
+                    REFERENCES dbo.TestCompSelfRef(KeyA, KeyB)
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestCompSelfRef");
+        Assert.Equal(RowCount, results["dbo.TestCompSelfRef"]);
+
+        var rows = await _fixture.ExecuteQueryAsync(
+            "SELECT KeyA, KeyB, ParentA, ParentB FROM dbo.TestCompSelfRef");
+
+        var nullParents = rows.Count(r => r["ParentA"] is null || r["ParentA"] is DBNull);
+        Assert.True(nullParents > 0, "Expected at least one root row with NULL parent");
+
+        var orphans = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestCompSelfRef c
+            WHERE c.ParentA IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM dbo.TestCompSelfRef p
+                  WHERE p.KeyA = c.ParentA AND p.KeyB = c.ParentB
+              )
+            """))!;
+        Assert.Equal(0, orphans);
+    }
 }

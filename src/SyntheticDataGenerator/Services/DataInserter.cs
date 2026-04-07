@@ -84,6 +84,7 @@ public class DataInserter
                     var args = c.GeneratorArgs;
                     return new ForeignKeyInfo
                     {
+                        FkName = GetArgString(args, "compositeFkGroup"),
                         ParentSchema = tablePlan.Schema,
                         ParentTable = tablePlan.Table,
                         ParentColumn = c.Name,
@@ -173,23 +174,16 @@ public class DataInserter
     {
         var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
+        var resolvedFkValues = ResolveGroupedFkValuesFromPlan(columns);
+
         foreach (var colPlan in columns)
         {
             if (colPlan.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase))
             {
-                var refSchema = GetArgString(colPlan.GeneratorArgs, "referencedSchema");
-                var refTable = GetArgString(colPlan.GeneratorArgs, "referencedTable");
-                var refColumn = GetArgString(colPlan.GeneratorArgs, "referencedColumn");
-                var refFullName = $"{refSchema}.{refTable}";
-
-                if (_generatedKeys.TryGetValue(refFullName, out var parentRows) && parentRows.Count > 0)
+                if (resolvedFkValues.TryGetValue(colPlan.Name, out var fkValue))
                 {
-                    var parentRow = parentRows[_random.Next(parentRows.Count)];
-                    if (parentRow.TryGetValue(refColumn, out var value))
-                    {
-                        row[colPlan.Name] = value;
-                        continue;
-                    }
+                    row[colPlan.Name] = fkValue;
+                    continue;
                 }
 
                 if (colPlan.IsNullable)
@@ -214,6 +208,50 @@ public class DataInserter
         return row;
     }
 
+    private Dictionary<string, object?> ResolveGroupedFkValuesFromPlan(List<ColumnPlan> columns)
+    {
+        var resolved = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+
+        var fkColumns = columns
+            .Where(c => c.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var grouped = fkColumns
+            .GroupBy(c => GetArgString(c.GeneratorArgs, "compositeFkGroup"), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in grouped)
+        {
+            var members = group.ToList();
+            var first = members[0];
+            var refSchema = GetArgString(first.GeneratorArgs, "referencedSchema");
+            var refTable = GetArgString(first.GeneratorArgs, "referencedTable");
+            var refFullName = $"{refSchema}.{refTable}";
+
+            if (_generatedKeys.TryGetValue(refFullName, out var parentRows) && parentRows.Count > 0)
+            {
+                var parentRow = parentRows[_random.Next(parentRows.Count)];
+
+                foreach (var col in members)
+                {
+                    var refColumn = GetArgString(col.GeneratorArgs, "referencedColumn");
+                    if (parentRow.TryGetValue(refColumn, out var value))
+                        resolved[col.Name] = value;
+                }
+            }
+            else
+            {
+                foreach (var col in members)
+                {
+                    resolved[col.Name] = col.IsNullable
+                        ? DBNull.Value
+                        : (_valueGen.GenerateFromPlan(col) ?? DBNull.Value);
+                }
+            }
+        }
+
+        return resolved;
+    }
+
     private Dictionary<string, object?> BuildRow(
         List<ColumnInfo> columns,
         List<ForeignKeyInfo> nonSelfRefFks,
@@ -222,18 +260,14 @@ public class DataInserter
     {
         var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
+        var resolvedFkValues = ResolveGroupedFkValues(table, nonSelfRefFks, columns);
+
         foreach (var col in columns)
         {
-            if (fkColumnNames.Contains(col.Name))
+            if (resolvedFkValues.TryGetValue(col.Name, out var fkValue))
             {
-                var fk = nonSelfRefFks.FirstOrDefault(f =>
-                    f.ParentColumn.Equals(col.Name, StringComparison.OrdinalIgnoreCase));
-
-                if (fk != null)
-                {
-                    row[col.Name] = ResolveFkValue(fk, col);
-                    continue;
-                }
+                row[col.Name] = fkValue;
+                continue;
             }
 
             if (col.IsNullable && _random.NextDouble() < 0.1)
@@ -248,21 +282,45 @@ public class DataInserter
         return row;
     }
 
-    private object ResolveFkValue(ForeignKeyInfo fk, ColumnInfo col)
+    private Dictionary<string, object?> ResolveGroupedFkValues(
+        TableInfo table,
+        List<ForeignKeyInfo> fks,
+        List<ColumnInfo> columns)
     {
-        var refTable = fk.FullReferencedTableName;
+        var resolved = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
-        if (_generatedKeys.TryGetValue(refTable, out var parentRows) && parentRows.Count > 0)
+        var grouped = fks
+            .GroupBy(fk => fk.FkName, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in grouped)
         {
-            var parentRow = parentRows[_random.Next(parentRows.Count)];
-            if (parentRow.TryGetValue(fk.ReferencedColumn, out var value))
-                return value;
+            var pairs = group.ToList();
+            var refFullName = pairs[0].FullReferencedTableName;
+
+            if (_generatedKeys.TryGetValue(refFullName, out var parentRows) && parentRows.Count > 0)
+            {
+                var parentRow = parentRows[_random.Next(parentRows.Count)];
+
+                foreach (var fk in pairs)
+                {
+                    if (parentRow.TryGetValue(fk.ReferencedColumn, out var value))
+                        resolved[fk.ParentColumn] = value;
+                }
+            }
+            else
+            {
+                foreach (var fk in pairs)
+                {
+                    var col = columns.FirstOrDefault(c =>
+                        c.Name.Equals(fk.ParentColumn, StringComparison.OrdinalIgnoreCase));
+                    resolved[fk.ParentColumn] = col is { IsNullable: true }
+                        ? DBNull.Value
+                        : (col != null ? _valueGen.Generate(col) ?? DBNull.Value : DBNull.Value);
+                }
+            }
         }
 
-        if (col.IsNullable)
-            return DBNull.Value;
-
-        return _valueGen.Generate(col) ?? DBNull.Value;
+        return resolved;
     }
 
     private static TableInfo TablePlanToTableInfo(TablePlan tablePlan)
@@ -292,6 +350,7 @@ public class DataInserter
                 .Where(c => c.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase))
                 .Select(c => new ForeignKeyInfo
                 {
+                    FkName = GetArgString(c.GeneratorArgs, "compositeFkGroup"),
                     ParentSchema = tablePlan.Schema,
                     ParentTable = tablePlan.Table,
                     ParentColumn = c.Name,
@@ -421,39 +480,59 @@ public class DataInserter
         var rows = _generatedKeys[table.FullName];
         if (rows.Count < 2) return;
 
-        // Update ~70% of rows with self-references, leave some as NULL roots
         var rowsToUpdate = rows
-            .Skip(1) // keep at least the first row as root
+            .Skip(1)
             .Where(_ => _random.NextDouble() < 0.7)
+            .ToList();
+
+        var groupedFks = selfRefFks
+            .GroupBy(fk => fk.FkName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         foreach (var targetRow in rowsToUpdate)
         {
-            foreach (var fk in selfRefFks)
+            foreach (var group in groupedFks)
             {
-                if (!targetRow.TryGetValue(fk.ReferencedColumn, out var targetPkValue))
+                var pairs = group.ToList();
+                var pkColumns = table.PrimaryKeyColumns;
+
+                if (!pkColumns.All(pk => targetRow.ContainsKey(pk)))
                     continue;
 
-                // Pick a random parent that is not this same row
-                var candidates = rows
-                    .Where(r => r.TryGetValue(fk.ReferencedColumn, out var v)
-                             && !Equals(v, targetPkValue))
-                    .ToList();
+                bool IsSameRow(Dictionary<string, object> r) =>
+                    pkColumns.All(pk =>
+                        r.TryGetValue(pk, out var v) &&
+                        targetRow.TryGetValue(pk, out var tv) &&
+                        Equals(v, tv));
 
+                var candidates = rows.Where(r => !IsSameRow(r)).ToList();
                 if (candidates.Count == 0) continue;
 
                 var parentRow = candidates[_random.Next(candidates.Count)];
-                var parentValue = parentRow[fk.ReferencedColumn];
+
+                var setClauses = pairs.Select((fk, i) => $"[{fk.ParentColumn}] = @ParentVal{i}");
+                var whereClauses = pkColumns.Select((pk, i) => $"[{pk}] = @TargetPk{i}");
 
                 var sql = $"""
                     UPDATE [{table.Schema}].[{table.TableName}]
-                       SET [{fk.ParentColumn}] = @ParentVal
-                     WHERE [{fk.ReferencedColumn}] = @TargetPk
+                       SET {string.Join(", ", setClauses)}
+                     WHERE {string.Join(" AND ", whereClauses)}
                     """;
 
                 await using var cmd = new SqlCommand(sql, connection, transaction);
-                cmd.Parameters.AddWithValue("@ParentVal", parentValue);
-                cmd.Parameters.AddWithValue("@TargetPk", targetPkValue);
+
+                for (var i = 0; i < pairs.Count; i++)
+                {
+                    var refCol = pairs[i].ReferencedColumn;
+                    cmd.Parameters.AddWithValue($"@ParentVal{i}",
+                        parentRow.TryGetValue(refCol, out var pv) ? pv : DBNull.Value);
+                }
+
+                for (var i = 0; i < pkColumns.Count; i++)
+                {
+                    cmd.Parameters.AddWithValue($"@TargetPk{i}", targetRow[pkColumns[i]]);
+                }
+
                 await cmd.ExecuteNonQueryAsync();
             }
         }

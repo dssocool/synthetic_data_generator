@@ -131,7 +131,8 @@ public class PlanGenerator
                         ["referencedSchema"] = fk.ReferencedSchema,
                         ["referencedTable"] = fk.ReferencedTable,
                         ["referencedColumn"] = fk.ReferencedColumn,
-                        ["isSelfReferencing"] = fk.IsSelfReferencing
+                        ["isSelfReferencing"] = fk.IsSelfReferencing,
+                        ["compositeFkGroup"] = fk.FkName
                     };
                 }
                 else

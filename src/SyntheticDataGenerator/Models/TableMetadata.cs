@@ -33,6 +33,21 @@ public class ForeignKeyInfo
     public bool IsSelfReferencing => FullParentTableName == FullReferencedTableName;
 }
 
+public class CompositeForeignKey
+{
+    public string FkName { get; set; } = string.Empty;
+    public string ParentSchema { get; set; } = string.Empty;
+    public string ParentTable { get; set; } = string.Empty;
+    public string ReferencedSchema { get; set; } = string.Empty;
+    public string ReferencedTable { get; set; } = string.Empty;
+    public List<(string ParentColumn, string ReferencedColumn)> ColumnPairs { get; set; } = [];
+
+    public string FullParentTableName => $"{ParentSchema}.{ParentTable}";
+    public string FullReferencedTableName => $"{ReferencedSchema}.{ReferencedTable}";
+    public bool IsSelfReferencing => FullParentTableName == FullReferencedTableName;
+    public bool IsComposite => ColumnPairs.Count > 1;
+}
+
 public class TableInfo
 {
     public string Schema { get; set; } = string.Empty;
@@ -45,4 +60,18 @@ public class TableInfo
 
     public bool HasIdentityPk =>
         Columns.Any(c => c.IsPrimaryKey && c.IsIdentity);
+
+    public List<CompositeForeignKey> GetGroupedForeignKeys() =>
+        ForeignKeys
+            .GroupBy(fk => fk.FkName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new CompositeForeignKey
+            {
+                FkName = g.Key,
+                ParentSchema = g.First().ParentSchema,
+                ParentTable = g.First().ParentTable,
+                ReferencedSchema = g.First().ReferencedSchema,
+                ReferencedTable = g.First().ReferencedTable,
+                ColumnPairs = g.Select(fk => (fk.ParentColumn, fk.ReferencedColumn)).ToList()
+            })
+            .ToList();
 }
