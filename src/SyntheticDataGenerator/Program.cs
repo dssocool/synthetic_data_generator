@@ -289,20 +289,6 @@ static void PrintDataGenerationError(string tableName, DataGenerationException e
     Console.ForegroundColor = ConsoleColor.Red;
     Console.WriteLine($"    Error: {ex.InnerException?.Message ?? ex.Message}");
     Console.ResetColor();
-
-    if (ex.RowSnapshot.Count > 0)
-    {
-        Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine($"    Row data ({ex.RowSnapshot.Count} columns):");
-        foreach (var c in ex.RowSnapshot)
-        {
-            Console.WriteLine($"      [{c.ColumnName,-30}] {c.SqlType,-15} " +
-                              $"generator={c.Generator,-20} " +
-                              $".NET={c.GeneratedValueType ?? "null",-15} " +
-                              $"value={c.GeneratedValuePreview ?? "NULL"}");
-        }
-        Console.ResetColor();
-    }
 }
 
 static string FormatSqlType(ColumnFailureDetail col)

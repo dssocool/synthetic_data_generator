@@ -115,14 +115,14 @@ public class ColumnValueGenerator
         return _faker.Random.AlphaNumeric(8);
     }
 
-    private static readonly HashSet<string> BinaryTypes = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> TypeFirstTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "binary", "varbinary", "image", "timestamp", "rowversion"
+        "binary", "varbinary", "image", "timestamp", "rowversion", "bit"
     };
 
     public object? Generate(ColumnInfo column)
     {
-        if (BinaryTypes.Contains(column.SqlType))
+        if (TypeFirstTypes.Contains(column.SqlType))
             return GenerateByType(column);
 
         var name = column.Name.ToLowerInvariant();

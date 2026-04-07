@@ -17,20 +17,17 @@ public class DataGenerationException : Exception
     public string TableName { get; }
     public int RowIndex { get; }
     public ColumnFailureDetail? FailedColumn { get; }
-    public IReadOnlyList<ColumnFailureDetail> RowSnapshot { get; }
 
     public DataGenerationException(
         string tableName,
         int rowIndex,
         ColumnFailureDetail? failedColumn,
-        IReadOnlyList<ColumnFailureDetail> rowSnapshot,
         Exception innerException)
         : base(BuildMessage(tableName, rowIndex, failedColumn, innerException), innerException)
     {
         TableName = tableName;
         RowIndex = rowIndex;
         FailedColumn = failedColumn;
-        RowSnapshot = rowSnapshot;
     }
 
     private static string BuildMessage(

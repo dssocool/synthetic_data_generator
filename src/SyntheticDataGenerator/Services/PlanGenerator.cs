@@ -177,16 +177,19 @@ public class PlanGenerator
 
     private static void ResolveGenerator(ColumnInfo col, ColumnPlan colPlan)
     {
-        var name = col.Name.ToLowerInvariant();
-
-        foreach (var (match, generator, args) in NameRules)
+        if (!col.SqlType.Equals("bit", StringComparison.OrdinalIgnoreCase))
         {
-            if (match(name))
+            var name = col.Name.ToLowerInvariant();
+
+            foreach (var (match, generator, args) in NameRules)
             {
-                colPlan.Generator = generator;
-                if (args != null)
-                    colPlan.GeneratorArgs = new Dictionary<string, object?>(args);
-                return;
+                if (match(name))
+                {
+                    colPlan.Generator = generator;
+                    if (args != null)
+                        colPlan.GeneratorArgs = new Dictionary<string, object?>(args);
+                    return;
+                }
             }
         }
 

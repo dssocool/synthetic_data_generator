@@ -74,7 +74,7 @@ public class DataInserter
                 catch (Exception ex)
                 {
                     throw new DataGenerationException(
-                        tablePlan.FullName, i, null, [], ex);
+                        tablePlan.FullName, i, null, ex);
                 }
 
                 try
@@ -88,10 +88,9 @@ public class DataInserter
                 catch (DataGenerationException) { throw; }
                 catch (Exception ex)
                 {
-                    var snapshot = BuildColumnSnapshotFromPlan(firstPassColumns, row);
-                    var failedCol = DetectFailedColumn(ex, snapshot);
+                    var failedCol = DetectFailedColumnFromPlan(ex, firstPassColumns, row);
                     throw new DataGenerationException(
-                        tablePlan.FullName, i, failedCol, snapshot, ex);
+                        tablePlan.FullName, i, failedCol, ex);
                 }
 
                 insertedCount++;
@@ -168,7 +167,7 @@ public class DataInserter
                 catch (Exception ex)
                 {
                     throw new DataGenerationException(
-                        table.FullName, i, null, [], ex);
+                        table.FullName, i, null, ex);
                 }
 
                 try
@@ -182,10 +181,9 @@ public class DataInserter
                 catch (DataGenerationException) { throw; }
                 catch (Exception ex)
                 {
-                    var snapshot = BuildColumnSnapshot(firstPassColumns, row);
-                    var failedCol = DetectFailedColumn(ex, snapshot);
+                    var failedCol = DetectFailedColumn(ex, firstPassColumns, row);
                     throw new DataGenerationException(
-                        table.FullName, i, failedCol, snapshot, ex);
+                        table.FullName, i, failedCol, ex);
                 }
 
                 insertedCount++;
@@ -363,12 +361,16 @@ public class DataInserter
         return resolved;
     }
 
-    private static List<ColumnFailureDetail> BuildColumnSnapshot(
+    private static ColumnFailureDetail? DetectFailedColumn(
+        Exception ex,
         List<ColumnInfo> columns,
         Dictionary<string, object?> row)
     {
-        return columns.Select(c =>
+        var msg = ex.Message;
+        foreach (var c in columns)
         {
+            if (!msg.Contains(c.Name, StringComparison.OrdinalIgnoreCase))
+                continue;
             row.TryGetValue(c.Name, out var val);
             return new ColumnFailureDetail
             {
@@ -381,15 +383,20 @@ public class DataInserter
                 GeneratedValueType = val is null or DBNull ? null : val.GetType().Name,
                 GeneratedValuePreview = FormatValuePreview(val),
             };
-        }).ToList();
+        }
+        return null;
     }
 
-    private static List<ColumnFailureDetail> BuildColumnSnapshotFromPlan(
+    private static ColumnFailureDetail? DetectFailedColumnFromPlan(
+        Exception ex,
         List<ColumnPlan> columns,
         Dictionary<string, object?> row)
     {
-        return columns.Select(c =>
+        var msg = ex.Message;
+        foreach (var c in columns)
         {
+            if (!msg.Contains(c.Name, StringComparison.OrdinalIgnoreCase))
+                continue;
             row.TryGetValue(c.Name, out var val);
             return new ColumnFailureDetail
             {
@@ -402,18 +409,6 @@ public class DataInserter
                 GeneratedValueType = val is null or DBNull ? null : val.GetType().Name,
                 GeneratedValuePreview = FormatValuePreview(val),
             };
-        }).ToList();
-    }
-
-    private static ColumnFailureDetail? DetectFailedColumn(
-        Exception ex,
-        IReadOnlyList<ColumnFailureDetail> snapshot)
-    {
-        var msg = ex.Message;
-        foreach (var col in snapshot)
-        {
-            if (msg.Contains(col.ColumnName, StringComparison.OrdinalIgnoreCase))
-                return col;
         }
         return null;
     }
