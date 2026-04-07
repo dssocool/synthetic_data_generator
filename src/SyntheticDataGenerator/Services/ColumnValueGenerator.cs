@@ -42,7 +42,7 @@ public class ColumnValueGenerator
             ["Random.Bytes"]         = (f, a) => f.Random.Bytes(GetInt(a, "count", 16)),
             ["Date.Past"]            = (f, a) => f.Date.Past(GetInt(a, "yearsToGoBack", 5)),
             ["Date.PastDateOnly"]    = (f, a) => DateOnly.FromDateTime(f.Date.Past(GetInt(a, "yearsToGoBack", 5))),
-            ["Date.Timespan"]        = (f, _) => TimeOnly.FromTimeSpan(f.Date.Timespan()),
+            ["Date.Timespan"]        = (f, _) => TimeOnly.FromTimeSpan(ClampTimeSpan(f.Date.Timespan())),
             ["Date.PastOffset"]      = (f, a) => f.Date.PastOffset(GetInt(a, "yearsToGoBack", 5)),
             ["Guid"]                 = (_, _) => Guid.NewGuid(),
             ["null"]                 = (_, _) => null,
@@ -115,8 +115,16 @@ public class ColumnValueGenerator
         return _faker.Random.AlphaNumeric(8);
     }
 
+    private static readonly HashSet<string> BinaryTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "binary", "varbinary", "image", "timestamp", "rowversion"
+    };
+
     public object? Generate(ColumnInfo column)
     {
+        if (BinaryTypes.Contains(column.SqlType))
+            return GenerateByType(column);
+
         var name = column.Name.ToLowerInvariant();
 
         foreach (var (match, generate) in NameRules)
@@ -146,7 +154,7 @@ public class ColumnValueGenerator
             "datetime" or "datetime2" or "smalldatetime"
                                  => _faker.Date.Past(5),
             "date"               => DateOnly.FromDateTime(_faker.Date.Past(5)),
-            "time"               => TimeOnly.FromTimeSpan(_faker.Date.Timespan()),
+            "time"               => TimeOnly.FromTimeSpan(ClampTimeSpan(_faker.Date.Timespan())),
             "datetimeoffset"     => _faker.Date.PastOffset(5),
             "char" or "nchar"    => TruncateString(_faker.Random.AlphaNumeric(Math.Max(1, EffectiveLength(column))),
                                         EffectiveLength(column)),
@@ -235,6 +243,13 @@ public class ColumnValueGenerator
     {
         if (maxLen <= 0) return value;
         return value.Length > maxLen ? value[..maxLen] : value;
+    }
+
+    private static TimeSpan ClampTimeSpan(TimeSpan ts)
+    {
+        var ticks = ts.Ticks % TimeSpan.TicksPerDay;
+        if (ticks < 0) ticks += TimeSpan.TicksPerDay;
+        return new TimeSpan(ticks);
     }
 
     private static bool Like(string input, string fragment) =>

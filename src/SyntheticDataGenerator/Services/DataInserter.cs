@@ -337,15 +337,13 @@ public class DataInserter
             .Select(c => c.Name)
             .ToList();
 
+        sb.Append($"INSERT INTO [{table.Schema}].[{table.TableName}]");
+
         if (columns.Count > 0)
         {
-            sb.Append($"INSERT INTO [{table.Schema}].[{table.TableName}] (");
+            sb.Append(" (");
             sb.Append(string.Join(", ", columns.Select(c => $"[{c.Name}]")));
             sb.Append(')');
-        }
-        else
-        {
-            sb.Append($"INSERT INTO [{table.Schema}].[{table.TableName}] DEFAULT VALUES");
         }
 
         if (hasPkColumns)
@@ -360,6 +358,10 @@ public class DataInserter
             sb.Append(" VALUES (");
             sb.Append(string.Join(", ", columns.Select(c => $"@{c.Name}")));
             sb.Append(')');
+        }
+        else
+        {
+            sb.Append(" DEFAULT VALUES");
         }
 
         await using var cmd = new SqlCommand(sb.ToString(), connection, transaction);
