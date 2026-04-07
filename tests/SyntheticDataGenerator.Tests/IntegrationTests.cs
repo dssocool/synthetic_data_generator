@@ -112,6 +112,91 @@ public class IntegrationTests
     }
 
     // ══════════════════════════════════════════════
+    //  2b. Tight-Precision Decimal/Numeric
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test02b_TightPrecisionDecimal()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestTightDecimal (
+                Id           INT IDENTITY(1,1) PRIMARY KEY,
+                ColDec5_2    DECIMAL(5,2)   NOT NULL,
+                ColDec3_0    DECIMAL(3,0)   NOT NULL,
+                ColDec7_4    NUMERIC(7,4)   NOT NULL,
+                ColDec4_3    DECIMAL(4,3)   NOT NULL,
+                ColSmMoney   SMALLMONEY     NOT NULL,
+                ColPrice     DECIMAL(6,2)   NOT NULL
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestTightDecimal");
+        Assert.Equal(RowCount, results["dbo.TestTightDecimal"]);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestTightDecimal");
+        foreach (var row in rows)
+        {
+            var dec5_2 = (decimal)row["ColDec5_2"]!;
+            Assert.InRange(dec5_2, -999.99m, 999.99m);
+
+            var dec3_0 = (decimal)row["ColDec3_0"]!;
+            Assert.InRange(dec3_0, -999m, 999m);
+
+            var dec7_4 = (decimal)row["ColDec7_4"]!;
+            Assert.InRange(dec7_4, -999.9999m, 999.9999m);
+
+            var dec4_3 = (decimal)row["ColDec4_3"]!;
+            Assert.InRange(dec4_3, -9.999m, 9.999m);
+
+            Assert.IsType<decimal>(row["ColSmMoney"]);
+
+            var price = (decimal)row["ColPrice"]!;
+            Assert.InRange(price, -9999.99m, 9999.99m);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    //  2c. Tight-Precision Decimal with Name Heuristics
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test02c_TightPrecisionDecimalWithNameHeuristics()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestTightDecimalNames (
+                Id           INT IDENTITY(1,1) PRIMARY KEY,
+                price        DECIMAL(5,2)   NOT NULL,
+                amount       NUMERIC(6,2)   NOT NULL,
+                cost         DECIMAL(4,2)   NOT NULL,
+                salary       DECIMAL(7,2)   NOT NULL,
+                quantity     DECIMAL(3,0)   NOT NULL
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestTightDecimalNames");
+        Assert.Equal(RowCount, results["dbo.TestTightDecimalNames"]);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestTightDecimalNames");
+        foreach (var row in rows)
+        {
+            var price = (decimal)row["price"]!;
+            Assert.InRange(price, -999.99m, 999.99m);
+
+            var amount = (decimal)row["amount"]!;
+            Assert.InRange(amount, -9999.99m, 9999.99m);
+
+            var cost = (decimal)row["cost"]!;
+            Assert.InRange(cost, -99.99m, 99.99m);
+
+            var salary = (decimal)row["salary"]!;
+            Assert.InRange(salary, -99999.99m, 99999.99m);
+
+            var quantity = (decimal)row["quantity"]!;
+            Assert.InRange(quantity, -999m, 999m);
+        }
+    }
+
+    // ══════════════════════════════════════════════
     //  3. Floating Point Types
     // ══════════════════════════════════════════════
 
@@ -1090,5 +1175,60 @@ public class IntegrationTests
               )
             """))!;
         Assert.Equal(0, orphans);
+    }
+
+    // ══════════════════════════════════════════════
+    // 26. Tight-Precision Decimal via Plan Execution
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test26_TightPrecisionDecimalViaPlan()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestTightDecPlan (
+                Id           INT IDENTITY(1,1) PRIMARY KEY,
+                ColDec5_2    DECIMAL(5,2)   NOT NULL,
+                ColNum4_1    NUMERIC(4,1)   NOT NULL,
+                ColSmMoney   SMALLMONEY     NOT NULL,
+                price        DECIMAL(6,2)   NOT NULL
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestTightDecPlan").ToList();
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        foreach (var tablePlan in plan.Tables.OrderBy(t => t.Order))
+        {
+            var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
+            Assert.Equal(RowCount, inserted);
+        }
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestTightDecPlan");
+        Assert.Equal(RowCount, rows.Count);
+
+        foreach (var row in rows)
+        {
+            var dec5_2 = (decimal)row["ColDec5_2"]!;
+            Assert.InRange(dec5_2, -999.99m, 999.99m);
+
+            var num4_1 = (decimal)row["ColNum4_1"]!;
+            Assert.InRange(num4_1, -999.9m, 999.9m);
+
+            Assert.IsType<decimal>(row["ColSmMoney"]);
+
+            var price = (decimal)row["price"]!;
+            Assert.InRange(price, -9999.99m, 9999.99m);
+        }
     }
 }

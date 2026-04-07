@@ -153,8 +153,8 @@ public class ColumnValueGenerator
             "smallint"           => _faker.Random.Short(1, short.MaxValue),
             "tinyint"            => _faker.Random.Byte(),
             "bit"                => _faker.Random.Bool(),
-            "decimal" or "numeric" => Math.Round(_faker.Random.Decimal(0, 99999), Math.Min(column.Scale, (byte)4)),
-            "money" or "smallmoney" => _faker.Finance.Amount(1, 10000),
+            "decimal" or "numeric" => GenerateDecimalForColumn(column),
+            "money" or "smallmoney" => GenerateMoneyForColumn(column),
             "float"              => _faker.Random.Double(0, 99999),
             "real"               => (float)_faker.Random.Double(0, 99999),
             "datetime" or "datetime2" or "smalldatetime"
@@ -191,8 +191,7 @@ public class ColumnValueGenerator
             var sqlType = plan.SqlType.ToLowerInvariant();
             if (sqlType is "money" or "smallmoney" or "decimal" or "numeric")
             {
-                var scale = Math.Min(plan.Scale, (byte)4);
-                return Math.Round(d, scale);
+                return ClampDecimalToPrecision(d, plan.Precision, plan.Scale);
             }
         }
 
@@ -215,12 +214,46 @@ public class ColumnValueGenerator
                 column.SqlType.Equals("decimal", StringComparison.OrdinalIgnoreCase) ||
                 column.SqlType.Equals("numeric", StringComparison.OrdinalIgnoreCase))
             {
-                var scale = Math.Min(column.Scale, (byte)4);
-                return Math.Round(d, scale);
+                return ClampDecimalToPrecision(d, column.Precision, column.Scale);
             }
         }
 
         return value;
+    }
+
+    private decimal GenerateDecimalForColumn(ColumnInfo column)
+    {
+        var max = MaxDecimalForPrecisionScale(column.Precision, column.Scale);
+        var scale = Math.Min(column.Scale, (byte)4);
+        return Math.Round(_faker.Random.Decimal(0, max), scale);
+    }
+
+    private decimal GenerateMoneyForColumn(ColumnInfo column)
+    {
+        var sqlType = column.SqlType.ToLowerInvariant();
+        decimal max = sqlType == "smallmoney" ? 214748m : 10000m;
+        if (column.Precision > 0)
+            max = Math.Min(max, MaxDecimalForPrecisionScale(column.Precision, column.Scale));
+        return _faker.Finance.Amount(1, max);
+    }
+
+    private static decimal MaxDecimalForPrecisionScale(byte precision, byte scale)
+    {
+        if (precision == 0) return 99999m;
+        var integerDigits = precision - scale;
+        if (integerDigits <= 0) return 0.9m;
+        var max = (decimal)Math.Pow(10, integerDigits) - 1;
+        return Math.Max(max, 1m);
+    }
+
+    private static decimal ClampDecimalToPrecision(decimal value, byte precision, byte scale)
+    {
+        if (precision == 0) return value;
+        var scaleClamped = Math.Round(value, Math.Min(scale, (byte)4));
+        var max = MaxDecimalForPrecisionScale(precision, scale);
+        if (scaleClamped > max) return max;
+        if (scaleClamped < -max) return -max;
+        return scaleClamped;
     }
 
     private static int EffectiveLengthFromPlan(ColumnPlan plan)
