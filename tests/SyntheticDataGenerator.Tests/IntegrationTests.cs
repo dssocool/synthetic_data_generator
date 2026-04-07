@@ -910,6 +910,149 @@ public class IntegrationTests
     }
 
     // ══════════════════════════════════════════════
+    // 23. Non-Identity PK Duplicate Prevention
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test23_NonIdentityPkNoDuplicates()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestNonIdentityPK (
+                Code NVARCHAR(10) NOT NULL PRIMARY KEY,
+                Label NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var table = allTables.First(t => t.TableName == "TestNonIdentityPK");
+
+        var graph = new DependencyGraph();
+        graph.Build([table]);
+        var sorted = graph.GetTopologicalOrder();
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        var inserted = await inserter.InsertTableAsync(table, 50);
+        Assert.Equal(50, inserted);
+
+        var count = (int)(await _fixture.ExecuteScalarAsync(
+            "SELECT COUNT(*) FROM dbo.TestNonIdentityPK"))!;
+        Assert.Equal(50, count);
+
+        var distinctCount = (int)(await _fixture.ExecuteScalarAsync(
+            "SELECT COUNT(DISTINCT Code) FROM dbo.TestNonIdentityPK"))!;
+        Assert.Equal(50, distinctCount);
+    }
+
+    // ══════════════════════════════════════════════
+    // 24. Non-Identity Composite PK Duplicate Prevention
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test24_NonIdentityCompositePkNoDuplicates()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestNonIdCompPK (
+                PartA INT         NOT NULL,
+                PartB NVARCHAR(10) NOT NULL,
+                Value NVARCHAR(50) NOT NULL,
+                PRIMARY KEY (PartA, PartB)
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var table = allTables.First(t => t.TableName == "TestNonIdCompPK");
+
+        var graph = new DependencyGraph();
+        graph.Build([table]);
+        var sorted = graph.GetTopologicalOrder();
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        var inserted = await inserter.InsertTableAsync(table, 50);
+        Assert.Equal(50, inserted);
+
+        var count = (int)(await _fixture.ExecuteScalarAsync(
+            "SELECT COUNT(*) FROM dbo.TestNonIdCompPK"))!;
+        Assert.Equal(50, count);
+
+        var distinctCount = (int)(await _fixture.ExecuteScalarAsync(
+            "SELECT COUNT(DISTINCT CONCAT(PartA, '|', PartB)) FROM dbo.TestNonIdCompPK"))!;
+        Assert.Equal(50, distinctCount);
+    }
+
+    // ══════════════════════════════════════════════
+    // 25. Junction Table (All-FK Composite PK) Duplicate Prevention
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test25_JunctionTablePkNoDuplicates()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestJuncLeft (
+                LeftId INT IDENTITY(1,1) PRIMARY KEY,
+                Label  NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestJuncRight (
+                RightId INT IDENTITY(1,1) PRIMARY KEY,
+                Label   NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestJuncBridge (
+                LeftId  INT NOT NULL,
+                RightId INT NOT NULL,
+                PRIMARY KEY (LeftId, RightId),
+                CONSTRAINT FK_Junc_Left  FOREIGN KEY (LeftId)  REFERENCES dbo.TestJuncLeft(LeftId),
+                CONSTRAINT FK_Junc_Right FOREIGN KEY (RightId) REFERENCES dbo.TestJuncRight(RightId)
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+
+        var nameSet = new HashSet<string>(
+            ["TestJuncLeft", "TestJuncRight", "TestJuncBridge"],
+            StringComparer.OrdinalIgnoreCase);
+        var tables = allTables.Where(t => nameSet.Contains(t.TableName)).ToList();
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var parentRowCount = 20;
+        var bridgeRowCount = 15;
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        foreach (var tbl in sorted)
+        {
+            var rows = tbl.TableName == "TestJuncBridge" ? bridgeRowCount : parentRowCount;
+            await inserter.InsertTableAsync(tbl, rows);
+        }
+
+        var count = (int)(await _fixture.ExecuteScalarAsync(
+            "SELECT COUNT(*) FROM dbo.TestJuncBridge"))!;
+        Assert.Equal(bridgeRowCount, count);
+
+        var orphans = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestJuncBridge b
+            WHERE NOT EXISTS (SELECT 1 FROM dbo.TestJuncLeft  l WHERE l.LeftId  = b.LeftId)
+               OR NOT EXISTS (SELECT 1 FROM dbo.TestJuncRight r WHERE r.RightId = b.RightId)
+            """))!;
+        Assert.Equal(0, orphans);
+    }
+
+    // ══════════════════════════════════════════════
     // 22. Self-Referencing Composite Foreign Key
     // ══════════════════════════════════════════════
 

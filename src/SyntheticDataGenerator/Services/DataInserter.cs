@@ -16,6 +16,11 @@ public class DataInserter
     // schema.table -> list of PK row dictionaries (colName -> value)
     private readonly Dictionary<string, List<Dictionary<string, object>>> _generatedKeys = new();
 
+    // schema.table -> set of serialized PK tuples for duplicate detection
+    private readonly Dictionary<string, HashSet<string>> _generatedPkSets = new();
+
+    private const int MaxPkRetries = 100;
+
     public DataInserter(
         string connectionString,
         ColumnValueGenerator valueGen,
@@ -55,6 +60,7 @@ public class DataInserter
             .ToList();
 
         _generatedKeys.TryAdd(tablePlan.FullName, []);
+        _generatedPkSets.TryAdd(tablePlan.FullName, []);
 
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync();
@@ -69,8 +75,24 @@ public class DataInserter
                 Dictionary<string, object?> row;
                 try
                 {
-                    row = BuildRowFromPlan(firstPassColumns, tablePlan);
+                    var attempt = 0;
+                    string? pkKey;
+                    do
+                    {
+                        row = BuildRowFromPlan(firstPassColumns, tablePlan);
+                        pkKey = BuildPkKey(table, row);
+                        attempt++;
+                    } while (pkKey != null
+                             && !_generatedPkSets[tablePlan.FullName].Add(pkKey)
+                             && attempt < MaxPkRetries);
+
+                    if (pkKey != null && attempt >= MaxPkRetries)
+                        throw new InvalidOperationException(
+                            $"Could not generate a unique primary key for [{tablePlan.FullName}] " +
+                            $"after {MaxPkRetries} attempts. Consider reducing RowsPerTable or " +
+                            $"using a wider PK value range.");
                 }
+                catch (DataGenerationException) { throw; }
                 catch (Exception ex)
                 {
                     throw new DataGenerationException(
@@ -148,6 +170,7 @@ public class DataInserter
             : columnsToInsert;
 
         _generatedKeys.TryAdd(table.FullName, []);
+        _generatedPkSets.TryAdd(table.FullName, []);
 
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync();
@@ -162,8 +185,24 @@ public class DataInserter
                 Dictionary<string, object?> row;
                 try
                 {
-                    row = BuildRow(firstPassColumns, nonSelfRefFks, fkColumnNames, table);
+                    var attempt = 0;
+                    string? pkKey;
+                    do
+                    {
+                        row = BuildRow(firstPassColumns, nonSelfRefFks, fkColumnNames, table);
+                        pkKey = BuildPkKey(table, row);
+                        attempt++;
+                    } while (pkKey != null
+                             && !_generatedPkSets[table.FullName].Add(pkKey)
+                             && attempt < MaxPkRetries);
+
+                    if (pkKey != null && attempt >= MaxPkRetries)
+                        throw new InvalidOperationException(
+                            $"Could not generate a unique primary key for [{table.FullName}] " +
+                            $"after {MaxPkRetries} attempts. Consider reducing RowsPerTable or " +
+                            $"using a wider PK value range.");
                 }
+                catch (DataGenerationException) { throw; }
                 catch (Exception ex)
                 {
                     throw new DataGenerationException(
@@ -511,6 +550,25 @@ public class DataInserter
             "xml"              => SqlDbType.Xml,
             _                  => SqlDbType.NVarChar,
         };
+
+    private static string? BuildPkKey(TableInfo table, Dictionary<string, object?> row)
+    {
+        if (table.PrimaryKeyColumns.Count == 0)
+            return null;
+
+        var parts = new List<string>(table.PrimaryKeyColumns.Count);
+        foreach (var pk in table.PrimaryKeyColumns)
+        {
+            if (row.TryGetValue(pk, out var val) && val is not null and not DBNull)
+                parts.Add(val.ToString()!);
+            else
+                return null;
+        }
+
+        return parts.Count == table.PrimaryKeyColumns.Count
+            ? string.Join("|", parts)
+            : null;
+    }
 
     private static async Task<Dictionary<string, object>?> InsertRowAsync(
         SqlConnection connection,
