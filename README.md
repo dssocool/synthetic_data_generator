@@ -76,7 +76,7 @@ dotnet build
 
 ### Run — Direct Mode
 
-Reads the database schema and inserts synthetic rows immediately:
+Reads the database schema and inserts synthetic rows immediately. A `plan.json` file is also saved in the current directory so you can inspect or re-run what was generated:
 
 ```bash
 dotnet run --project src/SyntheticDataGenerator

@@ -180,6 +180,12 @@ async Task RunDirect()
     stopwatch.Stop();
     Console.WriteLine();
     Console.WriteLine($"Done. {totalRows} total rows inserted in {stopwatch.Elapsed.TotalSeconds:F1}s.");
+
+    var planOutputPath = "plan.json";
+    var planGen = new PlanGenerator();
+    var plan = planGen.Generate(sortedTables, graph!.SelfReferencingTables, rowsPerTable, seed, locale);
+    await planGen.WritePlanAsync(plan, planOutputPath);
+    Console.WriteLine($"Plan saved to: {Path.GetFullPath(planOutputPath)}");
 }
 
 async Task<(List<TableInfo>? SortedTables, DependencyGraph? Graph)> ReadAndSortSchema()
