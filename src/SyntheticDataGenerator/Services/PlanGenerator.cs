@@ -39,6 +39,11 @@ public class PlanGenerator
         (n => Like(n, "name"),                      "Name.FullName", null),
     ];
 
+    private static readonly HashSet<string> StringCompatibleTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "varchar", "nvarchar", "char", "nchar", "text", "ntext", "xml"
+    };
+
     private static readonly Dictionary<string, (string Generator, Dictionary<string, object?>? Args)> SqlTypeMap = new(StringComparer.OrdinalIgnoreCase)
     {
         ["int"]              = ("Random.Int", new() { ["min"] = 1, ["max"] = 1073741823 }),
@@ -177,7 +182,7 @@ public class PlanGenerator
 
     private static void ResolveGenerator(ColumnInfo col, ColumnPlan colPlan)
     {
-        if (!col.SqlType.Equals("bit", StringComparison.OrdinalIgnoreCase))
+        if (StringCompatibleTypes.Contains(col.SqlType))
         {
             var name = col.Name.ToLowerInvariant();
 

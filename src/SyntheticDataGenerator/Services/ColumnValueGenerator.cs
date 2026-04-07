@@ -117,7 +117,13 @@ public class ColumnValueGenerator
 
     private static readonly HashSet<string> TypeFirstTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "binary", "varbinary", "image", "timestamp", "rowversion", "bit"
+        "binary", "varbinary", "image", "timestamp", "rowversion",
+        "bit",
+        "int", "bigint", "smallint", "tinyint",
+        "decimal", "numeric", "money", "smallmoney",
+        "float", "real",
+        "datetime", "datetime2", "smalldatetime", "date", "time", "datetimeoffset",
+        "uniqueidentifier",
     };
 
     public object? Generate(ColumnInfo column)

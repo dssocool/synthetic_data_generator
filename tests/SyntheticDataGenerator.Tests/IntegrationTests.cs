@@ -764,6 +764,152 @@ public class IntegrationTests
     }
 
     // ══════════════════════════════════════════════
+    // 22. Bit columns with name-heuristic-triggering names
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test22a_BitColumnsWithMisleadingNames()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestBitNames (
+                Id               INT IDENTITY(1,1) PRIMARY KEY,
+                is_active_note   BIT NOT NULL,
+                has_status       BIT NOT NULL,
+                description      BIT NOT NULL,
+                company          BIT NOT NULL,
+                status           BIT NOT NULL,
+                title            BIT NOT NULL,
+                city             BIT NULL
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestBitNames");
+        Assert.Equal(RowCount, results["dbo.TestBitNames"]);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestBitNames");
+        foreach (var row in rows)
+        {
+            Assert.IsType<bool>(row["is_active_note"]);
+            Assert.IsType<bool>(row["has_status"]);
+            Assert.IsType<bool>(row["description"]);
+            Assert.IsType<bool>(row["company"]);
+            Assert.IsType<bool>(row["status"]);
+            Assert.IsType<bool>(row["title"]);
+            if (row["city"] is not null)
+                Assert.IsType<bool>(row["city"]);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 22b. Int/BigInt columns with name-heuristic-triggering names
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test22b_IntColumnsWithMisleadingNames()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestIntNames (
+                Id          INT IDENTITY(1,1) PRIMARY KEY,
+                status      INT    NOT NULL,
+                description INT    NOT NULL,
+                city        INT    NOT NULL,
+                company     BIGINT NOT NULL,
+                email       INT    NOT NULL,
+                title       BIGINT NOT NULL,
+                name        INT    NULL
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestIntNames");
+        Assert.Equal(RowCount, results["dbo.TestIntNames"]);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestIntNames");
+        foreach (var row in rows)
+        {
+            Assert.IsType<int>(row["status"]);
+            Assert.IsType<int>(row["description"]);
+            Assert.IsType<int>(row["city"]);
+            Assert.IsType<long>(row["company"]);
+            Assert.IsType<int>(row["email"]);
+            Assert.IsType<long>(row["title"]);
+            if (row["name"] is not null)
+                Assert.IsType<int>(row["name"]);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 22c. DateTime2 columns with name-heuristic-triggering names
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test22c_DateTimeColumnsWithMisleadingNames()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDateNames (
+                Id          INT IDENTITY(1,1) PRIMARY KEY,
+                status      DATETIME2    NOT NULL,
+                description DATETIME2    NOT NULL,
+                email       DATETIME     NOT NULL,
+                city        DATE         NOT NULL,
+                company     DATETIME2    NOT NULL,
+                title       SMALLDATETIME NOT NULL,
+                name        DATETIME2    NULL
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestDateNames");
+        Assert.Equal(RowCount, results["dbo.TestDateNames"]);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestDateNames");
+        foreach (var row in rows)
+        {
+            Assert.IsType<DateTime>(row["status"]);
+            Assert.IsType<DateTime>(row["description"]);
+            Assert.IsType<DateTime>(row["email"]);
+            Assert.IsType<DateTime>(row["city"]);
+            Assert.IsType<DateTime>(row["company"]);
+            Assert.IsType<DateTime>(row["title"]);
+            if (row["name"] is not null)
+                Assert.IsType<DateTime>(row["name"]);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 22d. Decimal/Float columns with name-heuristic-triggering names
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test22d_NumericColumnsWithMisleadingNames()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestNumericNames (
+                Id          INT IDENTITY(1,1) PRIMARY KEY,
+                status      DECIMAL(10,2) NOT NULL,
+                email       FLOAT         NOT NULL,
+                city        MONEY         NOT NULL,
+                description REAL          NOT NULL,
+                company     NUMERIC(8,2)  NOT NULL,
+                name        DECIMAL(10,2) NULL
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestNumericNames");
+        Assert.Equal(RowCount, results["dbo.TestNumericNames"]);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestNumericNames");
+        foreach (var row in rows)
+        {
+            Assert.IsType<decimal>(row["status"]);
+            Assert.IsType<double>(row["email"]);
+            Assert.IsType<decimal>(row["city"]);
+            Assert.IsType<float>(row["description"]);
+            Assert.IsType<decimal>(row["company"]);
+            if (row["name"] is not null)
+                Assert.IsType<decimal>(row["name"]);
+        }
+    }
+
+    // ══════════════════════════════════════════════
     // 22. Self-Referencing Composite Foreign Key
     // ══════════════════════════════════════════════
 
