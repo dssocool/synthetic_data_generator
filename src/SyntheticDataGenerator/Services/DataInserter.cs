@@ -483,6 +483,40 @@ public class DataInserter
         return value.ToString() ?? string.Empty;
     }
 
+    private static SqlDbType MapSqlType(string sqlType) =>
+        sqlType.ToLowerInvariant() switch
+        {
+            "int"              => SqlDbType.Int,
+            "bigint"           => SqlDbType.BigInt,
+            "smallint"         => SqlDbType.SmallInt,
+            "tinyint"          => SqlDbType.TinyInt,
+            "bit"              => SqlDbType.Bit,
+            "decimal"          => SqlDbType.Decimal,
+            "numeric"          => SqlDbType.Decimal,
+            "money"            => SqlDbType.Money,
+            "smallmoney"       => SqlDbType.SmallMoney,
+            "float"            => SqlDbType.Float,
+            "real"             => SqlDbType.Real,
+            "datetime"         => SqlDbType.DateTime,
+            "datetime2"        => SqlDbType.DateTime2,
+            "smalldatetime"    => SqlDbType.SmallDateTime,
+            "date"             => SqlDbType.Date,
+            "time"             => SqlDbType.Time,
+            "datetimeoffset"   => SqlDbType.DateTimeOffset,
+            "char"             => SqlDbType.Char,
+            "nchar"            => SqlDbType.NChar,
+            "varchar"          => SqlDbType.VarChar,
+            "nvarchar"         => SqlDbType.NVarChar,
+            "text"             => SqlDbType.Text,
+            "ntext"            => SqlDbType.NText,
+            "uniqueidentifier" => SqlDbType.UniqueIdentifier,
+            "varbinary"        => SqlDbType.VarBinary,
+            "binary"           => SqlDbType.Binary,
+            "image"            => SqlDbType.Image,
+            "xml"              => SqlDbType.Xml,
+            _                  => SqlDbType.NVarChar,
+        };
+
     private static async Task<Dictionary<string, object>?> InsertRowAsync(
         SqlConnection connection,
         SqlTransaction transaction,
@@ -532,7 +566,16 @@ public class DataInserter
         foreach (var col in columns)
         {
             var paramValue = row.TryGetValue(col.Name, out var v) ? v ?? DBNull.Value : DBNull.Value;
-            cmd.Parameters.AddWithValue($"@{col.Name}", paramValue);
+            var param = new SqlParameter($"@{col.Name}", MapSqlType(col.SqlType))
+            {
+                Value = paramValue
+            };
+            if (param.SqlDbType is SqlDbType.Decimal or SqlDbType.Money or SqlDbType.SmallMoney)
+            {
+                param.Precision = col.Precision;
+                param.Scale = col.Scale;
+            }
+            cmd.Parameters.Add(param);
         }
 
         if (hasPkColumns)
