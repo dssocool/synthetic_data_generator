@@ -14,7 +14,7 @@ A .NET 9 console application that connects to a Microsoft SQL Server database, r
 
 ## Prerequisites
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
+- [.NET 8 SDK or higher](https://dotnet.microsoft.com/en-us/download)
 - A SQL Server instance you can connect to (the tool needs permission to read schema metadata and insert rows)
 
 ## Project Structure
