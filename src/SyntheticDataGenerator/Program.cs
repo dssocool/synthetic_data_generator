@@ -8,12 +8,18 @@ var config = new ConfigurationBuilder()
     .AddJsonFile("appsettings.json", optional: false)
     .Build();
 
-var connectionString = config["ConnectionString"]
+var baseConnectionString = config["ConnectionString"]
     ?? throw new InvalidOperationException("ConnectionString is required in appsettings.json");
+
+var databaseName = config["Schema:DatabaseName"];
+var connectionString = string.IsNullOrWhiteSpace(databaseName)
+    ? baseConnectionString
+    : new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(baseConnectionString)
+        { InitialCatalog = databaseName }.ConnectionString;
 
 var rowsPerTable = int.TryParse(config["RowsPerTable"], out var r) ? r : 100;
 var seed = int.TryParse(config["Seed"], out var s) ? s : (int?)null;
-var schemaFilter = config["Schema"];
+var schemaFilter = config["Schema:Filter"];
 var locale = config["Locale"] ?? "en";
 var tablesToInclude = config.GetSection("TablesToInclude").Get<string[]>() ?? [];
 var tablesToExclude = config.GetSection("TablesToExclude").Get<string[]>() ?? [];
