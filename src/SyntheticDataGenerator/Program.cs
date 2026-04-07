@@ -11,7 +11,7 @@ var config = new ConfigurationBuilder()
 var baseConnectionString = config["ConnectionString"]
     ?? throw new InvalidOperationException("ConnectionString is required in appsettings.json");
 
-var databaseName = config["Schema:DatabaseName"];
+var databaseName = config["DatabaseName"];
 var connectionString = string.IsNullOrWhiteSpace(databaseName)
     ? baseConnectionString
     : new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(baseConnectionString)
@@ -19,7 +19,7 @@ var connectionString = string.IsNullOrWhiteSpace(databaseName)
 
 var rowsPerTable = int.TryParse(config["RowsPerTable"], out var r) ? r : 100;
 var seed = int.TryParse(config["Seed"], out var s) ? s : (int?)null;
-var schemaFilter = config["Schema:Filter"];
+var schemaFilter = config["Schema"];
 var locale = config["Locale"] ?? "en";
 var tablesToInclude = config.GetSection("TablesToInclude").Get<string[]>() ?? [];
 var tablesToExclude = config.GetSection("TablesToExclude").Get<string[]>() ?? [];

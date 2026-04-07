@@ -47,28 +47,26 @@ Create an `appsettings.json` file in `src/SyntheticDataGenerator/` (this file is
 ```json
 {
   "ConnectionString": "Server=YOUR_SERVER;Trusted_Connection=True;TrustServerCertificate=True;",
+  "DatabaseName": "YOUR_DATABASE",
+  "Schema": "dbo",
+  "TablesToInclude": [],
+  "TablesToExclude": [],
   "RowsPerTable": 100,
   "Seed": 12345,
-  "Schema": {
-    "DatabaseName": "YOUR_DATABASE",
-    "Filter": "dbo"
-  },
-  "Locale": "en",
-  "TablesToInclude": [],
-  "TablesToExclude": []
+  "Locale": "en"
 }
 ```
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `ConnectionString` | Yes | — | SQL Server connection string (database can be specified here or via `Schema.DatabaseName`) |
-| `RowsPerTable` | No | `100` | Number of rows to insert per table |
-| `Seed` | No | random | Integer seed for reproducible data |
-| `Schema.DatabaseName` | No | — | Database name; overrides `Initial Catalog` / `Database` in the connection string |
-| `Schema.Filter` | No | all schemas | Restrict to a single schema name |
-| `Locale` | No | `en` | Bogus locale for generated data |
+| `ConnectionString` | Yes | — | SQL Server connection string |
+| `DatabaseName` | No | — | Database name; overrides `Initial Catalog` / `Database` in the connection string |
+| `Schema` | No | all schemas | Restrict to a single schema name |
 | `TablesToInclude` | No | `[]` | Only generate data for these tables |
 | `TablesToExclude` | No | `[]` | Skip these tables |
+| `RowsPerTable` | No | `100` | Number of rows to insert per table |
+| `Seed` | No | random | Integer seed for reproducible data |
+| `Locale` | No | `en` | Bogus locale for generated data |
 
 ## Usage
 
