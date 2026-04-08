@@ -286,7 +286,9 @@ public class SchemaReader
                 t.name  AS TableName,
                 i.name  AS IndexName,
                 c.name  AS ColumnName,
-                ic.key_ordinal AS KeyOrdinal
+                ic.key_ordinal AS KeyOrdinal,
+                i.has_filter AS HasFilter,
+                i.filter_definition AS FilterDefinition
             FROM sys.indexes i
             INNER JOIN sys.index_columns ic ON ic.object_id = i.object_id
                                             AND ic.index_id = i.index_id
@@ -304,7 +306,7 @@ public class SchemaReader
         await using var cmd = new SqlCommand(sql, connection);
         cmd.Parameters.AddWithValue("@SchemaFilter", (object?)schemaFilter ?? DBNull.Value);
 
-        var constraintColumns = new Dictionary<(string FullName, string IndexName), List<string>>();
+        var constraintData = new Dictionary<(string FullName, string IndexName), (List<string> Columns, string? Filter)>();
 
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -313,18 +315,20 @@ public class SchemaReader
             var tableName = reader.GetString(1);
             var indexName = reader.GetString(2);
             var columnName = reader.GetString(3);
+            var hasFilter = reader.GetBoolean(5);
+            var filterDef = hasFilter && !reader.IsDBNull(6) ? reader.GetString(6) : null;
             var fullName = $"{schema}.{tableName}";
 
             var key = (fullName, indexName);
-            if (!constraintColumns.TryGetValue(key, out var cols))
+            if (!constraintData.TryGetValue(key, out var data))
             {
-                cols = [];
-                constraintColumns[key] = cols;
+                data = ([], filterDef);
+                constraintData[key] = data;
             }
-            cols.Add(columnName);
+            data.Columns.Add(columnName);
         }
 
-        foreach (var ((fullName, indexName), columns) in constraintColumns)
+        foreach (var ((fullName, indexName), (columns, filter)) in constraintData)
         {
             if (!tables.TryGetValue(fullName, out var table))
                 continue;
@@ -332,7 +336,8 @@ public class SchemaReader
             table.UniqueConstraints.Add(new UniqueConstraintInfo
             {
                 Name = indexName,
-                Columns = columns
+                Columns = columns,
+                FilterDefinition = filter
             });
 
             if (columns.Count == 1)

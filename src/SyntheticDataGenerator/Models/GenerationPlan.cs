@@ -31,8 +31,23 @@ public class TablePlan
     [YamlMember(Alias = "columns")]
     public List<ColumnPlan> Columns { get; set; } = [];
 
+    [YamlMember(Alias = "uniqueConstraints")]
+    public List<UniqueConstraintPlan>? UniqueConstraints { get; set; }
+
     [YamlIgnore]
     public string FullName => $"{Schema}.{Table}";
+}
+
+public class UniqueConstraintPlan
+{
+    [YamlMember(Alias = "name")]
+    public string Name { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "columns")]
+    public List<string> Columns { get; set; } = [];
+
+    [YamlMember(Alias = "filterDefinition")]
+    public string? FilterDefinition { get; set; }
 }
 
 public class ColumnPlan

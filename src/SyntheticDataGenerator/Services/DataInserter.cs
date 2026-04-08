@@ -1,5 +1,6 @@
 using System.Data;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Data.SqlClient;
 using SyntheticDataGenerator.Models;
 
@@ -552,6 +553,16 @@ public class DataInserter
 
     private static List<UniqueConstraintInfo> BuildUniqueConstraintsFromPlan(TablePlan tablePlan)
     {
+        if (tablePlan.UniqueConstraints is { Count: > 0 })
+        {
+            return tablePlan.UniqueConstraints.Select(uc => new UniqueConstraintInfo
+            {
+                Name = uc.Name,
+                Columns = new List<string>(uc.Columns),
+                FilterDefinition = uc.FilterDefinition
+            }).ToList();
+        }
+
         var uniqueColumns = tablePlan.Columns
             .Where(c => c.IsUnique && !c.IsPrimaryKey)
             .ToList();
@@ -588,6 +599,9 @@ public class DataInserter
 
         foreach (var uc in constraints)
         {
+            if (!RowSatisfiesFilter(uc, row))
+                continue;
+
             var key = BuildUniqueKey(uc.Columns, row);
             if (key == null) continue;
 
@@ -627,6 +641,161 @@ public class DataInserter
                 return null;
         }
         return string.Join("|", parts);
+    }
+
+    internal static bool RowSatisfiesFilter(
+        UniqueConstraintInfo constraint,
+        Dictionary<string, object?> row)
+    {
+        if (string.IsNullOrWhiteSpace(constraint.FilterDefinition))
+            return true;
+
+        return EvaluateFilterExpression(constraint.FilterDefinition, row);
+    }
+
+    private static bool EvaluateFilterExpression(string expr, Dictionary<string, object?> row)
+    {
+        expr = expr.Trim();
+
+        while (expr.StartsWith('(') && expr.EndsWith(')') && FindMatchingParen(expr, 0) == expr.Length - 1)
+            expr = expr[1..^1].Trim();
+
+        var orIndex = FindLogicalOperator(expr, "OR");
+        if (orIndex >= 0)
+        {
+            var left = expr[..orIndex].Trim();
+            var right = expr[(orIndex + 2)..].Trim();
+            return EvaluateFilterExpression(left, row) || EvaluateFilterExpression(right, row);
+        }
+
+        var andIndex = FindLogicalOperator(expr, "AND");
+        if (andIndex >= 0)
+        {
+            var left = expr[..andIndex].Trim();
+            var right = expr[(andIndex + 3)..].Trim();
+            return EvaluateFilterExpression(left, row) && EvaluateFilterExpression(right, row);
+        }
+
+        return EvaluateAtom(expr, row);
+    }
+
+    private static readonly Regex IsNullPattern = new(
+        @"^\[(?<col>[^\]]+)\]\s+IS\s+NULL$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex IsNotNullPattern = new(
+        @"^\[(?<col>[^\]]+)\]\s+IS\s+NOT\s+NULL$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex EqualityPattern = new(
+        @"^\[(?<col>[^\]]+)\]\s*=\s*\(?(?:N)?'(?<val>[^']*)'\)?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex InequalityPattern = new(
+        @"^\[(?<col>[^\]]+)\]\s*<>\s*\(?(?:N)?'(?<val>[^']*)'\)?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex NumericEqualityPattern = new(
+        @"^\[(?<col>[^\]]+)\]\s*=\s*\(?(?<val>-?\d+(?:\.\d+)?)\)?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex NumericInequalityPattern = new(
+        @"^\[(?<col>[^\]]+)\]\s*<>\s*\(?(?<val>-?\d+(?:\.\d+)?)\)?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static bool EvaluateAtom(string expr, Dictionary<string, object?> row)
+    {
+        var m = IsNotNullPattern.Match(expr);
+        if (m.Success)
+        {
+            var col = m.Groups["col"].Value;
+            return row.TryGetValue(col, out var v) && v is not null and not DBNull;
+        }
+
+        m = IsNullPattern.Match(expr);
+        if (m.Success)
+        {
+            var col = m.Groups["col"].Value;
+            return !row.TryGetValue(col, out var v) || v is null or DBNull;
+        }
+
+        m = EqualityPattern.Match(expr);
+        if (m.Success)
+        {
+            var col = m.Groups["col"].Value;
+            var expected = m.Groups["val"].Value;
+            if (!row.TryGetValue(col, out var v) || v is null or DBNull)
+                return false;
+            return string.Equals(v.ToString(), expected, StringComparison.OrdinalIgnoreCase);
+        }
+
+        m = InequalityPattern.Match(expr);
+        if (m.Success)
+        {
+            var col = m.Groups["col"].Value;
+            var expected = m.Groups["val"].Value;
+            if (!row.TryGetValue(col, out var v) || v is null or DBNull)
+                return true;
+            return !string.Equals(v.ToString(), expected, StringComparison.OrdinalIgnoreCase);
+        }
+
+        m = NumericEqualityPattern.Match(expr);
+        if (m.Success)
+        {
+            var col = m.Groups["col"].Value;
+            var expected = m.Groups["val"].Value;
+            if (!row.TryGetValue(col, out var v) || v is null or DBNull)
+                return false;
+            return string.Equals(v.ToString(), expected, StringComparison.OrdinalIgnoreCase);
+        }
+
+        m = NumericInequalityPattern.Match(expr);
+        if (m.Success)
+        {
+            var col = m.Groups["col"].Value;
+            var expected = m.Groups["val"].Value;
+            if (!row.TryGetValue(col, out var v) || v is null or DBNull)
+                return true;
+            return !string.Equals(v.ToString(), expected, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Unrecognized predicate: fall back to full-table uniqueness (stricter but safe)
+        return true;
+    }
+
+    private static int FindMatchingParen(string expr, int openIndex)
+    {
+        var depth = 0;
+        for (var i = openIndex; i < expr.Length; i++)
+        {
+            if (expr[i] == '(') depth++;
+            else if (expr[i] == ')')
+            {
+                depth--;
+                if (depth == 0) return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int FindLogicalOperator(string expr, string op)
+    {
+        var depth = 0;
+        var opLen = op.Length;
+        for (var i = 0; i < expr.Length; i++)
+        {
+            if (expr[i] == '(') depth++;
+            else if (expr[i] == ')') depth--;
+            else if (depth == 0
+                     && i + opLen <= expr.Length
+                     && (i == 0 || char.IsWhiteSpace(expr[i - 1]))
+                     && string.Equals(expr.Substring(i, opLen), op, StringComparison.OrdinalIgnoreCase)
+                     && (i + opLen >= expr.Length || char.IsWhiteSpace(expr[i + opLen])))
+            {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static bool IsTruthy(object? value)

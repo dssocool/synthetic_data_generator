@@ -1869,4 +1869,197 @@ public class IntegrationTests
         Assert.Contains("CK_Age", ex.Message);
         Assert.Contains("CHECK constraint", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    // ══════════════════════════════════════════════
+    // 41. Filtered Unique Index — IS NOT NULL
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test41_FilteredUniqueIndex_IsNotNull()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestFilteredUniqueNotNull (
+                Id    INT IDENTITY(1,1) PRIMARY KEY,
+                Email NVARCHAR(200) NULL,
+                Label NVARCHAR(50) NOT NULL
+            );
+            CREATE UNIQUE INDEX UX_Email_NotNull
+                ON dbo.TestFilteredUniqueNotNull (Email)
+                WHERE Email IS NOT NULL;
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var table = allTables.First(t => t.TableName == "TestFilteredUniqueNotNull");
+
+        Assert.Single(table.UniqueConstraints);
+        Assert.Equal("UX_Email_NotNull", table.UniqueConstraints[0].Name);
+        Assert.NotNull(table.UniqueConstraints[0].FilterDefinition);
+        Assert.Contains("IS NOT NULL", table.UniqueConstraints[0].FilterDefinition!,
+            StringComparison.OrdinalIgnoreCase);
+
+        var graph = new DependencyGraph();
+        graph.Build([table]);
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(
+            _fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        var inserted = await inserter.InsertTableAsync(table, 50);
+        Assert.Equal(50, inserted);
+
+        // Non-null emails must be distinct
+        var nonNullDistinct = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(DISTINCT Email)
+            FROM dbo.TestFilteredUniqueNotNull
+            WHERE Email IS NOT NULL
+            """))!;
+        var nonNullTotal = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*)
+            FROM dbo.TestFilteredUniqueNotNull
+            WHERE Email IS NOT NULL
+            """))!;
+        Assert.Equal(nonNullTotal, nonNullDistinct);
+    }
+
+    // ══════════════════════════════════════════════
+    // 42. Filtered Unique Index — Equality Predicate
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test42_FilteredUniqueIndex_EqualityPredicate()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestFilteredUniqueEquality (
+                Id     INT IDENTITY(1,1) PRIMARY KEY,
+                Code   NVARCHAR(50) NOT NULL,
+                Status NVARCHAR(20) NOT NULL DEFAULT 'Active'
+            );
+            CREATE UNIQUE INDEX UX_Code_Active
+                ON dbo.TestFilteredUniqueEquality (Code)
+                WHERE Status = 'Active';
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var table = allTables.First(t => t.TableName == "TestFilteredUniqueEquality");
+
+        Assert.Single(table.UniqueConstraints);
+        Assert.NotNull(table.UniqueConstraints[0].FilterDefinition);
+
+        var graph = new DependencyGraph();
+        graph.Build([table]);
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(
+            _fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        var inserted = await inserter.InsertTableAsync(table, 50);
+        Assert.Equal(50, inserted);
+
+        // Among Active rows, Code must be distinct
+        var activeDistinct = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(DISTINCT Code)
+            FROM dbo.TestFilteredUniqueEquality
+            WHERE Status = 'Active'
+            """))!;
+        var activeTotal = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*)
+            FROM dbo.TestFilteredUniqueEquality
+            WHERE Status = 'Active'
+            """))!;
+        Assert.Equal(activeTotal, activeDistinct);
+    }
+
+    // ══════════════════════════════════════════════
+    // 43. Filtered Unique Index — Schema Reading
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test43_FilteredUniqueIndex_SchemaReading()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestFilteredSchemaRead (
+                Id    INT IDENTITY(1,1) PRIMARY KEY,
+                Code  NVARCHAR(50) NOT NULL,
+                Email NVARCHAR(200) NOT NULL,
+                CONSTRAINT UQ_Code_Unfiltered UNIQUE (Code)
+            );
+            CREATE UNIQUE INDEX UX_Email_Filtered
+                ON dbo.TestFilteredSchemaRead (Email)
+                WHERE Email IS NOT NULL;
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var table = allTables.First(t => t.TableName == "TestFilteredSchemaRead");
+
+        Assert.Equal(2, table.UniqueConstraints.Count);
+
+        var unfiltered = table.UniqueConstraints.First(uc => uc.Name == "UQ_Code_Unfiltered");
+        Assert.Null(unfiltered.FilterDefinition);
+        Assert.Single(unfiltered.Columns);
+        Assert.Equal("Code", unfiltered.Columns[0]);
+
+        var filtered = table.UniqueConstraints.First(uc => uc.Name == "UX_Email_Filtered");
+        Assert.NotNull(filtered.FilterDefinition);
+        Assert.Contains("IS NOT NULL", filtered.FilterDefinition!, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(filtered.Columns);
+        Assert.Equal("Email", filtered.Columns[0]);
+    }
+
+    // ══════════════════════════════════════════════
+    // 44. Filtered Unique Index — Plan Path
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test44_FilteredUniqueIndex_ViaPlan()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestFilteredUniquePlan (
+                Id    INT IDENTITY(1,1) PRIMARY KEY,
+                Email NVARCHAR(200) NULL,
+                Label NVARCHAR(50) NOT NULL
+            );
+            CREATE UNIQUE INDEX UX_PlanEmail_NotNull
+                ON dbo.TestFilteredUniquePlan (Email)
+                WHERE Email IS NOT NULL;
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestFilteredUniquePlan").ToList();
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, 50, Seed, "en");
+
+        // Verify UniqueConstraints propagated to plan with filter
+        Assert.NotNull(plan.Tables[0].UniqueConstraints);
+        Assert.Single(plan.Tables[0].UniqueConstraints!);
+        Assert.Equal("UX_PlanEmail_NotNull", plan.Tables[0].UniqueConstraints![0].Name);
+        Assert.NotNull(plan.Tables[0].UniqueConstraints![0].FilterDefinition);
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        var inserted = await inserter.InsertTableFromPlanAsync(plan.Tables[0]);
+        Assert.Equal(50, inserted);
+
+        // Non-null emails must be distinct
+        var nonNullDistinct = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(DISTINCT Email)
+            FROM dbo.TestFilteredUniquePlan
+            WHERE Email IS NOT NULL
+            """))!;
+        var nonNullTotal = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*)
+            FROM dbo.TestFilteredUniquePlan
+            WHERE Email IS NOT NULL
+            """))!;
+        Assert.Equal(nonNullTotal, nonNullDistinct);
+    }
 }

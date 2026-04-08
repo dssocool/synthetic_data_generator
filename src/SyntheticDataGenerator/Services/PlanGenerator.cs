@@ -158,6 +158,18 @@ public class PlanGenerator
                 tablePlan.Columns.Add(colPlan);
             }
 
+            if (table.UniqueConstraints.Count > 0)
+            {
+                tablePlan.UniqueConstraints = table.UniqueConstraints
+                    .Select(uc => new UniqueConstraintPlan
+                    {
+                        Name = uc.Name,
+                        Columns = new List<string>(uc.Columns),
+                        FilterDefinition = uc.FilterDefinition
+                    })
+                    .ToList();
+            }
+
             plan.Tables.Add(tablePlan);
         }
 

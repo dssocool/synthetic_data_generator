@@ -64,6 +64,7 @@ public class UniqueConstraintInfo
 {
     public string Name { get; set; } = string.Empty;
     public List<string> Columns { get; set; } = [];
+    public string? FilterDefinition { get; set; }
 }
 
 public class TableInfo
