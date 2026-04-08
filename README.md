@@ -100,6 +100,137 @@ Inserts data according to a previously generated (and optionally edited) plan fi
 dotnet run --project src/SyntheticDataGenerator -- --execute-plan plan.yaml
 ```
 
+## Plan File Reference
+
+When you run `--generate-plan`, the tool produces a YAML file (`plan.yaml` by default) that fully describes what data will be generated. You can review and edit this file before running `--execute-plan`.
+
+### Top-level properties
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `seed` | `int?` | Random seed for reproducible output. Remove or set to `null` for random data each run. |
+| `locale` | `string` | Bogus locale code (e.g. `en`, `fr`, `de`, `ja`). Affects names, addresses, etc. |
+| `tables` | `list` | Ordered list of table definitions to generate data for. |
+
+### Table properties
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `schema` | `string` | SQL schema name (e.g. `dbo`). |
+| `table` | `string` | Table name. |
+| `order` | `int` | Insertion order. Lower values are inserted first. Tables referenced by foreign keys must have a lower order than the tables that reference them. |
+| `rowCount` | `int` | Number of rows to generate for this table. |
+| `columns` | `list` | Column definitions (see below). |
+
+### Column properties
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `name` | `string` | Column name (must match the database). |
+| `sqlType` | `string` | SQL Server data type (e.g. `int`, `nvarchar`, `datetime2`). |
+| `maxLength` | `int` | Maximum storage length in bytes (e.g. `200` for `nvarchar(100)` since nvarchar uses 2 bytes per char). |
+| `precision` | `byte` | Numeric precision for `decimal`/`numeric` types. |
+| `scale` | `byte` | Numeric scale for `decimal`/`numeric` types. |
+| `isNullable` | `bool` | Whether the column allows NULL values. |
+| `isIdentity` | `bool` | Whether the column is an identity (auto-increment) column. |
+| `isPrimaryKey` | `bool` | Whether the column is part of the primary key. |
+| `isComputed` | `bool` | Whether the column is computed. |
+| `isRowVersion` | `bool` | Whether the column is a `rowversion`/`timestamp` column. |
+| `generator` | `string` | The generator to use (see table below). |
+| `generatorArgs` | `map` | Key-value arguments passed to the generator. |
+| `valuesFile` | `string` | Path to a text file (one value per line) to randomly pick values from instead of using a generator. Can be absolute or relative to the plan file. |
+
+### Generators
+
+These are the values you can assign to the `generator` field on any column.
+
+| Generator | Description | `generatorArgs` |
+|-----------|-------------|-----------------|
+| `skip` | Do not generate a value (used for identity, computed, and rowversion columns). | — |
+| `foreignKey` | Pick a value from the referenced table's primary key. Automatically set for FK columns. | `referencedSchema`, `referencedTable`, `referencedColumn`, `isSelfReferencing`, `compositeFkGroup` |
+| `null` | Always inserts NULL. | — |
+| **Name** | | |
+| `Name.FirstName` | Realistic first name. | — |
+| `Name.LastName` | Realistic last name. | — |
+| `Name.FullName` | Realistic full name. | — |
+| `Name.JobTitle` | Job title string. | — |
+| **Internet** | | |
+| `Internet.Email` | Email address. | — |
+| `Internet.UserName` | Username. | — |
+| `Internet.Password` | Password string. | — |
+| `Internet.Url` | URL. | — |
+| `Internet.Avatar` | Avatar image URL. | — |
+| **Phone** | | |
+| `Phone.PhoneNumber` | Phone number. | `format` (default `###-###-####`) |
+| **Address** | | |
+| `Address.StreetAddress` | Street address. | — |
+| `Address.City` | City name. | — |
+| `Address.StateAbbr` | US state abbreviation. | — |
+| `Address.ZipCode` | Zip/postal code. | — |
+| `Address.Country` | Country name. | — |
+| **Text** | | |
+| `Lorem.Word` | Single random word. Supports `wrapXml: true` to wrap the value in `<data>...</data>`. | `wrapXml` (bool) |
+| `Lorem.Sentence` | Random sentence. | — |
+| **Finance** | | |
+| `Finance.Amount` | Decimal dollar amount. | `min` (default `1`), `max` (default `10000`) |
+| `Company.CompanyName` | Company name. | — |
+| **Random** | | |
+| `Random.Int` | Random integer. | `min` (default `1`), `max` (default `1073741823`) |
+| `Random.Long` | Random long integer. | `min` (default `1`), `max` (default `4611686018427387903`) |
+| `Random.Short` | Random short integer. | `min` (default `1`), `max` (default `32767`) |
+| `Random.Byte` | Random byte (0–255). | — |
+| `Random.Bool` | Random boolean. | — |
+| `Random.Decimal` | Random decimal. | `min` (default `0`), `max` (default `99999`) |
+| `Random.Double` | Random double. | `min` (default `0`), `max` (default `99999`) |
+| `Random.Float` | Random float. | `min` (default `0`), `max` (default `99999`) |
+| `Random.AlphaNumeric` | Random alphanumeric string. | `length` (default `8`) |
+| `Random.Bytes` | Random byte array. | `count` (default `16`) |
+| **Date/Time** | | |
+| `Date.Past` | Random past datetime. | `yearsToGoBack` (default `5`) |
+| `Date.PastDateOnly` | Random past date (no time component). | `yearsToGoBack` (default `5`) |
+| `Date.Timespan` | Random time-of-day value. | — |
+| `Date.PastOffset` | Random past datetimeoffset. | `yearsToGoBack` (default `5`) |
+| **Other** | | |
+| `Guid` | New random GUID. | — |
+| `PickRandom` | Picks randomly from a provided list of values. | `values` (string array, e.g. `["A", "B", "C"]`) |
+
+### Example: customizing a column
+
+Change the generator for a column by editing `generator` and `generatorArgs`:
+
+```yaml
+- name: Status
+  sqlType: nvarchar
+  maxLength: 100
+  # ...
+  generator: PickRandom
+  generatorArgs:
+    values: ["Active", "Inactive", "Suspended"]
+  valuesFile:
+```
+
+Or load values from a file:
+
+```yaml
+- name: City
+  sqlType: nvarchar
+  maxLength: 200
+  # ...
+  generator: Lorem.Word          # ignored when valuesFile is set
+  generatorArgs: {}
+  valuesFile: data/cities.txt    # one city name per line
+```
+
+### Common edits
+
+- **Change row count** — set `rowCount` on any table to control how many rows are generated.
+- **Skip a table** — remove the table entry from the `tables` list entirely.
+- **Skip a column** — set `generator: skip` (useful for columns you want the database default to fill).
+- **Force NULL** — set `generator: "null"`.
+- **Use a fixed set of values** — use `PickRandom` with a `values` array, or point `valuesFile` to a text file.
+- **Change insertion order** — adjust `order` values, ensuring parent tables have lower order numbers than child tables.
+- **Rerun with same data** — keep `seed` the same and re-execute the plan.
+
 ## Running Tests
 
 The test suite uses xUnit and requires **SQL Server LocalDB** (typically included with Visual Studio or SQL Server Express).
