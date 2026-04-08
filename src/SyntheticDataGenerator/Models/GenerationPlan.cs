@@ -64,6 +64,9 @@ public class ColumnPlan
     [YamlMember(Alias = "isComputed")]
     public bool IsComputed { get; set; }
 
+    [YamlMember(Alias = "isRowVersion")]
+    public bool IsRowVersion { get; set; }
+
     [YamlMember(Alias = "generator")]
     public string Generator { get; set; } = string.Empty;
 

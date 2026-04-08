@@ -120,9 +120,10 @@ public class PlanGenerator
                     IsIdentity = col.IsIdentity,
                     IsPrimaryKey = col.IsPrimaryKey,
                     IsComputed = col.IsComputed,
+                    IsRowVersion = col.IsRowVersion,
                 };
 
-                if (col.IsIdentity || col.IsComputed)
+                if (col.IsIdentity || col.IsComputed || col.IsRowVersion)
                 {
                     colPlan.Generator = "skip";
                 }

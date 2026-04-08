@@ -11,6 +11,7 @@ public class ColumnInfo
     public bool IsIdentity { get; set; }
     public bool IsPrimaryKey { get; set; }
     public bool IsComputed { get; set; }
+    public bool IsRowVersion { get; set; }
 
     public string FullTableName { get; set; } = string.Empty;
 }

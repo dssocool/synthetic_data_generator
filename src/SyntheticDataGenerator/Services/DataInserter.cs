@@ -160,7 +160,7 @@ public class DataInserter
             table.ForeignKeys.Select(fk => fk.ParentColumn), StringComparer.OrdinalIgnoreCase);
 
         var columnsToInsert = table.Columns
-            .Where(c => !c.IsIdentity && !c.IsComputed)
+            .Where(c => !c.IsIdentity && !c.IsComputed && !c.IsRowVersion)
             .ToList();
 
         var firstPassColumns = isSelfRef
@@ -477,6 +477,7 @@ public class DataInserter
                 IsIdentity = cp.IsIdentity,
                 IsPrimaryKey = cp.IsPrimaryKey,
                 IsComputed = cp.IsComputed,
+                IsRowVersion = cp.IsRowVersion,
                 FullTableName = tablePlan.FullName
             }).ToList(),
             PrimaryKeyColumns = tablePlan.Columns

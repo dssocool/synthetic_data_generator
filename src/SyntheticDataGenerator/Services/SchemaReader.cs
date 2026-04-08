@@ -42,12 +42,14 @@ public class SchemaReader
                 c.scale      AS Scale,
                 c.is_nullable  AS IsNullable,
                 c.is_identity  AS IsIdentity,
-                c.is_computed  AS IsComputed
+                c.is_computed  AS IsComputed,
+                CASE WHEN tp.name IN ('timestamp', 'rowversion') THEN 1 ELSE 0 END AS IsRowVersion
             FROM sys.tables t
             INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
             INNER JOIN sys.columns c ON c.object_id = t.object_id
             INNER JOIN sys.types tp  ON tp.user_type_id = c.user_type_id
             WHERE t.is_ms_shipped = 0
+              AND t.name NOT IN ('__EFMigrationsHistory', '__MigrationHistory', 'sysdiagrams')
               AND (@SchemaFilter IS NULL OR @SchemaFilter = '' OR s.name = @SchemaFilter)
             ORDER BY s.name, t.name, c.column_id
             """;
@@ -78,6 +80,7 @@ public class SchemaReader
                 IsNullable = reader.GetBoolean(7),
                 IsIdentity = reader.GetBoolean(8),
                 IsComputed = reader.GetBoolean(9),
+                IsRowVersion = reader.GetInt32(10) == 1,
                 FullTableName = fullName
             });
         }
