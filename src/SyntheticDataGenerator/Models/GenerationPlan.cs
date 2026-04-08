@@ -50,7 +50,7 @@ public class UniqueConstraintPlan
     public string? FilterDefinition { get; set; }
 }
 
-public class ColumnPlan
+public class ColumnPlan : IColumnMetadata
 {
     [YamlMember(Alias = "name")]
     public string Name { get; set; } = string.Empty;

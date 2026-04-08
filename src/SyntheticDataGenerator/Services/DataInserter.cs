@@ -13,13 +13,8 @@ public class DataInserter
     private readonly IReadOnlySet<string> _selfReferencingTables;
     private readonly Random _random = new();
 
-    // schema.table -> list of PK row dictionaries (colName -> value)
     private readonly Dictionary<string, List<Dictionary<string, object>>> _generatedKeys = new();
-
-    // schema.table -> set of serialized PK tuples for duplicate detection
     private readonly Dictionary<string, HashSet<string>> _generatedPkSets = new();
-
-    // schema.table -> constraintName -> set of serialized unique tuples
     private readonly Dictionary<string, Dictionary<string, HashSet<string>>> _generatedUniqueSets = new();
 
     private const int MaxPkRetries = 100;
@@ -40,22 +35,21 @@ public class DataInserter
         var isSelfRef = tablePlan.Columns.Any(c =>
             c.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase)
             && c.GeneratorArgs.TryGetValue("isSelfReferencing", out var selfRef)
-            && IsTruthy(selfRef));
+            && Helpers.IsTruthy(selfRef));
 
-        var selfRefColumns = isSelfRef
+        var selfRefColumnNames = isSelfRef
             ? tablePlan.Columns.Where(c =>
                 c.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase)
                 && c.GeneratorArgs.TryGetValue("isSelfReferencing", out var selfRef)
-                && IsTruthy(selfRef)).ToList()
-            : new List<ColumnPlan>();
+                && Helpers.IsTruthy(selfRef)).Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var columnsToInsert = tablePlan.Columns
             .Where(c => !c.Generator.Equals("skip", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         var firstPassColumns = isSelfRef
-            ? columnsToInsert.Where(c => !selfRefColumns.Any(sr =>
-                sr.Name.Equals(c.Name, StringComparison.OrdinalIgnoreCase))).ToList()
+            ? columnsToInsert.Where(c => !selfRefColumnNames.Contains(c.Name)).ToList()
             : columnsToInsert;
 
         var firstPassColumnInfos = firstPassColumns
@@ -64,104 +58,32 @@ public class DataInserter
 
         var uniqueConstraints = BuildUniqueConstraintsFromPlan(tablePlan);
 
-        _generatedKeys.TryAdd(tablePlan.FullName, []);
-        _generatedPkSets.TryAdd(tablePlan.FullName, []);
-        InitUniqueConstraintSets(tablePlan.FullName, uniqueConstraints);
+        var fkGroups = BuildFkGroupsFromPlan(firstPassColumns);
 
-        await using var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync();
-
-        var insertedCount = 0;
-
-        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
-        try
+        List<ForeignKeyInfo>? selfRefFks = null;
+        if (isSelfRef)
         {
-            for (var i = 0; i < tablePlan.RowCount; i++)
-            {
-                Dictionary<string, object?> row;
-                try
+            selfRefFks = tablePlan.Columns
+                .Where(c => selfRefColumnNames.Contains(c.Name))
+                .Select(c => new ForeignKeyInfo
                 {
-                    var attempt = 0;
-                    string? pkKey;
-                    bool uniqueOk;
-                    do
-                    {
-                        row = BuildRowFromPlan(firstPassColumns, tablePlan);
-                        pkKey = BuildPkKey(table, row);
-                        uniqueOk = TryAddUniqueKeys(tablePlan.FullName, uniqueConstraints, row, attempt > 0);
-                        attempt++;
-                    } while ((!uniqueOk || (pkKey != null
-                             && !_generatedPkSets[tablePlan.FullName].Add(pkKey)))
-                             && attempt < MaxPkRetries);
-
-                    if (attempt >= MaxPkRetries)
-                        throw new InvalidOperationException(
-                            $"Could not generate unique values for [{tablePlan.FullName}] " +
-                            $"after {MaxPkRetries} attempts. Consider reducing RowsPerTable or " +
-                            $"using a wider value range.");
-                }
-                catch (DataGenerationException) { throw; }
-                catch (Exception ex)
-                {
-                    throw new DataGenerationException(
-                        tablePlan.FullName, i, null, ex);
-                }
-
-                try
-                {
-                    var pkValues = await InsertRowAsync(
-                        connection, transaction, table, firstPassColumnInfos, row);
-
-                    if (pkValues != null)
-                        _generatedKeys[tablePlan.FullName].Add(pkValues);
-                }
-                catch (DataGenerationException) { throw; }
-                catch (Exception ex) when (IsCheckConstraintViolation(ex))
-                {
-                    throw new DataGenerationException(
-                        tablePlan.FullName, i, null,
-                        new InvalidOperationException(
-                            EnhanceCheckConstraintMessage(ex, tablePlan.FullName, i, table), ex));
-                }
-                catch (Exception ex)
-                {
-                    var failedCol = DetectFailedColumnFromPlan(ex, firstPassColumns, row);
-                    throw new DataGenerationException(
-                        tablePlan.FullName, i, failedCol, ex);
-                }
-
-                insertedCount++;
-            }
-
-            if (isSelfRef && _generatedKeys[tablePlan.FullName].Count > 0)
-            {
-                var selfRefFks = selfRefColumns.Select(c =>
-                {
-                    var args = c.GeneratorArgs;
-                    return new ForeignKeyInfo
-                    {
-                        FkName = GetArgString(args, "compositeFkGroup"),
-                        ParentSchema = tablePlan.Schema,
-                        ParentTable = tablePlan.Table,
-                        ParentColumn = c.Name,
-                        ReferencedSchema = GetArgString(args, "referencedSchema"),
-                        ReferencedTable = GetArgString(args, "referencedTable"),
-                        ReferencedColumn = GetArgString(args, "referencedColumn"),
-                    };
+                    FkName = Helpers.GetArgString(c.GeneratorArgs, "compositeFkGroup"),
+                    ParentSchema = tablePlan.Schema,
+                    ParentTable = tablePlan.Table,
+                    ParentColumn = c.Name,
+                    ReferencedSchema = Helpers.GetArgString(c.GeneratorArgs, "referencedSchema"),
+                    ReferencedTable = Helpers.GetArgString(c.GeneratorArgs, "referencedTable"),
+                    ReferencedColumn = Helpers.GetArgString(c.GeneratorArgs, "referencedColumn"),
                 }).ToList();
-
-                await UpdateSelfReferencesAsync(connection, transaction, table, selfRefFks);
-            }
-
-            await transaction.CommitAsync();
-        }
-        catch
-        {
-            await transaction.RollbackAsync();
-            throw;
         }
 
-        return insertedCount;
+        return await InsertCoreAsync(
+            table, tablePlan.FullName, tablePlan.RowCount,
+            firstPassColumnInfos, uniqueConstraints,
+            isSelfRef, selfRefFks,
+            () => BuildRowFromFkGroups(firstPassColumns, fkGroups,
+                col => _valueGen.GenerateFromPlan((ColumnPlan)col) ?? DBNull.Value),
+            (ex, row) => DetectFailedColumn(ex, firstPassColumns, row));
     }
 
     public async Task<int> InsertTableAsync(TableInfo table, int rowCount)
@@ -172,8 +94,6 @@ public class DataInserter
             : [];
 
         var nonSelfRefFks = table.ForeignKeys.Where(fk => !fk.IsSelfReferencing).ToList();
-        var fkColumnNames = new HashSet<string>(
-            table.ForeignKeys.Select(fk => fk.ParentColumn), StringComparer.OrdinalIgnoreCase);
 
         var columnsToInsert = table.Columns
             .Where(c => !c.IsIdentity && !c.IsComputed && !c.IsRowVersion
@@ -187,9 +107,31 @@ public class DataInserter
 
         var uniqueConstraints = table.UniqueConstraints;
 
-        _generatedKeys.TryAdd(table.FullName, []);
-        _generatedPkSets.TryAdd(table.FullName, []);
-        InitUniqueConstraintSets(table.FullName, uniqueConstraints);
+        var fkGroups = BuildFkGroupsFromSchema(nonSelfRefFks);
+
+        return await InsertCoreAsync(
+            table, table.FullName, rowCount,
+            firstPassColumns, uniqueConstraints,
+            isSelfRef, selfRefFks,
+            () => BuildRowFromFkGroups(firstPassColumns, fkGroups,
+                col => _valueGen.Generate((ColumnInfo)col) ?? DBNull.Value),
+            (ex, row) => DetectFailedColumn(ex, firstPassColumns, row));
+    }
+
+    private async Task<int> InsertCoreAsync(
+        TableInfo table,
+        string fullName,
+        int rowCount,
+        List<ColumnInfo> insertColumns,
+        List<UniqueConstraintInfo> uniqueConstraints,
+        bool isSelfRef,
+        List<ForeignKeyInfo>? selfRefFks,
+        Func<Dictionary<string, object?>> buildRow,
+        Func<Exception, Dictionary<string, object?>, ColumnFailureDetail?> detectFailedColumn)
+    {
+        _generatedKeys.TryAdd(fullName, []);
+        _generatedPkSets.TryAdd(fullName, []);
+        InitUniqueConstraintSets(fullName, uniqueConstraints);
 
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync();
@@ -209,57 +151,54 @@ public class DataInserter
                     bool uniqueOk;
                     do
                     {
-                        row = BuildRow(firstPassColumns, nonSelfRefFks, fkColumnNames, table);
+                        row = buildRow();
                         pkKey = BuildPkKey(table, row);
-                        uniqueOk = TryAddUniqueKeys(table.FullName, uniqueConstraints, row, attempt > 0);
+                        uniqueOk = TryAddUniqueKeys(fullName, uniqueConstraints, row, attempt > 0);
                         attempt++;
                     } while ((!uniqueOk || (pkKey != null
-                             && !_generatedPkSets[table.FullName].Add(pkKey)))
+                             && !_generatedPkSets[fullName].Add(pkKey)))
                              && attempt < MaxPkRetries);
 
                     if (attempt >= MaxPkRetries)
                         throw new InvalidOperationException(
-                            $"Could not generate unique values for [{table.FullName}] " +
+                            $"Could not generate unique values for [{fullName}] " +
                             $"after {MaxPkRetries} attempts. Consider reducing RowsPerTable or " +
                             $"using a wider value range.");
                 }
                 catch (DataGenerationException) { throw; }
                 catch (Exception ex)
                 {
-                    throw new DataGenerationException(
-                        table.FullName, i, null, ex);
+                    throw new DataGenerationException(fullName, i, null, ex);
                 }
 
                 try
                 {
                     var pkValues = await InsertRowAsync(
-                        connection, transaction, table, firstPassColumns, row);
+                        connection, transaction, table, insertColumns, row);
 
                     if (pkValues != null)
-                        _generatedKeys[table.FullName].Add(pkValues);
+                        _generatedKeys[fullName].Add(pkValues);
                 }
                 catch (DataGenerationException) { throw; }
                 catch (Exception ex) when (IsCheckConstraintViolation(ex))
                 {
                     throw new DataGenerationException(
-                        table.FullName, i, null,
+                        fullName, i, null,
                         new InvalidOperationException(
-                            EnhanceCheckConstraintMessage(ex, table.FullName, i, table), ex));
+                            EnhanceCheckConstraintMessage(ex, fullName, i, table), ex));
                 }
                 catch (Exception ex)
                 {
-                    var failedCol = DetectFailedColumn(ex, firstPassColumns, row);
-                    throw new DataGenerationException(
-                        table.FullName, i, failedCol, ex);
+                    var failedCol = detectFailedColumn(ex, row);
+                    throw new DataGenerationException(fullName, i, failedCol, ex);
                 }
 
                 insertedCount++;
             }
 
-            if (isSelfRef && _generatedKeys[table.FullName].Count > 0)
+            if (isSelfRef && selfRefFks != null && _generatedKeys[fullName].Count > 0)
             {
-                await UpdateSelfReferencesAsync(
-                    connection, transaction, table, selfRefFks);
+                await UpdateSelfReferencesAsync(connection, transaction, table, selfRefFks);
             }
 
             await transaction.CommitAsync();
@@ -273,99 +212,48 @@ public class DataInserter
         return insertedCount;
     }
 
-    private Dictionary<string, object?> BuildRowFromPlan(
-        List<ColumnPlan> columns,
-        TablePlan tablePlan)
+    private record FkGroup(
+        string RefFullName,
+        List<(string ParentColumn, string ReferencedColumn, bool IsNullable)> Columns);
+
+    private static List<FkGroup> BuildFkGroupsFromSchema(List<ForeignKeyInfo> fks)
     {
-        var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-
-        var resolvedFkValues = ResolveGroupedFkValuesFromPlan(columns);
-
-        foreach (var colPlan in columns)
-        {
-            if (colPlan.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase))
-            {
-                if (resolvedFkValues.TryGetValue(colPlan.Name, out var fkValue))
-                {
-                    row[colPlan.Name] = fkValue;
-                    continue;
-                }
-
-                if (colPlan.IsNullable)
-                {
-                    row[colPlan.Name] = DBNull.Value;
-                    continue;
-                }
-
-                row[colPlan.Name] = _valueGen.GenerateFromPlan(colPlan) ?? DBNull.Value;
-                continue;
-            }
-
-            if (colPlan.IsNullable && _random.NextDouble() < 0.1)
-            {
-                row[colPlan.Name] = DBNull.Value;
-                continue;
-            }
-
-            row[colPlan.Name] = _valueGen.GenerateFromPlan(colPlan) ?? DBNull.Value;
-        }
-
-        return row;
+        return fks
+            .GroupBy(fk => fk.FkName, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new FkGroup(
+                g.First().FullReferencedTableName,
+                g.Select(fk => (fk.ParentColumn, fk.ReferencedColumn, false)).ToList()))
+            .ToList();
     }
 
-    private Dictionary<string, object?> ResolveGroupedFkValuesFromPlan(List<ColumnPlan> columns)
+    private static List<FkGroup> BuildFkGroupsFromPlan<T>(List<T> columns) where T : IColumnMetadata
     {
-        var resolved = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-
         var fkColumns = columns
+            .OfType<ColumnPlan>()
             .Where(c => c.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-        var grouped = fkColumns
-            .GroupBy(c => GetArgString(c.GeneratorArgs, "compositeFkGroup"), StringComparer.OrdinalIgnoreCase);
-
-        foreach (var group in grouped)
-        {
-            var members = group.ToList();
-            var first = members[0];
-            var refSchema = GetArgString(first.GeneratorArgs, "referencedSchema");
-            var refTable = GetArgString(first.GeneratorArgs, "referencedTable");
-            var refFullName = $"{refSchema}.{refTable}";
-
-            if (_generatedKeys.TryGetValue(refFullName, out var parentRows) && parentRows.Count > 0)
+        return fkColumns
+            .GroupBy(c => Helpers.GetArgString(c.GeneratorArgs, "compositeFkGroup"), StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
             {
-                var parentRow = parentRows[_random.Next(parentRows.Count)];
-
-                foreach (var col in members)
-                {
-                    var refColumn = GetArgString(col.GeneratorArgs, "referencedColumn");
-                    if (parentRow.TryGetValue(refColumn, out var value))
-                        resolved[col.Name] = value;
-                }
-            }
-            else
-            {
-                foreach (var col in members)
-                {
-                    resolved[col.Name] = col.IsNullable
-                        ? DBNull.Value
-                        : (_valueGen.GenerateFromPlan(col) ?? DBNull.Value);
-                }
-            }
-        }
-
-        return resolved;
+                var first = g.First();
+                var refSchema = Helpers.GetArgString(first.GeneratorArgs, "referencedSchema");
+                var refTable = Helpers.GetArgString(first.GeneratorArgs, "referencedTable");
+                return new FkGroup(
+                    $"{refSchema}.{refTable}",
+                    g.Select(c => (c.Name, Helpers.GetArgString(c.GeneratorArgs, "referencedColumn"), c.IsNullable)).ToList());
+            })
+            .ToList();
     }
 
-    private Dictionary<string, object?> BuildRow(
-        List<ColumnInfo> columns,
-        List<ForeignKeyInfo> nonSelfRefFks,
-        HashSet<string> fkColumnNames,
-        TableInfo table)
+    private Dictionary<string, object?> BuildRowFromFkGroups<T>(
+        List<T> columns,
+        List<FkGroup> fkGroups,
+        Func<IColumnMetadata, object> generateValue) where T : IColumnMetadata
     {
         var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-
-        var resolvedFkValues = ResolveGroupedFkValues(table, nonSelfRefFks, columns);
+        var resolvedFkValues = ResolveFkValues(fkGroups, columns, generateValue);
 
         foreach (var col in columns)
         {
@@ -375,52 +263,52 @@ public class DataInserter
                 continue;
             }
 
+            if (col is ColumnPlan cp && cp.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase))
+            {
+                row[col.Name] = col.IsNullable ? DBNull.Value : generateValue(col);
+                continue;
+            }
+
             if (col.IsNullable && _random.NextDouble() < 0.1)
             {
                 row[col.Name] = DBNull.Value;
                 continue;
             }
 
-            row[col.Name] = _valueGen.Generate(col) ?? DBNull.Value;
+            row[col.Name] = generateValue(col);
         }
 
         return row;
     }
 
-    private Dictionary<string, object?> ResolveGroupedFkValues(
-        TableInfo table,
-        List<ForeignKeyInfo> fks,
-        List<ColumnInfo> columns)
+    private Dictionary<string, object?> ResolveFkValues<T>(
+        List<FkGroup> fkGroups,
+        List<T> columns,
+        Func<IColumnMetadata, object> generateValue) where T : IColumnMetadata
     {
         var resolved = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
-        var grouped = fks
-            .GroupBy(fk => fk.FkName, StringComparer.OrdinalIgnoreCase);
-
-        foreach (var group in grouped)
+        foreach (var group in fkGroups)
         {
-            var pairs = group.ToList();
-            var refFullName = pairs[0].FullReferencedTableName;
-
-            if (_generatedKeys.TryGetValue(refFullName, out var parentRows) && parentRows.Count > 0)
+            if (_generatedKeys.TryGetValue(group.RefFullName, out var parentRows) && parentRows.Count > 0)
             {
                 var parentRow = parentRows[_random.Next(parentRows.Count)];
 
-                foreach (var fk in pairs)
+                foreach (var (parentColumn, referencedColumn, _) in group.Columns)
                 {
-                    if (parentRow.TryGetValue(fk.ReferencedColumn, out var value))
-                        resolved[fk.ParentColumn] = value;
+                    if (parentRow.TryGetValue(referencedColumn, out var value))
+                        resolved[parentColumn] = value;
                 }
             }
             else
             {
-                foreach (var fk in pairs)
+                foreach (var (parentColumn, _, isNullable) in group.Columns)
                 {
                     var col = columns.FirstOrDefault(c =>
-                        c.Name.Equals(fk.ParentColumn, StringComparison.OrdinalIgnoreCase));
-                    resolved[fk.ParentColumn] = col is { IsNullable: true }
+                        c.Name.Equals(parentColumn, StringComparison.OrdinalIgnoreCase));
+                    resolved[parentColumn] = (col is { IsNullable: true } || isNullable)
                         ? DBNull.Value
-                        : (col != null ? _valueGen.Generate(col) ?? DBNull.Value : DBNull.Value);
+                        : (col != null ? generateValue(col) : DBNull.Value);
                 }
             }
         }
@@ -428,10 +316,10 @@ public class DataInserter
         return resolved;
     }
 
-    private static ColumnFailureDetail? DetectFailedColumn(
+    private static ColumnFailureDetail? DetectFailedColumn<T>(
         Exception ex,
-        List<ColumnInfo> columns,
-        Dictionary<string, object?> row)
+        List<T> columns,
+        Dictionary<string, object?> row) where T : IColumnMetadata
     {
         var msg = ex.Message;
         foreach (var c in columns)
@@ -439,6 +327,7 @@ public class DataInserter
             if (!msg.Contains(c.Name, StringComparison.OrdinalIgnoreCase))
                 continue;
             row.TryGetValue(c.Name, out var val);
+            var generator = c is ColumnPlan cp ? cp.Generator : "(auto)";
             return new ColumnFailureDetail
             {
                 ColumnName = c.Name,
@@ -446,33 +335,7 @@ public class DataInserter
                 MaxLength = c.MaxLength,
                 Precision = c.Precision,
                 Scale = c.Scale,
-                Generator = "(auto)",
-                GeneratedValueType = val is null or DBNull ? null : val.GetType().Name,
-                GeneratedValuePreview = FormatValuePreview(val),
-            };
-        }
-        return null;
-    }
-
-    private static ColumnFailureDetail? DetectFailedColumnFromPlan(
-        Exception ex,
-        List<ColumnPlan> columns,
-        Dictionary<string, object?> row)
-    {
-        var msg = ex.Message;
-        foreach (var c in columns)
-        {
-            if (!msg.Contains(c.Name, StringComparison.OrdinalIgnoreCase))
-                continue;
-            row.TryGetValue(c.Name, out var val);
-            return new ColumnFailureDetail
-            {
-                ColumnName = c.Name,
-                SqlType = c.SqlType,
-                MaxLength = c.MaxLength,
-                Precision = c.Precision,
-                Scale = c.Scale,
-                Generator = c.Generator,
+                Generator = generator,
                 GeneratedValueType = val is null or DBNull ? null : val.GetType().Name,
                 GeneratedValuePreview = FormatValuePreview(val),
             };
@@ -539,13 +402,13 @@ public class DataInserter
                 .Where(c => c.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase))
                 .Select(c => new ForeignKeyInfo
                 {
-                    FkName = GetArgString(c.GeneratorArgs, "compositeFkGroup"),
+                    FkName = Helpers.GetArgString(c.GeneratorArgs, "compositeFkGroup"),
                     ParentSchema = tablePlan.Schema,
                     ParentTable = tablePlan.Table,
                     ParentColumn = c.Name,
-                    ReferencedSchema = GetArgString(c.GeneratorArgs, "referencedSchema"),
-                    ReferencedTable = GetArgString(c.GeneratorArgs, "referencedTable"),
-                    ReferencedColumn = GetArgString(c.GeneratorArgs, "referencedColumn"),
+                    ReferencedSchema = Helpers.GetArgString(c.GeneratorArgs, "referencedSchema"),
+                    ReferencedTable = Helpers.GetArgString(c.GeneratorArgs, "referencedTable"),
+                    ReferencedColumn = Helpers.GetArgString(c.GeneratorArgs, "referencedColumn"),
                 }).ToList()
         };
 
@@ -760,7 +623,6 @@ public class DataInserter
             return !string.Equals(v.ToString(), expected, StringComparison.OrdinalIgnoreCase);
         }
 
-        // Unrecognized predicate: fall back to full-table uniqueness (stricter but safe)
         return true;
     }
 
@@ -797,20 +659,6 @@ public class DataInserter
             }
         }
         return -1;
-    }
-
-    private static bool IsTruthy(object? value)
-    {
-        if (value is bool b) return b;
-        if (value is string s) return s.Equals("true", StringComparison.OrdinalIgnoreCase);
-        return false;
-    }
-
-    private static string GetArgString(Dictionary<string, object?> args, string key)
-    {
-        if (!args.TryGetValue(key, out var value) || value is null) return string.Empty;
-        if (value is string s) return s;
-        return value.ToString() ?? string.Empty;
     }
 
     private static SqlDbType MapSqlType(string sqlType) =>
@@ -879,10 +727,6 @@ public class DataInserter
 
         var sb = new StringBuilder();
         var hasPkColumns = table.PrimaryKeyColumns.Count > 0;
-        var identityPkCols = table.Columns
-            .Where(c => c.IsPrimaryKey && c.IsIdentity)
-            .Select(c => c.Name)
-            .ToList();
 
         sb.Append($"INSERT INTO [{table.Schema}].[{table.TableName}]");
 
@@ -939,8 +783,6 @@ public class DataInserter
                     pkValues[table.PrimaryKeyColumns[idx]] = reader.GetValue(idx);
                 }
 
-                // Also include non-PK columns that we inserted (for FK references that
-                // target unique columns rather than PKs)
                 foreach (var col in columns)
                 {
                     if (!pkValues.ContainsKey(col.Name) && row.TryGetValue(col.Name, out var rv) && rv != DBNull.Value && rv != null)

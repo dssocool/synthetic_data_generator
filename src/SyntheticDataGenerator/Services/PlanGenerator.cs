@@ -6,40 +6,6 @@ namespace SyntheticDataGenerator.Services;
 
 public class PlanGenerator
 {
-    private static readonly (Func<string, bool> Match, string Generator, Dictionary<string, object?>? Args)[] NameRules =
-    [
-        (n => Like(n, "first") && Like(n, "name"), "Name.FirstName", null),
-        (n => Like(n, "last") && Like(n, "name"),  "Name.LastName", null),
-        (n => Like(n, "email"),                     "Internet.Email", null),
-        (n => Like(n, "phone"),                     "Phone.PhoneNumber", new() { ["format"] = "###-###-####" }),
-        (n => Like(n, "street") || (Like(n, "address") && !Like(n, "email")),
-                                                    "Address.StreetAddress", null),
-        (n => Like(n, "city"),                      "Address.City", null),
-        (n => Like(n, "state"),                     "Address.StateAbbr", null),
-        (n => Like(n, "zip") || Like(n, "postal"),  "Address.ZipCode", null),
-        (n => Like(n, "country"),                   "Address.Country", null),
-        (n => Like(n, "url") || Like(n, "website"), "Internet.Url", null),
-        (n => Like(n, "description") || Like(n, "comment") || Like(n, "note"),
-                                                    "Lorem.Sentence", null),
-        (n => Like(n, "price") || Like(n, "amount") || Like(n, "cost") || Like(n, "salary"),
-                                                    "Finance.Amount", new() { ["min"] = 1m, ["max"] = 10000m }),
-        (n => Like(n, "company"),                   "Company.CompanyName", null),
-        (n => Like(n, "title"),                     "Name.JobTitle", null),
-        (n => Like(n, "quantity") || Like(n, "count") || Like(n, "qty"),
-                                                    "Random.Int", new() { ["min"] = 1, ["max"] = 100 }),
-        (n => Like(n, "status"),                    "PickRandom", new() { ["values"] = new[] { "Active", "Inactive", "Pending" } }),
-        (n => n.StartsWith("is_", StringComparison.OrdinalIgnoreCase)
-           || n.StartsWith("has_", StringComparison.OrdinalIgnoreCase),
-                                                    "Random.Bool", null),
-        (n => Like(n, "username") || Like(n, "user_name"),
-                                                    "Internet.UserName", null),
-        (n => Like(n, "password") || Like(n, "hash"),
-                                                    "Internet.Password", null),
-        (n => Like(n, "image") || Like(n, "avatar") || Like(n, "photo"),
-                                                    "Internet.Avatar", null),
-        (n => Like(n, "name"),                      "Name.FullName", null),
-    ];
-
     private static readonly HashSet<string> StringCompatibleTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "varchar", "nvarchar", "char", "nchar", "text", "ntext", "xml"
@@ -212,13 +178,13 @@ public class PlanGenerator
         {
             var name = col.Name.ToLowerInvariant();
 
-            foreach (var (match, generator, args) in NameRules)
+            foreach (var rule in NameHeuristics.Rules)
             {
-                if (match(name))
+                if (rule.Match(name))
                 {
-                    colPlan.Generator = generator;
-                    if (args != null)
-                        colPlan.GeneratorArgs = new Dictionary<string, object?>(args);
+                    colPlan.Generator = rule.GeneratorName;
+                    if (rule.Args != null)
+                        colPlan.GeneratorArgs = new Dictionary<string, object?>(rule.Args);
                     return;
                 }
             }
@@ -241,7 +207,4 @@ public class PlanGenerator
     internal static bool IsUnsupportedType(ColumnInfo col) =>
         UnsupportedTypes.Contains(col.SqlType)
         || (col.IsUserDefined && !col.SqlType.Equals("sql_variant", StringComparison.OrdinalIgnoreCase));
-
-    private static bool Like(string input, string fragment) =>
-        input.Contains(fragment, StringComparison.OrdinalIgnoreCase);
 }

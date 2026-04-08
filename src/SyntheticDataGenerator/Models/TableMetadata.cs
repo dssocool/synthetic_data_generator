@@ -1,6 +1,23 @@
 namespace SyntheticDataGenerator.Models;
 
-public class ColumnInfo
+public interface IColumnMetadata
+{
+    string Name { get; }
+    string SqlType { get; }
+    int MaxLength { get; }
+    byte Precision { get; }
+    byte Scale { get; }
+    bool IsNullable { get; }
+    bool IsPrimaryKey { get; }
+    bool IsIdentity { get; }
+    bool IsComputed { get; }
+    bool IsRowVersion { get; }
+    bool IsUnique { get; }
+    bool IsSequenceDefault { get; }
+    bool HasDefault { get; }
+}
+
+public class ColumnInfo : IColumnMetadata
 {
     public string Name { get; set; } = string.Empty;
     public string SqlType { get; set; } = string.Empty;
