@@ -127,6 +127,8 @@ public class PlanGenerator
                     IsPrimaryKey = col.IsPrimaryKey,
                     IsComputed = col.IsComputed,
                     IsRowVersion = col.IsRowVersion,
+                    HasDefault = col.HasDefault,
+                    IsUnique = col.IsUnique,
                 };
 
                 if (col.IsIdentity || col.IsComputed || col.IsRowVersion)

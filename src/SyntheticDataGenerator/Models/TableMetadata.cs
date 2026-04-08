@@ -13,8 +13,12 @@ public class ColumnInfo
     public bool IsComputed { get; set; }
     public bool IsRowVersion { get; set; }
     public bool IsUserDefined { get; set; }
+    public bool IsUnique { get; set; }
+    public string? DefaultDefinition { get; set; }
 
     public string FullTableName { get; set; } = string.Empty;
+
+    public bool HasDefault => DefaultDefinition != null;
 }
 
 public class ForeignKeyInfo
@@ -50,6 +54,18 @@ public class CompositeForeignKey
     public bool IsComposite => ColumnPairs.Count > 1;
 }
 
+public class CheckConstraintInfo
+{
+    public string Name { get; set; } = string.Empty;
+    public string Definition { get; set; } = string.Empty;
+}
+
+public class UniqueConstraintInfo
+{
+    public string Name { get; set; } = string.Empty;
+    public List<string> Columns { get; set; } = [];
+}
+
 public class TableInfo
 {
     public string Schema { get; set; } = string.Empty;
@@ -57,6 +73,8 @@ public class TableInfo
     public List<ColumnInfo> Columns { get; set; } = [];
     public List<ForeignKeyInfo> ForeignKeys { get; set; } = [];
     public List<string> PrimaryKeyColumns { get; set; } = [];
+    public List<CheckConstraintInfo> CheckConstraints { get; set; } = [];
+    public List<UniqueConstraintInfo> UniqueConstraints { get; set; } = [];
 
     public string FullName => $"{Schema}.{TableName}";
 

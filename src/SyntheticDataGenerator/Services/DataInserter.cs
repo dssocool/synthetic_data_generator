@@ -18,6 +18,9 @@ public class DataInserter
     // schema.table -> set of serialized PK tuples for duplicate detection
     private readonly Dictionary<string, HashSet<string>> _generatedPkSets = new();
 
+    // schema.table -> constraintName -> set of serialized unique tuples
+    private readonly Dictionary<string, Dictionary<string, HashSet<string>>> _generatedUniqueSets = new();
+
     private const int MaxPkRetries = 100;
 
     public DataInserter(
@@ -58,8 +61,11 @@ public class DataInserter
             .Select(cp => table.Columns.First(c => c.Name.Equals(cp.Name, StringComparison.OrdinalIgnoreCase)))
             .ToList();
 
+        var uniqueConstraints = BuildUniqueConstraintsFromPlan(tablePlan);
+
         _generatedKeys.TryAdd(tablePlan.FullName, []);
         _generatedPkSets.TryAdd(tablePlan.FullName, []);
+        InitUniqueConstraintSets(tablePlan.FullName, uniqueConstraints);
 
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync();
@@ -76,20 +82,22 @@ public class DataInserter
                 {
                     var attempt = 0;
                     string? pkKey;
+                    bool uniqueOk;
                     do
                     {
                         row = BuildRowFromPlan(firstPassColumns, tablePlan);
                         pkKey = BuildPkKey(table, row);
+                        uniqueOk = TryAddUniqueKeys(tablePlan.FullName, uniqueConstraints, row, attempt > 0);
                         attempt++;
-                    } while (pkKey != null
-                             && !_generatedPkSets[tablePlan.FullName].Add(pkKey)
+                    } while ((!uniqueOk || (pkKey != null
+                             && !_generatedPkSets[tablePlan.FullName].Add(pkKey)))
                              && attempt < MaxPkRetries);
 
-                    if (pkKey != null && attempt >= MaxPkRetries)
+                    if (attempt >= MaxPkRetries)
                         throw new InvalidOperationException(
-                            $"Could not generate a unique primary key for [{tablePlan.FullName}] " +
+                            $"Could not generate unique values for [{tablePlan.FullName}] " +
                             $"after {MaxPkRetries} attempts. Consider reducing RowsPerTable or " +
-                            $"using a wider PK value range.");
+                            $"using a wider value range.");
                 }
                 catch (DataGenerationException) { throw; }
                 catch (Exception ex)
@@ -107,6 +115,13 @@ public class DataInserter
                         _generatedKeys[tablePlan.FullName].Add(pkValues);
                 }
                 catch (DataGenerationException) { throw; }
+                catch (Exception ex) when (IsCheckConstraintViolation(ex))
+                {
+                    throw new DataGenerationException(
+                        tablePlan.FullName, i, null,
+                        new InvalidOperationException(
+                            EnhanceCheckConstraintMessage(ex, tablePlan.FullName, i, table), ex));
+                }
                 catch (Exception ex)
                 {
                     var failedCol = DetectFailedColumnFromPlan(ex, firstPassColumns, row);
@@ -169,8 +184,11 @@ public class DataInserter
                 fk.ParentColumn.Equals(c.Name, StringComparison.OrdinalIgnoreCase))).ToList()
             : columnsToInsert;
 
+        var uniqueConstraints = table.UniqueConstraints;
+
         _generatedKeys.TryAdd(table.FullName, []);
         _generatedPkSets.TryAdd(table.FullName, []);
+        InitUniqueConstraintSets(table.FullName, uniqueConstraints);
 
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync();
@@ -187,20 +205,22 @@ public class DataInserter
                 {
                     var attempt = 0;
                     string? pkKey;
+                    bool uniqueOk;
                     do
                     {
                         row = BuildRow(firstPassColumns, nonSelfRefFks, fkColumnNames, table);
                         pkKey = BuildPkKey(table, row);
+                        uniqueOk = TryAddUniqueKeys(table.FullName, uniqueConstraints, row, attempt > 0);
                         attempt++;
-                    } while (pkKey != null
-                             && !_generatedPkSets[table.FullName].Add(pkKey)
+                    } while ((!uniqueOk || (pkKey != null
+                             && !_generatedPkSets[table.FullName].Add(pkKey)))
                              && attempt < MaxPkRetries);
 
-                    if (pkKey != null && attempt >= MaxPkRetries)
+                    if (attempt >= MaxPkRetries)
                         throw new InvalidOperationException(
-                            $"Could not generate a unique primary key for [{table.FullName}] " +
+                            $"Could not generate unique values for [{table.FullName}] " +
                             $"after {MaxPkRetries} attempts. Consider reducing RowsPerTable or " +
-                            $"using a wider PK value range.");
+                            $"using a wider value range.");
                 }
                 catch (DataGenerationException) { throw; }
                 catch (Exception ex)
@@ -218,6 +238,13 @@ public class DataInserter
                         _generatedKeys[table.FullName].Add(pkValues);
                 }
                 catch (DataGenerationException) { throw; }
+                catch (Exception ex) when (IsCheckConstraintViolation(ex))
+                {
+                    throw new DataGenerationException(
+                        table.FullName, i, null,
+                        new InvalidOperationException(
+                            EnhanceCheckConstraintMessage(ex, table.FullName, i, table), ex));
+                }
                 catch (Exception ex)
                 {
                     var failedCol = DetectFailedColumn(ex, firstPassColumns, row);
@@ -452,6 +479,25 @@ public class DataInserter
         return null;
     }
 
+    private static bool IsCheckConstraintViolation(Exception ex)
+    {
+        return ex is SqlException sqlEx && sqlEx.Errors.Cast<SqlError>().Any(e => e.Number == 547);
+    }
+
+    private static string EnhanceCheckConstraintMessage(
+        Exception ex, string tableName, int rowIndex, TableInfo table)
+    {
+        var msg = $"CHECK constraint violation inserting row {rowIndex} into {tableName}";
+        if (table.CheckConstraints.Count > 0)
+        {
+            var constraintDetails = string.Join("; ",
+                table.CheckConstraints.Select(cc => $"{cc.Name}: {cc.Definition}"));
+            msg += $". Table CHECK constraints: [{constraintDetails}]";
+        }
+        msg += $". SQL error: {ex.Message}";
+        return msg;
+    }
+
     private static string? FormatValuePreview(object? value)
     {
         if (value is null or DBNull) return "NULL";
@@ -479,6 +525,8 @@ public class DataInserter
                 IsPrimaryKey = cp.IsPrimaryKey,
                 IsComputed = cp.IsComputed,
                 IsRowVersion = cp.IsRowVersion,
+                IsUnique = cp.IsUnique,
+                DefaultDefinition = cp.HasDefault ? "(from plan)" : null,
                 FullTableName = tablePlan.FullName
             }).ToList(),
             PrimaryKeyColumns = tablePlan.Columns
@@ -500,6 +548,85 @@ public class DataInserter
         };
 
         return table;
+    }
+
+    private static List<UniqueConstraintInfo> BuildUniqueConstraintsFromPlan(TablePlan tablePlan)
+    {
+        var uniqueColumns = tablePlan.Columns
+            .Where(c => c.IsUnique && !c.IsPrimaryKey)
+            .ToList();
+
+        return uniqueColumns.Select(c => new UniqueConstraintInfo
+        {
+            Name = $"UQ_Plan_{c.Name}",
+            Columns = [c.Name]
+        }).ToList();
+    }
+
+    private void InitUniqueConstraintSets(string fullName, List<UniqueConstraintInfo> constraints)
+    {
+        if (constraints.Count == 0) return;
+        if (!_generatedUniqueSets.TryGetValue(fullName, out var sets))
+        {
+            sets = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            _generatedUniqueSets[fullName] = sets;
+        }
+        foreach (var uc in constraints)
+            sets.TryAdd(uc.Name, []);
+    }
+
+    private bool TryAddUniqueKeys(
+        string fullName,
+        List<UniqueConstraintInfo> constraints,
+        Dictionary<string, object?> row,
+        bool isRetry)
+    {
+        if (constraints.Count == 0) return true;
+        if (!_generatedUniqueSets.TryGetValue(fullName, out var sets)) return true;
+
+        var keysToAdd = new List<(string ConstraintName, string Key)>();
+
+        foreach (var uc in constraints)
+        {
+            var key = BuildUniqueKey(uc.Columns, row);
+            if (key == null) continue;
+
+            if (!sets.TryGetValue(uc.Name, out var set)) continue;
+            if (set.Contains(key))
+            {
+                if (isRetry)
+                {
+                    foreach (var (cn, k) in keysToAdd)
+                    {
+                        if (sets.TryGetValue(cn, out var s))
+                            s.Remove(k);
+                    }
+                }
+                return false;
+            }
+            keysToAdd.Add((uc.Name, key));
+        }
+
+        foreach (var (constraintName, key) in keysToAdd)
+        {
+            if (sets.TryGetValue(constraintName, out var set))
+                set.Add(key);
+        }
+
+        return true;
+    }
+
+    private static string? BuildUniqueKey(List<string> columns, Dictionary<string, object?> row)
+    {
+        var parts = new List<string>(columns.Count);
+        foreach (var col in columns)
+        {
+            if (row.TryGetValue(col, out var val) && val is not null and not DBNull)
+                parts.Add(val.ToString()!);
+            else
+                return null;
+        }
+        return string.Join("|", parts);
     }
 
     private static bool IsTruthy(object? value)

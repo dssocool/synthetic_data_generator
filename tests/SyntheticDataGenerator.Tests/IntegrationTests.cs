@@ -1375,4 +1375,498 @@ public class IntegrationTests
             Assert.IsType<string>(row["BaseType"]);
         }
     }
+
+    // ══════════════════════════════════════════════
+    // 31. DEFAULT Constraint — Scalar Types via Skip
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test31_DefaultConstraintScalarTypes()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDefaultScalar (
+                Id         INT IDENTITY(1,1) PRIMARY KEY,
+                ColInt     INT            NOT NULL DEFAULT 0,
+                ColDate    DATETIME2      NOT NULL DEFAULT GETDATE(),
+                ColStr     NVARCHAR(50)   NOT NULL DEFAULT 'Pending',
+                ColGuid    UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID()
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestDefaultScalar").ToList();
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
+
+        var tablePlan = plan.Tables[0];
+
+        // Verify HasDefault is set on all default columns
+        foreach (var colName in new[] { "ColInt", "ColDate", "ColStr", "ColGuid" })
+        {
+            var col = tablePlan.Columns.First(c =>
+                c.Name.Equals(colName, StringComparison.OrdinalIgnoreCase));
+            Assert.True(col.HasDefault, $"{colName} should have HasDefault=true");
+        }
+
+        // Set all default columns to skip so the DB fills them
+        foreach (var col in tablePlan.Columns)
+        {
+            if (col.HasDefault)
+            {
+                col.Generator = "skip";
+                col.GeneratorArgs = new Dictionary<string, object?>();
+            }
+        }
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
+        Assert.Equal(RowCount, inserted);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestDefaultScalar");
+        Assert.Equal(RowCount, rows.Count);
+
+        foreach (var row in rows)
+        {
+            Assert.Equal(0, (int)row["ColInt"]!);
+            Assert.IsType<DateTime>(row["ColDate"]);
+            Assert.Equal("Pending", (string)row["ColStr"]!);
+            Assert.IsType<Guid>(row["ColGuid"]);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 32. DEFAULT Constraint — Explicit Values Override Defaults
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test32_DefaultConstraintInteractionWithExplicitValues()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDefaultOverride (
+                Id         INT IDENTITY(1,1) PRIMARY KEY,
+                ColInt     INT            NOT NULL DEFAULT 0,
+                ColStr     NVARCHAR(50)   NOT NULL DEFAULT 'Pending',
+                ColDate    DATETIME2      NOT NULL DEFAULT '2000-01-01'
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestDefaultOverride");
+        Assert.Equal(RowCount, results["dbo.TestDefaultOverride"]);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestDefaultOverride");
+        Assert.Equal(RowCount, rows.Count);
+
+        foreach (var row in rows)
+        {
+            Assert.IsType<int>(row["ColInt"]);
+            Assert.IsType<string>(row["ColStr"]);
+            Assert.IsType<DateTime>(row["ColDate"]);
+        }
+
+        // With generated values, not all rows should have the default value
+        var defaultIntCount = rows.Count(r => (int)r["ColInt"]! == 0);
+        var defaultStrCount = rows.Count(r => (string)r["ColStr"]! == "Pending");
+        Assert.True(defaultIntCount < RowCount,
+            "Expected generated values to override defaults, but all ColInt values were 0");
+        Assert.True(defaultStrCount < RowCount,
+            "Expected generated values to override defaults, but all ColStr values were 'Pending'");
+    }
+
+    // ══════════════════════════════════════════════
+    // 33. CHECK Constraint — Range (INT)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test33_CheckConstraintRangeInt()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCheckRange (
+                Id      INT IDENTITY(1,1) PRIMARY KEY,
+                Rating  INT NOT NULL,
+                CONSTRAINT CK_Rating CHECK (Rating BETWEEN 1 AND 5)
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestCheckRange").ToList();
+
+        // Verify CHECK constraint is read
+        Assert.Single(tables[0].CheckConstraints);
+        Assert.Equal("CK_Rating", tables[0].CheckConstraints[0].Name);
+        Assert.Contains("Rating", tables[0].CheckConstraints[0].Definition);
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
+
+        // Configure PickRandom generator for valid values
+        var ratingCol = plan.Tables[0].Columns.First(c =>
+            c.Name.Equals("Rating", StringComparison.OrdinalIgnoreCase));
+        ratingCol.Generator = "PickRandom";
+        ratingCol.GeneratorArgs = new Dictionary<string, object?>
+        {
+            ["values"] = new[] { "1", "2", "3", "4", "5" }
+        };
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        var inserted = await inserter.InsertTableFromPlanAsync(plan.Tables[0]);
+        Assert.Equal(RowCount, inserted);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT Rating FROM dbo.TestCheckRange");
+        Assert.Equal(RowCount, rows.Count);
+
+        foreach (var row in rows)
+        {
+            var rating = (int)row["Rating"]!;
+            Assert.InRange(rating, 1, 5);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 34. CHECK Constraint — String Enum
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test34_CheckConstraintStringEnum()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCheckEnum (
+                Id      INT IDENTITY(1,1) PRIMARY KEY,
+                Status  NVARCHAR(20) NOT NULL,
+                CONSTRAINT CK_Status CHECK (Status IN ('Active', 'Inactive', 'Suspended'))
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestCheckEnum").ToList();
+
+        Assert.Single(tables[0].CheckConstraints);
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
+
+        var statusCol = plan.Tables[0].Columns.First(c =>
+            c.Name.Equals("Status", StringComparison.OrdinalIgnoreCase));
+        statusCol.Generator = "PickRandom";
+        statusCol.GeneratorArgs = new Dictionary<string, object?>
+        {
+            ["values"] = new[] { "Active", "Inactive", "Suspended" }
+        };
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        var inserted = await inserter.InsertTableFromPlanAsync(plan.Tables[0]);
+        Assert.Equal(RowCount, inserted);
+
+        var validStatuses = new HashSet<string> { "Active", "Inactive", "Suspended" };
+        var rows = await _fixture.ExecuteQueryAsync("SELECT Status FROM dbo.TestCheckEnum");
+        foreach (var row in rows)
+        {
+            var status = (string)row["Status"]!;
+            Assert.Contains(status, validStatuses);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 35. CHECK Constraint — Column Comparison
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test35_CheckConstraintColumnComparison()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCheckDateRange (
+                Id        INT IDENTITY(1,1) PRIMARY KEY,
+                StartDate DATE NOT NULL,
+                EndDate   DATE NOT NULL,
+                CONSTRAINT CK_DateRange CHECK (EndDate > StartDate)
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestCheckDateRange").ToList();
+
+        Assert.Single(tables[0].CheckConstraints);
+        Assert.Contains("EndDate", tables[0].CheckConstraints[0].Definition);
+        Assert.Contains("StartDate", tables[0].CheckConstraints[0].Definition);
+
+        // Insert valid rows via direct SQL to test CHECK is readable and enforceable
+        for (var i = 0; i < RowCount; i++)
+        {
+            var start = new DateTime(2020, 1, 1).AddDays(i * 30);
+            var end = start.AddDays(365);
+            await _fixture.ExecuteSqlAsync(
+                $"INSERT INTO dbo.TestCheckDateRange (StartDate, EndDate) VALUES ('{start:yyyy-MM-dd}', '{end:yyyy-MM-dd}')");
+        }
+
+        var rows = await _fixture.ExecuteQueryAsync(
+            "SELECT StartDate, EndDate FROM dbo.TestCheckDateRange");
+        Assert.Equal(RowCount, rows.Count);
+
+        foreach (var row in rows)
+        {
+            var start = (DateTime)row["StartDate"]!;
+            var end = (DateTime)row["EndDate"]!;
+            Assert.True(end > start, $"EndDate {end} should be > StartDate {start}");
+        }
+
+        // Verify the CHECK constraint actually rejects invalid data
+        var violated = false;
+        try
+        {
+            await _fixture.ExecuteSqlAsync(
+                "INSERT INTO dbo.TestCheckDateRange (StartDate, EndDate) VALUES ('2025-01-01', '2020-01-01')");
+        }
+        catch
+        {
+            violated = true;
+        }
+        Assert.True(violated, "CHECK constraint should reject EndDate <= StartDate");
+    }
+
+    // ══════════════════════════════════════════════
+    // 36. UNIQUE Constraint — Single Column
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test36_UniqueConstraintSingleColumn()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUniqueSingle (
+                Id    INT IDENTITY(1,1) PRIMARY KEY,
+                Email NVARCHAR(200) NOT NULL,
+                Label NVARCHAR(50) NOT NULL,
+                CONSTRAINT UQ_Email UNIQUE (Email)
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var table = allTables.First(t => t.TableName == "TestUniqueSingle");
+
+        // Verify unique constraint was read
+        Assert.Single(table.UniqueConstraints);
+        Assert.Equal("UQ_Email", table.UniqueConstraints[0].Name);
+        Assert.Single(table.UniqueConstraints[0].Columns);
+        Assert.Equal("Email", table.UniqueConstraints[0].Columns[0]);
+
+        // Verify column flag
+        var emailCol = table.Columns.First(c =>
+            c.Name.Equals("Email", StringComparison.OrdinalIgnoreCase));
+        Assert.True(emailCol.IsUnique);
+
+        var graph = new DependencyGraph();
+        graph.Build([table]);
+        var sorted = graph.GetTopologicalOrder();
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(
+            _fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        var inserted = await inserter.InsertTableAsync(table, 50);
+        Assert.Equal(50, inserted);
+
+        var distinctEmails = (int)(await _fixture.ExecuteScalarAsync(
+            "SELECT COUNT(DISTINCT Email) FROM dbo.TestUniqueSingle"))!;
+        Assert.Equal(50, distinctEmails);
+    }
+
+    // ══════════════════════════════════════════════
+    // 37. UNIQUE Constraint — Multi-Column
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test37_UniqueConstraintMultiColumn()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUniqueMulti (
+                Id        INT IDENTITY(1,1) PRIMARY KEY,
+                FirstName NVARCHAR(100) NOT NULL,
+                LastName  NVARCHAR(100) NOT NULL,
+                Age       INT NOT NULL,
+                CONSTRAINT UQ_FullName UNIQUE (FirstName, LastName)
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var table = allTables.First(t => t.TableName == "TestUniqueMulti");
+
+        Assert.Single(table.UniqueConstraints);
+        Assert.Equal(2, table.UniqueConstraints[0].Columns.Count);
+
+        var graph = new DependencyGraph();
+        graph.Build([table]);
+        var sorted = graph.GetTopologicalOrder();
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(
+            _fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        var inserted = await inserter.InsertTableAsync(table, 50);
+        Assert.Equal(50, inserted);
+
+        var distinctPairs = (int)(await _fixture.ExecuteScalarAsync(
+            "SELECT COUNT(DISTINCT CONCAT(FirstName, '|', LastName)) FROM dbo.TestUniqueMulti"))!;
+        Assert.Equal(50, distinctPairs);
+    }
+
+    // ══════════════════════════════════════════════
+    // 38. UNIQUE Constraint — Nullable Column
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test38_UniqueConstraintWithNullable()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUniqueNullable (
+                Id           INT IDENTITY(1,1) PRIMARY KEY,
+                NullableCode NVARCHAR(10) NULL,
+                Label        NVARCHAR(50) NOT NULL,
+                CONSTRAINT UQ_NullableCode UNIQUE (NullableCode)
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var table = allTables.First(t => t.TableName == "TestUniqueNullable");
+
+        Assert.Single(table.UniqueConstraints);
+
+        var graph = new DependencyGraph();
+        graph.Build([table]);
+        var sorted = graph.GetTopologicalOrder();
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(
+            _fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        var inserted = await inserter.InsertTableAsync(table, RowCount);
+        Assert.Equal(RowCount, inserted);
+
+        // Non-NULL values must be distinct
+        var nonNullDistinct = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(DISTINCT NullableCode)
+            FROM dbo.TestUniqueNullable
+            WHERE NullableCode IS NOT NULL
+            """))!;
+        var nonNullTotal = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*)
+            FROM dbo.TestUniqueNullable
+            WHERE NullableCode IS NOT NULL
+            """))!;
+        Assert.Equal(nonNullTotal, nonNullDistinct);
+    }
+
+    // ══════════════════════════════════════════════
+    // 39. UNIQUE Constraint via Plan Execution
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test39_UniqueConstraintViaPlan()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUniquePlan (
+                Id    INT IDENTITY(1,1) PRIMARY KEY,
+                Email NVARCHAR(200) NOT NULL,
+                Label NVARCHAR(50) NOT NULL,
+                CONSTRAINT UQ_PlanEmail UNIQUE (Email)
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestUniquePlan").ToList();
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, 50, Seed, "en");
+
+        // Verify IsUnique propagated to plan
+        var emailCol = plan.Tables[0].Columns.First(c =>
+            c.Name.Equals("Email", StringComparison.OrdinalIgnoreCase));
+        Assert.True(emailCol.IsUnique);
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        var inserted = await inserter.InsertTableFromPlanAsync(plan.Tables[0]);
+        Assert.Equal(50, inserted);
+
+        var distinctEmails = (int)(await _fixture.ExecuteScalarAsync(
+            "SELECT COUNT(DISTINCT Email) FROM dbo.TestUniquePlan"))!;
+        Assert.Equal(50, distinctEmails);
+    }
+
+    // ══════════════════════════════════════════════
+    // 40. CHECK Constraint Violation — Error Message
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test40_CheckConstraintViolationErrorMessage()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCheckViolation (
+                Id   INT IDENTITY(1,1) PRIMARY KEY,
+                Age  INT NOT NULL,
+                CONSTRAINT CK_Age CHECK (Age >= 0 AND Age <= 150)
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestCheckViolation").ToList();
+
+        Assert.Single(tables[0].CheckConstraints);
+        Assert.Equal("CK_Age", tables[0].CheckConstraints[0].Name);
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, 1, Seed, "en");
+
+        // Force a value that violates the CHECK constraint
+        var ageCol = plan.Tables[0].Columns.First(c =>
+            c.Name.Equals("Age", StringComparison.OrdinalIgnoreCase));
+        ageCol.Generator = "PickRandom";
+        ageCol.GeneratorArgs = new Dictionary<string, object?>
+        {
+            ["values"] = new[] { "999" }
+        };
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        var ex = await Assert.ThrowsAsync<DataGenerationException>(
+            () => inserter.InsertTableFromPlanAsync(plan.Tables[0]));
+
+        Assert.Contains("CK_Age", ex.Message);
+        Assert.Contains("CHECK constraint", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }

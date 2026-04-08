@@ -67,6 +67,12 @@ public class ColumnPlan
     [YamlMember(Alias = "isRowVersion")]
     public bool IsRowVersion { get; set; }
 
+    [YamlMember(Alias = "hasDefault")]
+    public bool HasDefault { get; set; }
+
+    [YamlMember(Alias = "isUnique")]
+    public bool IsUnique { get; set; }
+
     [YamlMember(Alias = "generator")]
     public string Generator { get; set; } = string.Empty;
 

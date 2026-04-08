@@ -22,6 +22,9 @@ public class SchemaReader
         await ReadTablesAndColumns(connection, tables, schemaFilter);
         await ReadPrimaryKeys(connection, tables, schemaFilter);
         await ReadForeignKeys(connection, tables, schemaFilter);
+        await ReadDefaultConstraints(connection, tables, schemaFilter);
+        await ReadCheckConstraints(connection, tables, schemaFilter);
+        await ReadUniqueConstraints(connection, tables, schemaFilter);
 
         return tables.Values.ToList();
     }
@@ -184,6 +187,160 @@ public class SchemaReader
                     ReferencedTable = reader.GetString(5),
                     ReferencedColumn = reader.GetString(6)
                 });
+            }
+        }
+    }
+
+    private static async Task ReadDefaultConstraints(
+        SqlConnection connection,
+        Dictionary<string, TableInfo> tables,
+        string? schemaFilter)
+    {
+        const string sql = """
+            SELECT
+                s.name  AS SchemaName,
+                t.name  AS TableName,
+                c.name  AS ColumnName,
+                dc.definition AS Definition
+            FROM sys.default_constraints dc
+            INNER JOIN sys.columns c ON c.object_id = dc.parent_object_id
+                                     AND c.column_id = dc.parent_column_id
+            INNER JOIN sys.tables t  ON t.object_id = dc.parent_object_id
+            INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
+            WHERE t.is_ms_shipped = 0
+              AND (@SchemaFilter IS NULL OR @SchemaFilter = '' OR s.name = @SchemaFilter)
+            ORDER BY s.name, t.name, c.column_id
+            """;
+
+        await using var cmd = new SqlCommand(sql, connection);
+        cmd.Parameters.AddWithValue("@SchemaFilter", (object?)schemaFilter ?? DBNull.Value);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var schema = reader.GetString(0);
+            var tableName = reader.GetString(1);
+            var columnName = reader.GetString(2);
+            var definition = reader.GetString(3);
+            var fullName = $"{schema}.{tableName}";
+
+            if (tables.TryGetValue(fullName, out var table))
+            {
+                var col = table.Columns.FirstOrDefault(c =>
+                    c.Name.Equals(columnName, StringComparison.OrdinalIgnoreCase));
+                if (col != null)
+                    col.DefaultDefinition = definition;
+            }
+        }
+    }
+
+    private static async Task ReadCheckConstraints(
+        SqlConnection connection,
+        Dictionary<string, TableInfo> tables,
+        string? schemaFilter)
+    {
+        const string sql = """
+            SELECT
+                s.name  AS SchemaName,
+                t.name  AS TableName,
+                cc.name AS ConstraintName,
+                cc.definition AS Definition
+            FROM sys.check_constraints cc
+            INNER JOIN sys.tables t  ON t.object_id = cc.parent_object_id
+            INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
+            WHERE t.is_ms_shipped = 0
+              AND cc.is_disabled = 0
+              AND (@SchemaFilter IS NULL OR @SchemaFilter = '' OR s.name = @SchemaFilter)
+            ORDER BY s.name, t.name, cc.name
+            """;
+
+        await using var cmd = new SqlCommand(sql, connection);
+        cmd.Parameters.AddWithValue("@SchemaFilter", (object?)schemaFilter ?? DBNull.Value);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var schema = reader.GetString(0);
+            var tableName = reader.GetString(1);
+            var fullName = $"{schema}.{tableName}";
+
+            if (tables.TryGetValue(fullName, out var table))
+            {
+                table.CheckConstraints.Add(new CheckConstraintInfo
+                {
+                    Name = reader.GetString(2),
+                    Definition = reader.GetString(3)
+                });
+            }
+        }
+    }
+
+    private static async Task ReadUniqueConstraints(
+        SqlConnection connection,
+        Dictionary<string, TableInfo> tables,
+        string? schemaFilter)
+    {
+        const string sql = """
+            SELECT
+                s.name  AS SchemaName,
+                t.name  AS TableName,
+                i.name  AS IndexName,
+                c.name  AS ColumnName,
+                ic.key_ordinal AS KeyOrdinal
+            FROM sys.indexes i
+            INNER JOIN sys.index_columns ic ON ic.object_id = i.object_id
+                                            AND ic.index_id = i.index_id
+            INNER JOIN sys.columns c ON c.object_id = i.object_id
+                                     AND c.column_id = ic.column_id
+            INNER JOIN sys.tables t  ON t.object_id = i.object_id
+            INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
+            WHERE i.is_unique = 1
+              AND i.is_primary_key = 0
+              AND t.is_ms_shipped = 0
+              AND (@SchemaFilter IS NULL OR @SchemaFilter = '' OR s.name = @SchemaFilter)
+            ORDER BY s.name, t.name, i.name, ic.key_ordinal
+            """;
+
+        await using var cmd = new SqlCommand(sql, connection);
+        cmd.Parameters.AddWithValue("@SchemaFilter", (object?)schemaFilter ?? DBNull.Value);
+
+        var constraintColumns = new Dictionary<(string FullName, string IndexName), List<string>>();
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var schema = reader.GetString(0);
+            var tableName = reader.GetString(1);
+            var indexName = reader.GetString(2);
+            var columnName = reader.GetString(3);
+            var fullName = $"{schema}.{tableName}";
+
+            var key = (fullName, indexName);
+            if (!constraintColumns.TryGetValue(key, out var cols))
+            {
+                cols = [];
+                constraintColumns[key] = cols;
+            }
+            cols.Add(columnName);
+        }
+
+        foreach (var ((fullName, indexName), columns) in constraintColumns)
+        {
+            if (!tables.TryGetValue(fullName, out var table))
+                continue;
+
+            table.UniqueConstraints.Add(new UniqueConstraintInfo
+            {
+                Name = indexName,
+                Columns = columns
+            });
+
+            if (columns.Count == 1)
+            {
+                var col = table.Columns.FirstOrDefault(c =>
+                    c.Name.Equals(columns[0], StringComparison.OrdinalIgnoreCase));
+                if (col != null)
+                    col.IsUnique = true;
             }
         }
     }
