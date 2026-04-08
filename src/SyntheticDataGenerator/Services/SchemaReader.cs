@@ -43,7 +43,8 @@ public class SchemaReader
                 c.is_nullable  AS IsNullable,
                 c.is_identity  AS IsIdentity,
                 c.is_computed  AS IsComputed,
-                CASE WHEN tp.name IN ('timestamp', 'rowversion') THEN 1 ELSE 0 END AS IsRowVersion
+                CASE WHEN tp.name IN ('timestamp', 'rowversion') THEN 1 ELSE 0 END AS IsRowVersion,
+                tp.is_user_defined AS IsUserDefined
             FROM sys.tables t
             INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
             INNER JOIN sys.columns c ON c.object_id = t.object_id
@@ -81,6 +82,7 @@ public class SchemaReader
                 IsIdentity = reader.GetBoolean(8),
                 IsComputed = reader.GetBoolean(9),
                 IsRowVersion = reader.GetInt32(10) == 1,
+                IsUserDefined = reader.GetBoolean(11),
                 FullTableName = fullName
             });
         }

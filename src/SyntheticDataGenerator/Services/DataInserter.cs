@@ -160,7 +160,8 @@ public class DataInserter
             table.ForeignKeys.Select(fk => fk.ParentColumn), StringComparer.OrdinalIgnoreCase);
 
         var columnsToInsert = table.Columns
-            .Where(c => !c.IsIdentity && !c.IsComputed && !c.IsRowVersion)
+            .Where(c => !c.IsIdentity && !c.IsComputed && !c.IsRowVersion
+                        && !PlanGenerator.IsUnsupportedType(c))
             .ToList();
 
         var firstPassColumns = isSelfRef
@@ -546,6 +547,7 @@ public class DataInserter
             "binary"           => SqlDbType.Binary,
             "image"            => SqlDbType.Image,
             "xml"              => SqlDbType.Xml,
+            "sql_variant"      => SqlDbType.Variant,
             _                  => SqlDbType.NVarChar,
         };
 

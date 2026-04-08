@@ -1231,4 +1231,148 @@ public class IntegrationTests
             Assert.InRange(price, -9999.99m, 9999.99m);
         }
     }
+
+    // ══════════════════════════════════════════════
+    // 27. SQL_VARIANT Type
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test27_SqlVariantType()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestSqlVariant (
+                Id         INT IDENTITY(1,1) PRIMARY KEY,
+                ColVariant SQL_VARIANT NOT NULL
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestSqlVariant");
+        Assert.Equal(RowCount, results["dbo.TestSqlVariant"]);
+
+        var rows = await _fixture.ExecuteQueryAsync(
+            "SELECT SQL_VARIANT_PROPERTY(ColVariant, 'BaseType') AS BaseType, ColVariant FROM dbo.TestSqlVariant");
+        Assert.Equal(RowCount, rows.Count);
+
+        var allowedBaseTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "int", "nvarchar", "varchar", "datetime", "float", "decimal", "numeric"
+        };
+
+        foreach (var row in rows)
+        {
+            var baseType = Assert.IsType<string>(row["BaseType"]);
+            Assert.Contains(baseType, allowedBaseTypes);
+            Assert.NotNull(row["ColVariant"]);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 28. Unsupported Types (geography, geometry, hierarchyid) Skipped
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test28_UnsupportedTypesSkippedWhenNullable()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUnsupportedSkip (
+                Id         INT IDENTITY(1,1) PRIMARY KEY,
+                ColName    NVARCHAR(100)   NOT NULL,
+                ColGeo     GEOGRAPHY       NULL,
+                ColGeom    GEOMETRY         NULL,
+                ColHier    HIERARCHYID      NULL
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestUnsupportedSkip");
+        Assert.Equal(RowCount, results["dbo.TestUnsupportedSkip"]);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT ColName FROM dbo.TestUnsupportedSkip");
+        Assert.Equal(RowCount, rows.Count);
+        foreach (var row in rows)
+            Assert.IsType<string>(row["ColName"]);
+
+        var allNull = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestUnsupportedSkip
+            WHERE ColGeo IS NULL AND ColGeom IS NULL AND ColHier IS NULL
+            """))!;
+        Assert.Equal(RowCount, allNull);
+    }
+
+    // ══════════════════════════════════════════════
+    // 29. Unsupported Non-Nullable Type With DEFAULT
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test29_UnsupportedTypeNonNullableWithDefault()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUnsupportedDefault (
+                Id         INT IDENTITY(1,1) PRIMARY KEY,
+                ColName    NVARCHAR(100)                NOT NULL,
+                ColGeo     GEOGRAPHY DEFAULT geography::Point(0, 0, 4326) NOT NULL
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestUnsupportedDefault");
+        Assert.Equal(RowCount, results["dbo.TestUnsupportedDefault"]);
+
+        var rows = await _fixture.ExecuteQueryAsync(
+            "SELECT ColName, ColGeo.STAsText() AS ColGeoText FROM dbo.TestUnsupportedDefault");
+        Assert.Equal(RowCount, rows.Count);
+
+        foreach (var row in rows)
+        {
+            Assert.IsType<string>(row["ColName"]);
+            var geoText = Assert.IsType<string>(row["ColGeoText"]);
+            Assert.Contains("POINT", geoText, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 30. SQL_VARIANT via Plan Execution
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test30_SqlVariantViaPlan()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestSqlVariantPlan (
+                Id         INT IDENTITY(1,1) PRIMARY KEY,
+                ColVariant SQL_VARIANT NOT NULL
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestSqlVariantPlan").ToList();
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
+
+        var variantCol = plan.Tables[0].Columns.First(c =>
+            c.Name.Equals("ColVariant", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("Random.SqlVariant", variantCol.Generator);
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        foreach (var tablePlan in plan.Tables.OrderBy(t => t.Order))
+        {
+            var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
+            Assert.Equal(RowCount, inserted);
+        }
+
+        var rows = await _fixture.ExecuteQueryAsync(
+            "SELECT SQL_VARIANT_PROPERTY(ColVariant, 'BaseType') AS BaseType FROM dbo.TestSqlVariantPlan");
+        Assert.Equal(RowCount, rows.Count);
+
+        foreach (var row in rows)
+        {
+            Assert.IsType<string>(row["BaseType"]);
+        }
+    }
 }

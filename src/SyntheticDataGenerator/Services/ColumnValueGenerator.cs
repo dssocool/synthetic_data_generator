@@ -48,6 +48,7 @@ public class ColumnValueGenerator
             ["Guid"]                 = (_, _) => Guid.NewGuid(),
             ["null"]                 = (_, _) => null,
             ["PickRandom"]           = (f, a) => PickRandomFromArgs(f, a),
+            ["Random.SqlVariant"]    = (f, _) => GenerateSqlVariantValue(f),
         };
 
     private static readonly (Func<string, bool> Match, Func<Faker, ColumnInfo, object> Generate)[] NameRules =
@@ -158,6 +159,8 @@ public class ColumnValueGenerator
         "float", "real",
         "datetime", "datetime2", "smalldatetime", "date", "time", "datetimeoffset",
         "uniqueidentifier",
+        "sql_variant",
+        "geography", "geometry", "hierarchyid",
     };
 
     private static readonly HashSet<string> NumericTypesWithNameHeuristics = new(StringComparer.OrdinalIgnoreCase)
@@ -224,6 +227,9 @@ public class ColumnValueGenerator
             "varbinary" or "binary" or "image"
                                  => _faker.Random.Bytes(Math.Min(16, Math.Max(1, column.MaxLength > 0 ? column.MaxLength : 16))),
             "xml"                => $"<data>{_faker.Lorem.Word()}</data>",
+            "sql_variant"        => GenerateSqlVariantValue(_faker),
+            "geography" or "geometry" or "hierarchyid"
+                                 => null,
             _                    => _faker.Random.AlphaNumeric(8)
         };
     }
@@ -418,5 +424,17 @@ public class ColumnValueGenerator
         if (!args.TryGetValue(key, out var value) || value is null) return defaultValue;
         if (value is string s) return s;
         return value.ToString() ?? defaultValue;
+    }
+
+    private static object GenerateSqlVariantValue(Faker f)
+    {
+        return f.Random.Int(0, 4) switch
+        {
+            0 => (object)f.Random.Int(1, int.MaxValue / 2),
+            1 => f.Lorem.Word(),
+            2 => f.Date.Past(5),
+            3 => f.Random.Double(0, 99999),
+            _ => (object)f.Random.Decimal(0, 99999m),
+        };
     }
 }

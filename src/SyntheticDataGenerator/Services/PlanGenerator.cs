@@ -45,6 +45,11 @@ public class PlanGenerator
         "varchar", "nvarchar", "char", "nchar", "text", "ntext", "xml"
     };
 
+    private static readonly HashSet<string> UnsupportedTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "geography", "geometry", "hierarchyid"
+    };
+
     private static readonly Dictionary<string, (string Generator, Dictionary<string, object?>? Args)> SqlTypeMap = new(StringComparer.OrdinalIgnoreCase)
     {
         ["int"]              = ("Random.Int", new() { ["min"] = 1, ["max"] = 1073741823 }),
@@ -75,6 +80,7 @@ public class PlanGenerator
         ["binary"]           = ("Random.Bytes", null),
         ["image"]            = ("Random.Bytes", null),
         ["xml"]              = ("Lorem.Word", new() { ["wrapXml"] = true }),
+        ["sql_variant"]      = ("Random.SqlVariant", null),
     };
 
     public GenerationPlan Generate(
@@ -181,6 +187,12 @@ public class PlanGenerator
 
     private static void ResolveGenerator(ColumnInfo col, ColumnPlan colPlan)
     {
+        if (IsUnsupportedType(col))
+        {
+            colPlan.Generator = "skip";
+            return;
+        }
+
         if (StringCompatibleTypes.Contains(col.SqlType))
         {
             var name = col.Name.ToLowerInvariant();
@@ -210,6 +222,10 @@ public class PlanGenerator
             colPlan.GeneratorArgs = new Dictionary<string, object?> { ["length"] = 8 };
         }
     }
+
+    internal static bool IsUnsupportedType(ColumnInfo col) =>
+        UnsupportedTypes.Contains(col.SqlType)
+        || (col.IsUserDefined && !col.SqlType.Equals("sql_variant", StringComparison.OrdinalIgnoreCase));
 
     private static bool Like(string input, string fragment) =>
         input.Contains(fragment, StringComparison.OrdinalIgnoreCase);

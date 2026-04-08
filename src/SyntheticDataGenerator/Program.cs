@@ -57,6 +57,8 @@ async Task RunGeneratePlan(string outputPath)
 
     await planGen.WritePlanAsync(plan, outputPath);
 
+    WarnUnsupportedColumns(sortedTables);
+
     Console.WriteLine($"Plan generated with {plan.Tables.Count} table(s):");
     foreach (var t in plan.Tables)
     {
@@ -163,6 +165,8 @@ async Task RunDirect()
                           $"[{t.Columns.Count} cols, {fkCount} FKs{selfRef}]");
     }
     Console.WriteLine();
+
+    WarnUnsupportedColumns(sortedTables);
 
     Console.WriteLine("Generating and inserting data...");
     var valueGen = new ColumnValueGenerator(seed, locale);
@@ -309,6 +313,23 @@ static string FormatSqlType(ColumnFailureDetail col)
          type.Equals("numeric", StringComparison.OrdinalIgnoreCase)))
         return $"{type}({col.Precision},{col.Scale})";
     return type;
+}
+
+static void WarnUnsupportedColumns(List<TableInfo> tables)
+{
+    foreach (var table in tables)
+    {
+        var skipped = table.Columns
+            .Where(c => !c.IsIdentity && !c.IsComputed && !c.IsRowVersion && PlanGenerator.IsUnsupportedType(c))
+            .ToList();
+
+        foreach (var col in skipped)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"  Warning: [{table.FullName}].[{col.Name}] has unsupported type '{col.SqlType}' — column will be skipped.");
+            Console.ResetColor();
+        }
+    }
 }
 
 static string MaskConnectionString(string cs)
