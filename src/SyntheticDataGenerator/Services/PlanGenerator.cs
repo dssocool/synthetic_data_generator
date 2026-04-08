@@ -72,8 +72,7 @@ public class PlanGenerator
 
             var tablePlan = new TablePlan
             {
-                Schema = table.Schema,
-                Table = table.TableName,
+                Table = table.FullName,
                 Order = i + 1,
                 RowCount = defaultRowCount,
                 Columns = []
@@ -110,8 +109,7 @@ public class PlanGenerator
                     colPlan.Generator = "foreignKey";
                     colPlan.GeneratorArgs = new Dictionary<string, object?>
                     {
-                        ["referencedSchema"] = fk.ReferencedSchema,
-                        ["referencedTable"] = fk.ReferencedTable,
+                        ["referencedTable"] = fk.FullReferencedTableName,
                         ["referencedColumn"] = fk.ReferencedColumn,
                         ["isSelfReferencing"] = fk.IsSelfReferencing,
                         ["compositeFkGroup"] = fk.FkName

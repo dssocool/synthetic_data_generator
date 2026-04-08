@@ -65,15 +65,20 @@ public class DataInserter
         {
             selfRefFks = tablePlan.Columns
                 .Where(c => selfRefColumnNames.Contains(c.Name))
-                .Select(c => new ForeignKeyInfo
+                .Select(c =>
                 {
-                    FkName = Helpers.GetArgString(c.GeneratorArgs, "compositeFkGroup"),
-                    ParentSchema = tablePlan.Schema,
-                    ParentTable = tablePlan.Table,
-                    ParentColumn = c.Name,
-                    ReferencedSchema = Helpers.GetArgString(c.GeneratorArgs, "referencedSchema"),
-                    ReferencedTable = Helpers.GetArgString(c.GeneratorArgs, "referencedTable"),
-                    ReferencedColumn = Helpers.GetArgString(c.GeneratorArgs, "referencedColumn"),
+                    var refTable = Helpers.GetArgString(c.GeneratorArgs, "referencedTable");
+                    var dotIdx = refTable.IndexOf('.');
+                    return new ForeignKeyInfo
+                    {
+                        FkName = Helpers.GetArgString(c.GeneratorArgs, "compositeFkGroup"),
+                        ParentSchema = tablePlan.Schema,
+                        ParentTable = tablePlan.TableName,
+                        ParentColumn = c.Name,
+                        ReferencedSchema = dotIdx >= 0 ? refTable[..dotIdx] : string.Empty,
+                        ReferencedTable = dotIdx >= 0 ? refTable[(dotIdx + 1)..] : refTable,
+                        ReferencedColumn = Helpers.GetArgString(c.GeneratorArgs, "referencedColumn"),
+                    };
                 }).ToList();
         }
 
@@ -238,10 +243,9 @@ public class DataInserter
             .Select(g =>
             {
                 var first = g.First();
-                var refSchema = Helpers.GetArgString(first.GeneratorArgs, "referencedSchema");
                 var refTable = Helpers.GetArgString(first.GeneratorArgs, "referencedTable");
                 return new FkGroup(
-                    $"{refSchema}.{refTable}",
+                    refTable,
                     g.Select(c => (c.Name, Helpers.GetArgString(c.GeneratorArgs, "referencedColumn"), c.IsNullable)).ToList());
             })
             .ToList();
@@ -376,7 +380,7 @@ public class DataInserter
         var table = new TableInfo
         {
             Schema = tablePlan.Schema,
-            TableName = tablePlan.Table,
+            TableName = tablePlan.TableName,
             Columns = tablePlan.Columns.Select(cp => new ColumnInfo
             {
                 Name = cp.Name,
@@ -400,15 +404,20 @@ public class DataInserter
                 .ToList(),
             ForeignKeys = tablePlan.Columns
                 .Where(c => c.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase))
-                .Select(c => new ForeignKeyInfo
+                .Select(c =>
                 {
-                    FkName = Helpers.GetArgString(c.GeneratorArgs, "compositeFkGroup"),
-                    ParentSchema = tablePlan.Schema,
-                    ParentTable = tablePlan.Table,
-                    ParentColumn = c.Name,
-                    ReferencedSchema = Helpers.GetArgString(c.GeneratorArgs, "referencedSchema"),
-                    ReferencedTable = Helpers.GetArgString(c.GeneratorArgs, "referencedTable"),
-                    ReferencedColumn = Helpers.GetArgString(c.GeneratorArgs, "referencedColumn"),
+                    var refTable = Helpers.GetArgString(c.GeneratorArgs, "referencedTable");
+                    var dotIdx = refTable.IndexOf('.');
+                    return new ForeignKeyInfo
+                    {
+                        FkName = Helpers.GetArgString(c.GeneratorArgs, "compositeFkGroup"),
+                        ParentSchema = tablePlan.Schema,
+                        ParentTable = tablePlan.TableName,
+                        ParentColumn = c.Name,
+                        ReferencedSchema = dotIdx >= 0 ? refTable[..dotIdx] : string.Empty,
+                        ReferencedTable = dotIdx >= 0 ? refTable[(dotIdx + 1)..] : refTable,
+                        ReferencedColumn = Helpers.GetArgString(c.GeneratorArgs, "referencedColumn"),
+                    };
                 }).ToList()
         };
 

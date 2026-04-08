@@ -16,9 +16,6 @@ public class GenerationPlan
 
 public class TablePlan
 {
-    [YamlMember(Alias = "schema")]
-    public string Schema { get; set; } = string.Empty;
-
     [YamlMember(Alias = "table")]
     public string Table { get; set; } = string.Empty;
 
@@ -35,7 +32,13 @@ public class TablePlan
     public List<UniqueConstraintPlan>? UniqueConstraints { get; set; }
 
     [YamlIgnore]
-    public string FullName => $"{Schema}.{Table}";
+    public string FullName => Table;
+
+    [YamlIgnore]
+    public string Schema => Table.Contains('.') ? Table[..Table.IndexOf('.')] : string.Empty;
+
+    [YamlIgnore]
+    public string TableName => Table.Contains('.') ? Table[(Table.IndexOf('.') + 1)..] : Table;
 }
 
 public class UniqueConstraintPlan
