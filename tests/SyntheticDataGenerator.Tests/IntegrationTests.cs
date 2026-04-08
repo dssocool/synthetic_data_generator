@@ -2194,4 +2194,178 @@ public class IntegrationTests
         for (var i = 1; i < ids.Count; i++)
             Assert.Equal(ids[i - 1] + 1, ids[i]);
     }
+
+    // ══════════════════════════════════════════════
+    // 48. RowVersion Column (Direct Path)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test48_RowVersionColumn()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestRowVersion (
+                Id     INT IDENTITY(1,1) PRIMARY KEY,
+                Name   NVARCHAR(50) NOT NULL,
+                RowVer ROWVERSION
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestRowVersion");
+        Assert.Equal(RowCount, results["dbo.TestRowVersion"]);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT Id, Name, RowVer FROM dbo.TestRowVersion ORDER BY Id");
+        Assert.Equal(RowCount, rows.Count);
+
+        var rowVersions = new HashSet<string>();
+        foreach (var row in rows)
+        {
+            Assert.NotNull(row["RowVer"]);
+            var hex = Convert.ToHexString((byte[])row["RowVer"]!);
+            Assert.True(rowVersions.Add(hex), "Each row should have a distinct rowversion value");
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 49. Timestamp Column (Legacy Alias, Direct Path)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test49_TimestampColumn()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestTimestamp (
+                Id    INT IDENTITY(1,1) PRIMARY KEY,
+                Name  NVARCHAR(50) NOT NULL,
+                Stamp TIMESTAMP
+            )
+            """);
+
+        var results = await GenerateDataAsync("TestTimestamp");
+        Assert.Equal(RowCount, results["dbo.TestTimestamp"]);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT Id, Name, Stamp FROM dbo.TestTimestamp ORDER BY Id");
+        Assert.Equal(RowCount, rows.Count);
+
+        var timestamps = new HashSet<string>();
+        foreach (var row in rows)
+        {
+            Assert.NotNull(row["Stamp"]);
+            var hex = Convert.ToHexString((byte[])row["Stamp"]!);
+            Assert.True(timestamps.Add(hex), "Each row should have a distinct timestamp value");
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 50. RowVersion Column via Plan Execution
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test50_RowVersionColumn_ViaPlan()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestRowVersionPlan (
+                Id     INT IDENTITY(1,1) PRIMARY KEY,
+                Name   NVARCHAR(50) NOT NULL,
+                RowVer ROWVERSION
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestRowVersionPlan").ToList();
+
+        Assert.Single(tables);
+        var rvCol = tables[0].Columns.First(c => c.Name == "RowVer");
+        Assert.True(rvCol.IsRowVersion, "RowVer column should be detected as rowversion");
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
+
+        var tablePlan = plan.Tables[0];
+
+        var rvPlan = tablePlan.Columns.First(c => c.Name == "RowVer");
+        Assert.True(rvPlan.IsRowVersion, "Plan should have IsRowVersion = true for RowVer");
+        Assert.Equal("skip", rvPlan.Generator);
+
+        var namePlan = tablePlan.Columns.First(c => c.Name == "Name");
+        Assert.NotEqual("skip", namePlan.Generator);
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
+        Assert.Equal(RowCount, inserted);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT RowVer FROM dbo.TestRowVersionPlan");
+        Assert.Equal(RowCount, rows.Count);
+
+        var rowVersions = new HashSet<string>();
+        foreach (var row in rows)
+        {
+            Assert.NotNull(row["RowVer"]);
+            var hex = Convert.ToHexString((byte[])row["RowVer"]!);
+            Assert.True(rowVersions.Add(hex), "Each row should have a distinct rowversion value");
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 51. Timestamp Column (Legacy Alias) via Plan Execution
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test51_TimestampColumn_ViaPlan()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestTimestampPlan (
+                Id    INT IDENTITY(1,1) PRIMARY KEY,
+                Name  NVARCHAR(50) NOT NULL,
+                Stamp TIMESTAMP
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestTimestampPlan").ToList();
+
+        Assert.Single(tables);
+        var tsCol = tables[0].Columns.First(c => c.Name == "Stamp");
+        Assert.True(tsCol.IsRowVersion, "Stamp column (TIMESTAMP) should be detected as rowversion");
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
+
+        var tablePlan = plan.Tables[0];
+
+        var tsPlan = tablePlan.Columns.First(c => c.Name == "Stamp");
+        Assert.True(tsPlan.IsRowVersion, "Plan should have IsRowVersion = true for Stamp");
+        Assert.Equal("skip", tsPlan.Generator);
+
+        var namePlan = tablePlan.Columns.First(c => c.Name == "Name");
+        Assert.NotEqual("skip", namePlan.Generator);
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
+        Assert.Equal(RowCount, inserted);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT Stamp FROM dbo.TestTimestampPlan");
+        Assert.Equal(RowCount, rows.Count);
+
+        var timestamps = new HashSet<string>();
+        foreach (var row in rows)
+        {
+            Assert.NotNull(row["Stamp"]);
+            var hex = Convert.ToHexString((byte[])row["Stamp"]!);
+            Assert.True(timestamps.Add(hex), "Each row should have a distinct timestamp value");
+        }
+    }
 }
