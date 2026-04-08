@@ -7,7 +7,7 @@ A .NET console application that connects to a Microsoft SQL Server database, rea
 - **Schema-driven generation** — reads table and column metadata directly from SQL Server system views, so no manual mapping is needed.
 - **Automatic dependency ordering** — uses topological sort (Kahn's algorithm) to determine safe insertion order. Self-referencing foreign keys are detected and handled separately.
 - **Smart value generation** — column names are matched against heuristic rules (e.g. `email` → realistic email, `first_name` → realistic first name). When no name rule matches, values are generated based on the SQL data type.
-- **JSON plan workflow** — generate a JSON plan file describing every table and column, review or edit it, then execute it. This gives full control over what data gets inserted.
+- **YAML plan workflow** — generate a YAML plan file describing every table and column, review or edit it, then execute it. This gives full control over what data gets inserted.
 - **Table filtering** — optionally restrict generation to a specific schema or an explicit include/exclude list of tables.
 - **Locale support** — generated data can target different locales (defaults to `en`).
 - **Seeded generation** — supply a seed for reproducible output.
@@ -27,11 +27,11 @@ synthetic_data_generator/
 │       ├── Program.cs                   # Entry point and CLI argument parsing
 │       ├── Models/
 │       │   ├── TableMetadata.cs         # ColumnInfo, ForeignKeyInfo, TableInfo
-│       │   └── GenerationPlan.cs        # JSON plan DTOs
+│       │   └── GenerationPlan.cs        # YAML plan DTOs
 │       └── Services/
 │           ├── SchemaReader.cs          # Reads DB metadata from sys views
 │           ├── DependencyGraph.cs       # FK graph + topological sort
-│           ├── PlanGenerator.cs         # Builds/writes/reads JSON plans
+│           ├── PlanGenerator.cs         # Builds/writes/reads YAML plans
 │           ├── ColumnValueGenerator.cs  # Executes Bogus generators
 │           └── DataInserter.cs          # INSERT statement generation/execution
 └── tests/
@@ -78,7 +78,7 @@ dotnet build
 
 ### Run — Direct Mode
 
-Reads the database schema and inserts synthetic rows immediately. A `plan.json` file is also saved in the current directory so you can inspect or re-run what was generated:
+Reads the database schema and inserts synthetic rows immediately. A `plan.yaml` file is also saved in the current directory so you can inspect or re-run what was generated:
 
 ```bash
 dotnet run --project src/SyntheticDataGenerator
@@ -86,20 +86,20 @@ dotnet run --project src/SyntheticDataGenerator
 
 ### Run — Generate Plan
 
-Creates a JSON plan file that you can review and edit before inserting any data:
+Creates a YAML plan file that you can review and edit before inserting any data:
 
 ```bash
-dotnet run --project src/SyntheticDataGenerator -- --generate-plan plan.json
+dotnet run --project src/SyntheticDataGenerator -- --generate-plan plan.yaml
 ```
 
-If the output path is omitted it defaults to `plan.json`.
+If the output path is omitted it defaults to `plan.yaml`.
 
 ### Run — Execute Plan
 
 Inserts data according to a previously generated (and optionally edited) plan file:
 
 ```bash
-dotnet run --project src/SyntheticDataGenerator -- --execute-plan plan.json
+dotnet run --project src/SyntheticDataGenerator -- --execute-plan plan.yaml
 ```
 
 ## Running Tests

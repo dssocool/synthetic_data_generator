@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Bogus;
 using SyntheticDataGenerator.Models;
 
@@ -104,7 +103,7 @@ public class ColumnValueGenerator
 
             if (string.Equals(plan.Generator, "Lorem.Word", StringComparison.OrdinalIgnoreCase)
                 && plan.GeneratorArgs.TryGetValue("wrapXml", out var wrapXml)
-                && wrapXml is true or JsonElement { ValueKind: JsonValueKind.True })
+                && IsTruthy(wrapXml))
             {
                 value = $"<data>{value}</data>";
             }
@@ -300,19 +299,17 @@ public class ColumnValueGenerator
             return f.Lorem.Word();
 
         string[] values;
-        if (valuesObj is JsonElement jsonElement && jsonElement.ValueKind == JsonValueKind.Array)
-        {
-            values = jsonElement.EnumerateArray()
-                .Select(e => e.GetString() ?? string.Empty)
-                .ToArray();
-        }
-        else if (valuesObj is string[] strArray)
+        if (valuesObj is string[] strArray)
         {
             values = strArray;
         }
         else if (valuesObj is object[] objArray)
         {
             values = objArray.Select(o => o?.ToString() ?? string.Empty).ToArray();
+        }
+        else if (valuesObj is IEnumerable<object> enumerable)
+        {
+            values = enumerable.Select(o => o?.ToString() ?? string.Empty).ToArray();
         }
         else
         {
@@ -322,11 +319,17 @@ public class ColumnValueGenerator
         return values.Length > 0 ? f.PickRandom(values) : f.Lorem.Word();
     }
 
+    private static bool IsTruthy(object? value)
+    {
+        if (value is bool b) return b;
+        if (value is string str) return str.Equals("true", StringComparison.OrdinalIgnoreCase);
+        return false;
+    }
+
     private static int GetInt(Dictionary<string, object?> args, string key, int defaultValue)
     {
         if (!args.TryGetValue(key, out var value) || value is null) return defaultValue;
         if (value is int i) return i;
-        if (value is JsonElement je) return je.TryGetInt32(out var ji) ? ji : defaultValue;
         return int.TryParse(value.ToString(), out var parsed) ? parsed : defaultValue;
     }
 
@@ -335,7 +338,6 @@ public class ColumnValueGenerator
         if (!args.TryGetValue(key, out var value) || value is null) return defaultValue;
         if (value is long l) return l;
         if (value is int i) return i;
-        if (value is JsonElement je) return je.TryGetInt64(out var jl) ? jl : defaultValue;
         return long.TryParse(value.ToString(), out var parsed) ? parsed : defaultValue;
     }
 
@@ -345,7 +347,6 @@ public class ColumnValueGenerator
         if (value is decimal d) return d;
         if (value is int i) return i;
         if (value is double dbl) return (decimal)dbl;
-        if (value is JsonElement je) return je.TryGetDecimal(out var jd) ? jd : defaultValue;
         return decimal.TryParse(value.ToString(), out var parsed) ? parsed : defaultValue;
     }
 
@@ -355,7 +356,6 @@ public class ColumnValueGenerator
         if (value is double d) return d;
         if (value is int i) return i;
         if (value is decimal dec) return (double)dec;
-        if (value is JsonElement je) return je.TryGetDouble(out var jd) ? jd : defaultValue;
         return double.TryParse(value.ToString(), out var parsed) ? parsed : defaultValue;
     }
 
@@ -363,7 +363,6 @@ public class ColumnValueGenerator
     {
         if (!args.TryGetValue(key, out var value) || value is null) return defaultValue;
         if (value is string s) return s;
-        if (value is JsonElement je) return je.GetString() ?? defaultValue;
         return value.ToString() ?? defaultValue;
     }
 }

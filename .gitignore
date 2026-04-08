@@ -69,4 +69,4 @@ launchSettings.json
 *~
 
 src/SyntheticDataGenerator/appsettings.json
-plan.json
+plan.yaml

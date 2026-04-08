@@ -1,6 +1,5 @@
 using System.Data;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using SyntheticDataGenerator.Models;
 
@@ -504,7 +503,6 @@ public class DataInserter
     private static bool IsTruthy(object? value)
     {
         if (value is bool b) return b;
-        if (value is JsonElement je) return je.ValueKind == JsonValueKind.True;
         if (value is string s) return s.Equals("true", StringComparison.OrdinalIgnoreCase);
         return false;
     }
@@ -513,7 +511,6 @@ public class DataInserter
     {
         if (!args.TryGetValue(key, out var value) || value is null) return string.Empty;
         if (value is string s) return s;
-        if (value is JsonElement je) return je.GetString() ?? string.Empty;
         return value.ToString() ?? string.Empty;
     }
 

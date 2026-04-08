@@ -1,72 +1,72 @@
-using System.Text.Json.Serialization;
+using YamlDotNet.Serialization;
 
 namespace SyntheticDataGenerator.Models;
 
 public class GenerationPlan
 {
-    [JsonPropertyName("seed")]
+    [YamlMember(Alias = "seed")]
     public int? Seed { get; set; }
 
-    [JsonPropertyName("locale")]
+    [YamlMember(Alias = "locale")]
     public string Locale { get; set; } = "en";
 
-    [JsonPropertyName("tables")]
+    [YamlMember(Alias = "tables")]
     public List<TablePlan> Tables { get; set; } = [];
 }
 
 public class TablePlan
 {
-    [JsonPropertyName("schema")]
+    [YamlMember(Alias = "schema")]
     public string Schema { get; set; } = string.Empty;
 
-    [JsonPropertyName("table")]
+    [YamlMember(Alias = "table")]
     public string Table { get; set; } = string.Empty;
 
-    [JsonPropertyName("order")]
+    [YamlMember(Alias = "order")]
     public int Order { get; set; }
 
-    [JsonPropertyName("rowCount")]
+    [YamlMember(Alias = "rowCount")]
     public int RowCount { get; set; } = 100;
 
-    [JsonPropertyName("columns")]
+    [YamlMember(Alias = "columns")]
     public List<ColumnPlan> Columns { get; set; } = [];
 
-    [JsonIgnore]
+    [YamlIgnore]
     public string FullName => $"{Schema}.{Table}";
 }
 
 public class ColumnPlan
 {
-    [JsonPropertyName("name")]
+    [YamlMember(Alias = "name")]
     public string Name { get; set; } = string.Empty;
 
-    [JsonPropertyName("sqlType")]
+    [YamlMember(Alias = "sqlType")]
     public string SqlType { get; set; } = string.Empty;
 
-    [JsonPropertyName("maxLength")]
+    [YamlMember(Alias = "maxLength")]
     public int MaxLength { get; set; }
 
-    [JsonPropertyName("precision")]
+    [YamlMember(Alias = "precision")]
     public byte Precision { get; set; }
 
-    [JsonPropertyName("scale")]
+    [YamlMember(Alias = "scale")]
     public byte Scale { get; set; }
 
-    [JsonPropertyName("isNullable")]
+    [YamlMember(Alias = "isNullable")]
     public bool IsNullable { get; set; }
 
-    [JsonPropertyName("isIdentity")]
+    [YamlMember(Alias = "isIdentity")]
     public bool IsIdentity { get; set; }
 
-    [JsonPropertyName("isPrimaryKey")]
+    [YamlMember(Alias = "isPrimaryKey")]
     public bool IsPrimaryKey { get; set; }
 
-    [JsonPropertyName("isComputed")]
+    [YamlMember(Alias = "isComputed")]
     public bool IsComputed { get; set; }
 
-    [JsonPropertyName("generator")]
+    [YamlMember(Alias = "generator")]
     public string Generator { get; set; } = string.Empty;
 
-    [JsonPropertyName("generatorArgs")]
+    [YamlMember(Alias = "generatorArgs")]
     public Dictionary<string, object?> GeneratorArgs { get; set; } = new();
 }

@@ -29,7 +29,7 @@ var mode = ParseMode(args);
 switch (mode)
 {
     case ("generate-plan", var outputPath):
-        await RunGeneratePlan(outputPath ?? "plan.json");
+        await RunGeneratePlan(outputPath ?? "plan.yaml");
         break;
     case ("execute-plan", var planPath):
         await RunExecutePlan(planPath ?? throw new InvalidOperationException(
@@ -197,7 +197,7 @@ async Task RunDirect()
     Console.WriteLine();
     Console.WriteLine($"Done. {totalRows} total rows inserted in {stopwatch.Elapsed.TotalSeconds:F1}s.");
 
-    var planOutputPath = "plan.json";
+    var planOutputPath = "plan.yaml";
     var planGen = new PlanGenerator();
     var plan = planGen.Generate(sortedTables, graph!.SelfReferencingTables, rowsPerTable, seed, locale);
     await planGen.WritePlanAsync(plan, planOutputPath);
@@ -270,7 +270,6 @@ static (string Mode, string? Arg) ParseMode(string[] args)
 static bool IsTruthy(object? value)
 {
     if (value is bool b) return b;
-    if (value is System.Text.Json.JsonElement je) return je.ValueKind == System.Text.Json.JsonValueKind.True;
     if (value is string str) return str.Equals("true", StringComparison.OrdinalIgnoreCase);
     return false;
 }

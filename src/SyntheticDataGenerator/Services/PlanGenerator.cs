@@ -1,5 +1,6 @@
-using System.Text.Json;
 using SyntheticDataGenerator.Models;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
 
 namespace SyntheticDataGenerator.Services;
 
@@ -156,27 +157,24 @@ public class PlanGenerator
 
     public async Task WritePlanAsync(GenerationPlan plan, string outputPath)
     {
-        var options = new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never
-        };
+        var serializer = new SerializerBuilder()
+            .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .ConfigureDefaultValuesHandling(DefaultValuesHandling.Preserve)
+            .Build();
 
-        await using var stream = File.Create(outputPath);
-        await JsonSerializer.SerializeAsync(stream, plan, options);
+        var yaml = serializer.Serialize(plan);
+        await File.WriteAllTextAsync(outputPath, yaml);
     }
 
     public static async Task<GenerationPlan> ReadPlanAsync(string planPath)
     {
-        await using var stream = File.OpenRead(planPath);
-        var options = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            PropertyNameCaseInsensitive = true
-        };
+        var yaml = await File.ReadAllTextAsync(planPath);
 
-        return await JsonSerializer.DeserializeAsync<GenerationPlan>(stream, options)
+        var deserializer = new DeserializerBuilder()
+            .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .Build();
+
+        return deserializer.Deserialize<GenerationPlan>(yaml)
                ?? throw new InvalidOperationException("Failed to deserialize plan file.");
     }
 
