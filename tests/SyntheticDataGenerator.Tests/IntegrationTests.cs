@@ -2062,4 +2062,136 @@ public class IntegrationTests
             """))!;
         Assert.Equal(nonNullTotal, nonNullDistinct);
     }
+
+    // ══════════════════════════════════════════════
+    // 45. Sequence Primary Key (Direct Path)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test45_SequencePrimaryKey()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE SEQUENCE dbo.SeqTestPK_Seq AS INT START WITH 1 INCREMENT BY 1;
+
+            CREATE TABLE dbo.TestSeqPK (
+                Id   INT NOT NULL DEFAULT (NEXT VALUE FOR dbo.SeqTestPK_Seq) PRIMARY KEY,
+                Name NVARCHAR(100) NOT NULL
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestSeqPK").ToList();
+
+        Assert.Single(tables);
+        var idCol = tables[0].Columns.First(c => c.Name == "Id");
+        Assert.True(idCol.IsSequenceDefault, "Id column should be detected as sequence default");
+        Assert.False(idCol.IsIdentity, "Id column should not be identity");
+        Assert.True(tables[0].HasSequencePk, "Table should have HasSequencePk = true");
+
+        var results = await GenerateDataAsync("TestSeqPK");
+        Assert.Equal(RowCount, results["dbo.TestSeqPK"]);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT Id, Name FROM dbo.TestSeqPK ORDER BY Id");
+        Assert.Equal(RowCount, rows.Count);
+
+        // PK values should be sequential integers assigned by the sequence
+        var ids = rows.Select(r => (int)r["Id"]!).ToList();
+        for (var i = 1; i < ids.Count; i++)
+            Assert.Equal(ids[i - 1] + 1, ids[i]);
+
+        // Name column should have non-null values (generator filled them)
+        foreach (var row in rows)
+            Assert.False(string.IsNullOrWhiteSpace((string?)row["Name"]));
+    }
+
+    // ══════════════════════════════════════════════
+    // 46. Sequence Non-PK Column (Direct Path)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test46_SequenceNonPkColumn()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE SEQUENCE dbo.SeqTestNonPK_Seq AS INT START WITH 100 INCREMENT BY 10;
+
+            CREATE TABLE dbo.TestSeqNonPK (
+                Id     INT IDENTITY(1,1) PRIMARY KEY,
+                SeqNum INT NOT NULL DEFAULT (NEXT VALUE FOR dbo.SeqTestNonPK_Seq),
+                Label  NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestSeqNonPK").ToList();
+
+        Assert.Single(tables);
+        var seqCol = tables[0].Columns.First(c => c.Name == "SeqNum");
+        Assert.True(seqCol.IsSequenceDefault, "SeqNum should be detected as sequence default");
+
+        var results = await GenerateDataAsync("TestSeqNonPK");
+        Assert.Equal(RowCount, results["dbo.TestSeqNonPK"]);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT SeqNum FROM dbo.TestSeqNonPK ORDER BY Id");
+        Assert.Equal(RowCount, rows.Count);
+
+        // SeqNum values should be filled by the sequence (100, 110, 120, ...)
+        var seqNums = rows.Select(r => (int)r["SeqNum"]!).ToList();
+        Assert.Equal(100, seqNums[0]);
+        for (var i = 1; i < seqNums.Count; i++)
+            Assert.Equal(seqNums[i - 1] + 10, seqNums[i]);
+    }
+
+    // ══════════════════════════════════════════════
+    // 47. Sequence Primary Key via Plan Execution
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test47_SequencePrimaryKey_ViaPlan()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE SEQUENCE dbo.SeqTestPlan_Seq AS INT START WITH 1 INCREMENT BY 1;
+
+            CREATE TABLE dbo.TestSeqPKPlan (
+                Id   INT NOT NULL DEFAULT (NEXT VALUE FOR dbo.SeqTestPlan_Seq) PRIMARY KEY,
+                Name NVARCHAR(100) NOT NULL
+            )
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == "TestSeqPKPlan").ToList();
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
+
+        var tablePlan = plan.Tables[0];
+
+        // Verify the plan correctly marks the sequence column
+        var idPlan = tablePlan.Columns.First(c => c.Name == "Id");
+        Assert.True(idPlan.IsSequenceDefault, "Plan should have IsSequenceDefault = true for Id");
+        Assert.Equal("skip", idPlan.Generator);
+
+        var namePlan = tablePlan.Columns.First(c => c.Name == "Name");
+        Assert.NotEqual("skip", namePlan.Generator);
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
+        Assert.Equal(RowCount, inserted);
+
+        var rows = await _fixture.ExecuteQueryAsync("SELECT Id, Name FROM dbo.TestSeqPKPlan ORDER BY Id");
+        Assert.Equal(RowCount, rows.Count);
+
+        // PK values should be sequential integers assigned by the sequence
+        var ids = rows.Select(r => (int)r["Id"]!).ToList();
+        for (var i = 1; i < ids.Count; i++)
+            Assert.Equal(ids[i - 1] + 1, ids[i]);
+    }
 }

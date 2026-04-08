@@ -320,7 +320,7 @@ static void WarnUnsupportedColumns(List<TableInfo> tables)
     foreach (var table in tables)
     {
         var skipped = table.Columns
-            .Where(c => !c.IsIdentity && !c.IsComputed && !c.IsRowVersion && PlanGenerator.IsUnsupportedType(c))
+            .Where(c => !c.IsIdentity && !c.IsComputed && !c.IsRowVersion && !c.IsSequenceDefault && PlanGenerator.IsUnsupportedType(c))
             .ToList();
 
         foreach (var col in skipped)

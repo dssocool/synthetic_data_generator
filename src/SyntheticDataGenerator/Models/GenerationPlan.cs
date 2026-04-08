@@ -85,6 +85,9 @@ public class ColumnPlan
     [YamlMember(Alias = "hasDefault")]
     public bool HasDefault { get; set; }
 
+    [YamlMember(Alias = "isSequenceDefault")]
+    public bool IsSequenceDefault { get; set; }
+
     [YamlMember(Alias = "isUnique")]
     public bool IsUnique { get; set; }
 

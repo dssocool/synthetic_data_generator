@@ -23,6 +23,7 @@ public class SchemaReader
         await ReadPrimaryKeys(connection, tables, schemaFilter);
         await ReadForeignKeys(connection, tables, schemaFilter);
         await ReadDefaultConstraints(connection, tables, schemaFilter);
+        MarkSequenceDefaults(tables);
         await ReadCheckConstraints(connection, tables, schemaFilter);
         await ReadUniqueConstraints(connection, tables, schemaFilter);
 
@@ -346,6 +347,21 @@ public class SchemaReader
                     c.Name.Equals(columns[0], StringComparison.OrdinalIgnoreCase));
                 if (col != null)
                     col.IsUnique = true;
+            }
+        }
+    }
+
+    private static void MarkSequenceDefaults(Dictionary<string, TableInfo> tables)
+    {
+        foreach (var table in tables.Values)
+        {
+            foreach (var col in table.Columns)
+            {
+                if (col.DefaultDefinition != null
+                    && col.DefaultDefinition.Contains("NEXT VALUE FOR", StringComparison.OrdinalIgnoreCase))
+                {
+                    col.IsSequenceDefault = true;
+                }
             }
         }
     }

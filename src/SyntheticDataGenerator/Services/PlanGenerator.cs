@@ -129,9 +129,10 @@ public class PlanGenerator
                     IsRowVersion = col.IsRowVersion,
                     HasDefault = col.HasDefault,
                     IsUnique = col.IsUnique,
+                    IsSequenceDefault = col.IsSequenceDefault,
                 };
 
-                if (col.IsIdentity || col.IsComputed || col.IsRowVersion)
+                if (col.IsIdentity || col.IsComputed || col.IsRowVersion || col.IsSequenceDefault)
                 {
                     colPlan.Generator = "skip";
                 }

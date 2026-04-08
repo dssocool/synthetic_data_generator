@@ -14,6 +14,7 @@ public class ColumnInfo
     public bool IsRowVersion { get; set; }
     public bool IsUserDefined { get; set; }
     public bool IsUnique { get; set; }
+    public bool IsSequenceDefault { get; set; }
     public string? DefaultDefinition { get; set; }
 
     public string FullTableName { get; set; } = string.Empty;
@@ -81,6 +82,9 @@ public class TableInfo
 
     public bool HasIdentityPk =>
         Columns.Any(c => c.IsPrimaryKey && c.IsIdentity);
+
+    public bool HasSequencePk =>
+        Columns.Any(c => c.IsPrimaryKey && c.IsSequenceDefault);
 
     public List<CompositeForeignKey> GetGroupedForeignKeys() =>
         ForeignKeys

@@ -177,7 +177,7 @@ public class DataInserter
 
         var columnsToInsert = table.Columns
             .Where(c => !c.IsIdentity && !c.IsComputed && !c.IsRowVersion
-                        && !PlanGenerator.IsUnsupportedType(c))
+                        && !c.IsSequenceDefault && !PlanGenerator.IsUnsupportedType(c))
             .ToList();
 
         var firstPassColumns = isSelfRef
@@ -527,6 +527,7 @@ public class DataInserter
                 IsComputed = cp.IsComputed,
                 IsRowVersion = cp.IsRowVersion,
                 IsUnique = cp.IsUnique,
+                IsSequenceDefault = cp.IsSequenceDefault,
                 DefaultDefinition = cp.HasDefault ? "(from plan)" : null,
                 FullTableName = tablePlan.FullName
             }).ToList(),
@@ -873,7 +874,7 @@ public class DataInserter
         List<ColumnInfo> columns,
         Dictionary<string, object?> row)
     {
-        if (columns.Count == 0 && !table.HasIdentityPk)
+        if (columns.Count == 0 && !table.HasIdentityPk && !table.HasSequencePk)
             return null;
 
         var sb = new StringBuilder();
