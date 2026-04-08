@@ -42,19 +42,17 @@ synthetic_data_generator/
 
 ## Configuration
 
-Create an `appsettings.json` file in `src/SyntheticDataGenerator/` (this file is gitignored):
+Create an `appsettings.yaml` file in `src/SyntheticDataGenerator/` (this file is gitignored):
 
-```json
-{
-  "ConnectionString": "Server=YOUR_SERVER;Trusted_Connection=True;TrustServerCertificate=True;",
-  "DatabaseName": "YOUR_DATABASE",
-  "Schema": "dbo",
-  "TablesToInclude": [],
-  "TablesToExclude": [],
-  "RowsPerTable": 100,
-  "Seed": 12345,
-  "Locale": "en"
-}
+```yaml
+ConnectionString: "Server=YOUR_SERVER;Trusted_Connection=True;TrustServerCertificate=True;"
+DatabaseName: YOUR_DATABASE
+Schema: dbo
+TablesToInclude: []
+TablesToExclude: []
+RowsPerTable: 100
+Seed: 12345
+Locale: en
 ```
 
 | Key | Required | Default | Description |

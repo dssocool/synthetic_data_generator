@@ -5,11 +5,11 @@ using SyntheticDataGenerator.Services;
 
 var config = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
-    .AddJsonFile("appsettings.json", optional: false)
+    .AddYamlFile("appsettings.yaml", optional: false)
     .Build();
 
 var baseConnectionString = config["ConnectionString"]
-    ?? throw new InvalidOperationException("ConnectionString is required in appsettings.json");
+    ?? throw new InvalidOperationException("ConnectionString is required in appsettings.yaml");
 
 var databaseName = config["DatabaseName"];
 var connectionString = string.IsNullOrWhiteSpace(databaseName)

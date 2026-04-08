@@ -68,5 +68,5 @@ launchSettings.json
 *.swo
 *~
 
-src/SyntheticDataGenerator/appsettings.json
+src/SyntheticDataGenerator/appsettings.yaml
 plan.yaml
