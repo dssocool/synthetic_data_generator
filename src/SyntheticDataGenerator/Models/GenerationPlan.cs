@@ -69,4 +69,7 @@ public class ColumnPlan
 
     [YamlMember(Alias = "generatorArgs")]
     public Dictionary<string, object?> GeneratorArgs { get; set; } = new();
+
+    [YamlMember(Alias = "valuesFile")]
+    public string? ValuesFile { get; set; }
 }

@@ -6,6 +6,8 @@ namespace SyntheticDataGenerator.Services;
 public class ColumnValueGenerator
 {
     private readonly Faker _faker;
+    private string? _planBasePath;
+    private readonly Dictionary<string, string[]> _valuesFileCache = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly Dictionary<string, Func<Faker, Dictionary<string, object?>, object?>> Generators =
         new(StringComparer.OrdinalIgnoreCase)
@@ -89,6 +91,8 @@ public class ColumnValueGenerator
             : new Faker(locale);
     }
 
+    public void SetPlanBasePath(string basePath) => _planBasePath = basePath;
+
     public object? GenerateFromPlan(ColumnPlan plan)
     {
         if (string.Equals(plan.Generator, "skip", StringComparison.OrdinalIgnoreCase))
@@ -96,6 +100,13 @@ public class ColumnValueGenerator
 
         if (string.Equals(plan.Generator, "foreignKey", StringComparison.OrdinalIgnoreCase))
             return null;
+
+        if (!string.IsNullOrWhiteSpace(plan.ValuesFile))
+        {
+            var values = LoadValuesFile(plan.ValuesFile, plan.Name);
+            var picked = _faker.PickRandom(values);
+            return ClampToColumnPlan(picked, plan);
+        }
 
         if (Generators.TryGetValue(plan.Generator, out var generator))
         {
@@ -112,6 +123,31 @@ public class ColumnValueGenerator
         }
 
         return _faker.Random.AlphaNumeric(8);
+    }
+
+    private string[] LoadValuesFile(string filePath, string columnName)
+    {
+        var resolvedPath = Path.IsPathRooted(filePath)
+            ? filePath
+            : Path.GetFullPath(filePath, _planBasePath ?? Directory.GetCurrentDirectory());
+
+        if (_valuesFileCache.TryGetValue(resolvedPath, out var cached))
+            return cached;
+
+        if (!File.Exists(resolvedPath))
+            throw new InvalidOperationException(
+                $"Values file '{resolvedPath}' for column '{columnName}' does not exist.");
+
+        var values = File.ReadAllLines(resolvedPath)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToArray();
+
+        if (values.Length == 0)
+            throw new InvalidOperationException(
+                $"Values file '{resolvedPath}' for column '{columnName}' is empty.");
+
+        _valuesFileCache[resolvedPath] = values;
+        return values;
     }
 
     private static readonly HashSet<string> TypeFirstTypes = new(StringComparer.OrdinalIgnoreCase)

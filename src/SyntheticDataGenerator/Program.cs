@@ -105,6 +105,7 @@ async Task RunExecutePlan(string planPath)
             .Select(t => t.FullName));
 
     var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+    valueGen.SetPlanBasePath(Path.GetDirectoryName(Path.GetFullPath(planPath))!);
     var inserter = new DataInserter(connectionString, valueGen, selfRefTables);
     var totalRows = 0;
     var stopwatch = Stopwatch.StartNew();
