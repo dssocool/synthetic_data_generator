@@ -155,22 +155,40 @@ public class ColumnValueGenerator
         "binary", "varbinary", "image", "timestamp", "rowversion",
         "bit",
         "int", "bigint", "smallint", "tinyint",
-        "decimal", "numeric", "money", "smallmoney",
         "float", "real",
         "datetime", "datetime2", "smalldatetime", "date", "time", "datetimeoffset",
         "uniqueidentifier",
     };
 
+    private static readonly HashSet<string> NumericTypesWithNameHeuristics = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "decimal", "numeric", "money", "smallmoney",
+    };
+
     public object? Generate(ColumnInfo column)
     {
+        if (NumericTypesWithNameHeuristics.Contains(column.SqlType))
+        {
+            var name = column.Name.ToLowerInvariant();
+            foreach (var (match, generate) in NameRules)
+            {
+                if (!match(name)) continue;
+                var value = generate(_faker, column);
+                if (value is decimal or int or long or short or byte or float or double)
+                    return ClampToColumn(value, column);
+                break;
+            }
+            return GenerateByType(column);
+        }
+
         if (TypeFirstTypes.Contains(column.SqlType))
             return GenerateByType(column);
 
-        var name = column.Name.ToLowerInvariant();
+        var name2 = column.Name.ToLowerInvariant();
 
         foreach (var (match, generate) in NameRules)
         {
-            if (match(name))
+            if (match(name2))
                 return ClampToColumn(generate(_faker, column), column);
         }
 
