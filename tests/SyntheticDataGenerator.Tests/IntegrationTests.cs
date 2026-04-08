@@ -1,4 +1,3 @@
-using Microsoft.Data.SqlClient;
 using SyntheticDataGenerator.Models;
 using SyntheticDataGenerator.Services;
 
@@ -17,7 +16,7 @@ public class IntegrationTests
     }
 
     // ──────────────────────────────────────────────
-    // Helper: run the generator pipeline for a given set of table names
+    // Shared helpers
     // ──────────────────────────────────────────────
 
     private async Task<Dictionary<string, int>> GenerateDataAsync(params string[] tableNames)
@@ -47,6 +46,103 @@ public class IntegrationTests
         return results;
     }
 
+    private async Task<Dictionary<string, int>> GenerateAndVerifyCountAsync(params string[] tableNames)
+    {
+        var results = await GenerateDataAsync(tableNames);
+        foreach (var tableName in tableNames)
+        {
+            var key = tableName.Contains('.') ? tableName : $"dbo.{tableName}";
+            Assert.Equal(RowCount, results[key]);
+        }
+        return results;
+    }
+
+    private async Task<(TableInfo Table, int Inserted)> GenerateDataForTableAsync(
+        string tableName, int rowCount)
+    {
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var table = allTables.First(t => t.TableName == tableName);
+
+        var graph = new DependencyGraph();
+        graph.Build([table]);
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(
+            _fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        var inserted = await inserter.InsertTableAsync(table, rowCount);
+        return (table, inserted);
+    }
+
+    private async Task<(GenerationPlan Plan, List<TableInfo> Tables)> GeneratePlanAsync(
+        string tableName, int rowCount = RowCount)
+    {
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables.Where(t => t.TableName == tableName).ToList();
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, rowCount, Seed, "en");
+
+        return (plan, tables);
+    }
+
+    private async Task<Dictionary<string, int>> ExecutePlanAsync(GenerationPlan plan)
+    {
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        var results = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tablePlan in plan.Tables.OrderBy(t => t.Order))
+        {
+            var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
+            results[tablePlan.FullName] = inserted;
+        }
+        return results;
+    }
+
+    private async Task AssertNoOrphansAsync(
+        string childTable, string parentTable,
+        string childFkCol, string parentPkCol)
+    {
+        var orphans = (int)(await _fixture.ExecuteScalarAsync($"""
+            SELECT COUNT(*) FROM {childTable} c
+            WHERE NOT EXISTS (SELECT 1 FROM {parentTable} p WHERE p.{parentPkCol} = c.{childFkCol})
+            """))!;
+        Assert.Equal(0, orphans);
+    }
+
+    private async Task AssertNoOrphansAsync(
+        string childTable, string parentTable,
+        string[] childFkCols, string[] parentPkCols)
+    {
+        var joinCondition = string.Join(" AND ",
+            childFkCols.Zip(parentPkCols, (fk, pk) => $"p.{pk} = c.{fk}"));
+        var orphans = (int)(await _fixture.ExecuteScalarAsync($"""
+            SELECT COUNT(*) FROM {childTable} c
+            WHERE NOT EXISTS (SELECT 1 FROM {parentTable} p WHERE {joinCondition})
+            """))!;
+        Assert.Equal(0, orphans);
+    }
+
+    private static void AssertDistinctBinaryColumn(
+        List<Dictionary<string, object?>> rows, string columnName)
+    {
+        var seen = new HashSet<string>();
+        foreach (var row in rows)
+        {
+            Assert.NotNull(row[columnName]);
+            var hex = Convert.ToHexString((byte[])row[columnName]!);
+            Assert.True(seen.Add(hex),
+                $"Each row should have a distinct {columnName} value");
+        }
+    }
+
     // ══════════════════════════════════════════════
     //  1. Integer Types
     // ══════════════════════════════════════════════
@@ -65,8 +161,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestIntegerTypes");
-        Assert.Equal(RowCount, results["dbo.TestIntegerTypes"]);
+        await GenerateAndVerifyCountAsync("TestIntegerTypes");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestIntegerTypes");
         Assert.Equal(RowCount, rows.Count);
@@ -98,8 +193,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestDecimalMoney");
-        Assert.Equal(RowCount, results["dbo.TestDecimalMoney"]);
+        await GenerateAndVerifyCountAsync("TestDecimalMoney");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestDecimalMoney");
         foreach (var row in rows)
@@ -130,8 +224,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestTightDecimal");
-        Assert.Equal(RowCount, results["dbo.TestTightDecimal"]);
+        await GenerateAndVerifyCountAsync("TestTightDecimal");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestTightDecimal");
         foreach (var row in rows)
@@ -173,8 +266,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestTightDecimalNames");
-        Assert.Equal(RowCount, results["dbo.TestTightDecimalNames"]);
+        await GenerateAndVerifyCountAsync("TestTightDecimalNames");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestTightDecimalNames");
         foreach (var row in rows)
@@ -211,8 +303,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestFloatingPoint");
-        Assert.Equal(RowCount, results["dbo.TestFloatingPoint"]);
+        await GenerateAndVerifyCountAsync("TestFloatingPoint");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestFloatingPoint");
         foreach (var row in rows)
@@ -241,8 +332,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestDateTimeTypes");
-        Assert.Equal(RowCount, results["dbo.TestDateTimeTypes"]);
+        await GenerateAndVerifyCountAsync("TestDateTimeTypes");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestDateTimeTypes");
         Assert.Equal(RowCount, rows.Count);
@@ -275,8 +365,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestStringVarchar");
-        Assert.Equal(RowCount, results["dbo.TestStringVarchar"]);
+        await GenerateAndVerifyCountAsync("TestStringVarchar");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestStringVarchar");
         foreach (var row in rows)
@@ -307,8 +396,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestStringFixed");
-        Assert.Equal(RowCount, results["dbo.TestStringFixed"]);
+        await GenerateAndVerifyCountAsync("TestStringFixed");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestStringFixed");
         foreach (var row in rows)
@@ -338,8 +426,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestBinaryGuid");
-        Assert.Equal(RowCount, results["dbo.TestBinaryGuid"]);
+        await GenerateAndVerifyCountAsync("TestBinaryGuid");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestBinaryGuid");
         foreach (var row in rows)
@@ -366,8 +453,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestXmlType");
-        Assert.Equal(RowCount, results["dbo.TestXmlType"]);
+        await GenerateAndVerifyCountAsync("TestXmlType");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT CAST(ColXml AS NVARCHAR(MAX)) AS ColXml FROM dbo.TestXmlType");
         foreach (var row in rows)
@@ -392,8 +478,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestIdentityPK");
-        Assert.Equal(RowCount, results["dbo.TestIdentityPK"]);
+        await GenerateAndVerifyCountAsync("TestIdentityPK");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT Id FROM dbo.TestIdentityPK ORDER BY Id");
         var ids = rows.Select(r => (int)r["Id"]!).ToList();
@@ -420,8 +505,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestCompositePK");
-        Assert.Equal(RowCount, results["dbo.TestCompositePK"]);
+        await GenerateAndVerifyCountAsync("TestCompositePK");
 
         var count = (int)(await _fixture.ExecuteScalarAsync("SELECT COUNT(*) FROM dbo.TestCompositePK"))!;
         Assert.Equal(RowCount, count);
@@ -450,18 +534,7 @@ public class IntegrationTests
             )
             """);
 
-        // Use more rows to give the 10% null chance a fair shot
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var table = allTables.First(t => t.TableName == "TestNullable");
-
-        var graph = new DependencyGraph();
-        graph.Build([table]);
-        var sorted = graph.GetTopologicalOrder();
-
-        var valueGen = new ColumnValueGenerator(seed: Seed);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
-        var inserted = await inserter.InsertTableAsync(table, 100);
+        var (_, inserted) = await GenerateDataForTableAsync("TestNullable", 100);
         Assert.Equal(100, inserted);
 
         // With 5 nullable columns and 100 rows (500 opportunities), expect at least some NULLs
@@ -494,8 +567,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestNonNullable");
-        Assert.Equal(RowCount, results["dbo.TestNonNullable"]);
+        await GenerateAndVerifyCountAsync("TestNonNullable");
 
         var nullCount = (int)(await _fixture.ExecuteScalarAsync("""
             SELECT SUM(
@@ -524,8 +596,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestComputed");
-        Assert.Equal(RowCount, results["dbo.TestComputed"]);
+        await GenerateAndVerifyCountAsync("TestComputed");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT ColA, ColB, ColSum FROM dbo.TestComputed");
         foreach (var row in rows)
@@ -560,16 +631,10 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestFKParent", "TestFKChild");
-        Assert.Equal(RowCount, results["dbo.TestFKParent"]);
-        Assert.Equal(RowCount, results["dbo.TestFKChild"]);
+        await GenerateAndVerifyCountAsync("TestFKParent", "TestFKChild");
 
-        // Every child.ParentId must exist in parent
-        var orphans = (int)(await _fixture.ExecuteScalarAsync("""
-            SELECT COUNT(*) FROM dbo.TestFKChild c
-            WHERE NOT EXISTS (SELECT 1 FROM dbo.TestFKParent p WHERE p.ParentId = c.ParentId)
-            """))!;
-        Assert.Equal(0, orphans);
+        await AssertNoOrphansAsync(
+            "dbo.TestFKChild", "dbo.TestFKParent", "ParentId", "ParentId");
     }
 
     // ══════════════════════════════════════════════
@@ -588,8 +653,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestSelfRef");
-        Assert.Equal(RowCount, results["dbo.TestSelfRef"]);
+        await GenerateAndVerifyCountAsync("TestSelfRef");
 
         var rows = await _fixture.ExecuteQueryAsync(
             "SELECT EmployeeId, ManagerId FROM dbo.TestSelfRef");
@@ -640,22 +704,12 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestMultiFKCategory", "TestMultiFKSupplier", "TestMultiFKProduct");
-        Assert.Equal(RowCount, results["dbo.TestMultiFKCategory"]);
-        Assert.Equal(RowCount, results["dbo.TestMultiFKSupplier"]);
-        Assert.Equal(RowCount, results["dbo.TestMultiFKProduct"]);
+        await GenerateAndVerifyCountAsync("TestMultiFKCategory", "TestMultiFKSupplier", "TestMultiFKProduct");
 
-        var orphanCats = (int)(await _fixture.ExecuteScalarAsync("""
-            SELECT COUNT(*) FROM dbo.TestMultiFKProduct p
-            WHERE NOT EXISTS (SELECT 1 FROM dbo.TestMultiFKCategory c WHERE c.CategoryId = p.CategoryId)
-            """))!;
-        Assert.Equal(0, orphanCats);
-
-        var orphanSups = (int)(await _fixture.ExecuteScalarAsync("""
-            SELECT COUNT(*) FROM dbo.TestMultiFKProduct p
-            WHERE NOT EXISTS (SELECT 1 FROM dbo.TestMultiFKSupplier s WHERE s.SupplierId = p.SupplierId)
-            """))!;
-        Assert.Equal(0, orphanSups);
+        await AssertNoOrphansAsync(
+            "dbo.TestMultiFKProduct", "dbo.TestMultiFKCategory", "CategoryId", "CategoryId");
+        await AssertNoOrphansAsync(
+            "dbo.TestMultiFKProduct", "dbo.TestMultiFKSupplier", "SupplierId", "SupplierId");
     }
 
     // ══════════════════════════════════════════════
@@ -690,25 +744,10 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestChainA", "TestChainB", "TestChainC");
+        await GenerateAndVerifyCountAsync("TestChainA", "TestChainB", "TestChainC");
 
-        // All three tables should be populated
-        Assert.Equal(RowCount, results["dbo.TestChainC"]);
-        Assert.Equal(RowCount, results["dbo.TestChainB"]);
-        Assert.Equal(RowCount, results["dbo.TestChainA"]);
-
-        // Verify FK integrity through the chain
-        var brokenBC = (int)(await _fixture.ExecuteScalarAsync("""
-            SELECT COUNT(*) FROM dbo.TestChainB b
-            WHERE NOT EXISTS (SELECT 1 FROM dbo.TestChainC c WHERE c.CId = b.CId)
-            """))!;
-        Assert.Equal(0, brokenBC);
-
-        var brokenAB = (int)(await _fixture.ExecuteScalarAsync("""
-            SELECT COUNT(*) FROM dbo.TestChainA a
-            WHERE NOT EXISTS (SELECT 1 FROM dbo.TestChainB b WHERE b.BId = a.BId)
-            """))!;
-        Assert.Equal(0, brokenAB);
+        await AssertNoOrphansAsync("dbo.TestChainB", "dbo.TestChainC", "CId", "CId");
+        await AssertNoOrphansAsync("dbo.TestChainA", "dbo.TestChainB", "BId", "BId");
     }
 
     // ══════════════════════════════════════════════
@@ -731,8 +770,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestNameHeuristics");
-        Assert.Equal(RowCount, results["dbo.TestNameHeuristics"]);
+        await GenerateAndVerifyCountAsync("TestNameHeuristics");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestNameHeuristics");
         foreach (var row in rows)
@@ -766,8 +804,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestMaxLen1");
-        Assert.Equal(RowCount, results["dbo.TestMaxLen1"]);
+        await GenerateAndVerifyCountAsync("TestMaxLen1");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT ColV1, ColNV1 FROM dbo.TestMaxLen1");
         foreach (var row in rows)
@@ -793,8 +830,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestOnlyIdentity");
-        Assert.Equal(RowCount, results["dbo.TestOnlyIdentity"]);
+        await GenerateAndVerifyCountAsync("TestOnlyIdentity");
 
         var count = (int)(await _fixture.ExecuteScalarAsync("SELECT COUNT(*) FROM dbo.TestOnlyIdentity"))!;
         Assert.Equal(RowCount, count);
@@ -834,18 +870,11 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestCompFKParent", "TestCompFKChild");
-        Assert.Equal(RowCount, results["dbo.TestCompFKParent"]);
-        Assert.Equal(RowCount, results["dbo.TestCompFKChild"]);
+        await GenerateAndVerifyCountAsync("TestCompFKParent", "TestCompFKChild");
 
-        var orphans = (int)(await _fixture.ExecuteScalarAsync("""
-            SELECT COUNT(*) FROM dbo.TestCompFKChild c
-            WHERE NOT EXISTS (
-                SELECT 1 FROM dbo.TestCompFKParent p
-                WHERE p.KeyA = c.RefA AND p.KeyB = c.RefB
-            )
-            """))!;
-        Assert.Equal(0, orphans);
+        await AssertNoOrphansAsync(
+            "dbo.TestCompFKChild", "dbo.TestCompFKParent",
+            ["RefA", "RefB"], ["KeyA", "KeyB"]);
     }
 
     // ══════════════════════════════════════════════
@@ -868,8 +897,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestBitNames");
-        Assert.Equal(RowCount, results["dbo.TestBitNames"]);
+        await GenerateAndVerifyCountAsync("TestBitNames");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestBitNames");
         foreach (var row in rows)
@@ -905,8 +933,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestIntNames");
-        Assert.Equal(RowCount, results["dbo.TestIntNames"]);
+        await GenerateAndVerifyCountAsync("TestIntNames");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestIntNames");
         foreach (var row in rows)
@@ -942,8 +969,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestDateNames");
-        Assert.Equal(RowCount, results["dbo.TestDateNames"]);
+        await GenerateAndVerifyCountAsync("TestDateNames");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestDateNames");
         foreach (var row in rows)
@@ -978,8 +1004,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestNumericNames");
-        Assert.Equal(RowCount, results["dbo.TestNumericNames"]);
+        await GenerateAndVerifyCountAsync("TestNumericNames");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestNumericNames");
         foreach (var row in rows)
@@ -1008,23 +1033,8 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var table = allTables.First(t => t.TableName == "TestNonIdentityPK");
-
-        var graph = new DependencyGraph();
-        graph.Build([table]);
-        var sorted = graph.GetTopologicalOrder();
-
-        var valueGen = new ColumnValueGenerator(seed: Seed);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
-
-        var inserted = await inserter.InsertTableAsync(table, 50);
+        var (_, inserted) = await GenerateDataForTableAsync("TestNonIdentityPK", 50);
         Assert.Equal(50, inserted);
-
-        var count = (int)(await _fixture.ExecuteScalarAsync(
-            "SELECT COUNT(*) FROM dbo.TestNonIdentityPK"))!;
-        Assert.Equal(50, count);
 
         var distinctCount = (int)(await _fixture.ExecuteScalarAsync(
             "SELECT COUNT(DISTINCT Code) FROM dbo.TestNonIdentityPK"))!;
@@ -1047,23 +1057,8 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var table = allTables.First(t => t.TableName == "TestNonIdCompPK");
-
-        var graph = new DependencyGraph();
-        graph.Build([table]);
-        var sorted = graph.GetTopologicalOrder();
-
-        var valueGen = new ColumnValueGenerator(seed: Seed);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
-
-        var inserted = await inserter.InsertTableAsync(table, 50);
+        var (_, inserted) = await GenerateDataForTableAsync("TestNonIdCompPK", 50);
         Assert.Equal(50, inserted);
-
-        var count = (int)(await _fixture.ExecuteScalarAsync(
-            "SELECT COUNT(*) FROM dbo.TestNonIdCompPK"))!;
-        Assert.Equal(50, count);
 
         var distinctCount = (int)(await _fixture.ExecuteScalarAsync(
             "SELECT COUNT(DISTINCT CONCAT(PartA, '|', PartB)) FROM dbo.TestNonIdCompPK"))!;
@@ -1129,12 +1124,10 @@ public class IntegrationTests
             "SELECT COUNT(*) FROM dbo.TestJuncBridge"))!;
         Assert.Equal(bridgeRowCount, count);
 
-        var orphans = (int)(await _fixture.ExecuteScalarAsync("""
-            SELECT COUNT(*) FROM dbo.TestJuncBridge b
-            WHERE NOT EXISTS (SELECT 1 FROM dbo.TestJuncLeft  l WHERE l.LeftId  = b.LeftId)
-               OR NOT EXISTS (SELECT 1 FROM dbo.TestJuncRight r WHERE r.RightId = b.RightId)
-            """))!;
-        Assert.Equal(0, orphans);
+        await AssertNoOrphansAsync(
+            "dbo.TestJuncBridge", "dbo.TestJuncLeft", "LeftId", "LeftId");
+        await AssertNoOrphansAsync(
+            "dbo.TestJuncBridge", "dbo.TestJuncRight", "RightId", "RightId");
     }
 
     // ══════════════════════════════════════════════
@@ -1157,8 +1150,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestCompSelfRef");
-        Assert.Equal(RowCount, results["dbo.TestCompSelfRef"]);
+        await GenerateAndVerifyCountAsync("TestCompSelfRef");
 
         var rows = await _fixture.ExecuteQueryAsync(
             "SELECT KeyA, KeyB, ParentA, ParentB FROM dbo.TestCompSelfRef");
@@ -1194,25 +1186,8 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var tables = allTables.Where(t => t.TableName == "TestTightDecPlan").ToList();
-
-        var graph = new DependencyGraph();
-        graph.Build(tables);
-        var sorted = graph.GetTopologicalOrder();
-
-        var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
-
-        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
-
-        foreach (var tablePlan in plan.Tables.OrderBy(t => t.Order))
-        {
-            var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
-            Assert.Equal(RowCount, inserted);
-        }
+        var (plan, _) = await GeneratePlanAsync("TestTightDecPlan");
+        await ExecutePlanAsync(plan);
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestTightDecPlan");
         Assert.Equal(RowCount, rows.Count);
@@ -1246,8 +1221,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestSqlVariant");
-        Assert.Equal(RowCount, results["dbo.TestSqlVariant"]);
+        await GenerateAndVerifyCountAsync("TestSqlVariant");
 
         var rows = await _fixture.ExecuteQueryAsync(
             "SELECT SQL_VARIANT_PROPERTY(ColVariant, 'BaseType') AS BaseType, ColVariant FROM dbo.TestSqlVariant");
@@ -1283,8 +1257,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestUnsupportedSkip");
-        Assert.Equal(RowCount, results["dbo.TestUnsupportedSkip"]);
+        await GenerateAndVerifyCountAsync("TestUnsupportedSkip");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT ColName FROM dbo.TestUnsupportedSkip");
         Assert.Equal(RowCount, rows.Count);
@@ -1313,8 +1286,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestUnsupportedDefault");
-        Assert.Equal(RowCount, results["dbo.TestUnsupportedDefault"]);
+        await GenerateAndVerifyCountAsync("TestUnsupportedDefault");
 
         var rows = await _fixture.ExecuteQueryAsync(
             "SELECT ColName, ColGeo.STAsText() AS ColGeoText FROM dbo.TestUnsupportedDefault");
@@ -1342,29 +1314,13 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var tables = allTables.Where(t => t.TableName == "TestSqlVariantPlan").ToList();
-
-        var graph = new DependencyGraph();
-        graph.Build(tables);
-        var sorted = graph.GetTopologicalOrder();
-
-        var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
+        var (plan, _) = await GeneratePlanAsync("TestSqlVariantPlan");
 
         var variantCol = plan.Tables[0].Columns.First(c =>
             c.Name.Equals("ColVariant", StringComparison.OrdinalIgnoreCase));
         Assert.Equal("Random.SqlVariant", variantCol.Generator);
 
-        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
-
-        foreach (var tablePlan in plan.Tables.OrderBy(t => t.Order))
-        {
-            var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
-            Assert.Equal(RowCount, inserted);
-        }
+        await ExecutePlanAsync(plan);
 
         var rows = await _fixture.ExecuteQueryAsync(
             "SELECT SQL_VARIANT_PROPERTY(ColVariant, 'BaseType') AS BaseType FROM dbo.TestSqlVariantPlan");
@@ -1393,17 +1349,7 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var tables = allTables.Where(t => t.TableName == "TestDefaultScalar").ToList();
-
-        var graph = new DependencyGraph();
-        graph.Build(tables);
-        var sorted = graph.GetTopologicalOrder();
-
-        var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
-
+        var (plan, _) = await GeneratePlanAsync("TestDefaultScalar");
         var tablePlan = plan.Tables[0];
 
         // Verify HasDefault is set on all default columns
@@ -1424,11 +1370,7 @@ public class IntegrationTests
             }
         }
 
-        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
-
-        var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
-        Assert.Equal(RowCount, inserted);
+        await ExecutePlanAsync(plan);
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestDefaultScalar");
         Assert.Equal(RowCount, rows.Count);
@@ -1458,8 +1400,7 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestDefaultOverride");
-        Assert.Equal(RowCount, results["dbo.TestDefaultOverride"]);
+        await GenerateAndVerifyCountAsync("TestDefaultOverride");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT * FROM dbo.TestDefaultOverride");
         Assert.Equal(RowCount, rows.Count);
@@ -1495,21 +1436,11 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var tables = allTables.Where(t => t.TableName == "TestCheckRange").ToList();
+        var (plan, tables) = await GeneratePlanAsync("TestCheckRange");
 
-        // Verify CHECK constraint is read
         Assert.Single(tables[0].CheckConstraints);
         Assert.Equal("CK_Rating", tables[0].CheckConstraints[0].Name);
         Assert.Contains("Rating", tables[0].CheckConstraints[0].Definition);
-
-        var graph = new DependencyGraph();
-        graph.Build(tables);
-        var sorted = graph.GetTopologicalOrder();
-
-        var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
 
         // Configure PickRandom generator for valid values
         var ratingCol = plan.Tables[0].Columns.First(c =>
@@ -1520,11 +1451,7 @@ public class IntegrationTests
             ["values"] = new[] { "1", "2", "3", "4", "5" }
         };
 
-        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
-
-        var inserted = await inserter.InsertTableFromPlanAsync(plan.Tables[0]);
-        Assert.Equal(RowCount, inserted);
+        await ExecutePlanAsync(plan);
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT Rating FROM dbo.TestCheckRange");
         Assert.Equal(RowCount, rows.Count);
@@ -1551,18 +1478,9 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var tables = allTables.Where(t => t.TableName == "TestCheckEnum").ToList();
+        var (plan, tables) = await GeneratePlanAsync("TestCheckEnum");
 
         Assert.Single(tables[0].CheckConstraints);
-
-        var graph = new DependencyGraph();
-        graph.Build(tables);
-        var sorted = graph.GetTopologicalOrder();
-
-        var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
 
         var statusCol = plan.Tables[0].Columns.First(c =>
             c.Name.Equals("Status", StringComparison.OrdinalIgnoreCase));
@@ -1572,11 +1490,7 @@ public class IntegrationTests
             ["values"] = new[] { "Active", "Inactive", "Suspended" }
         };
 
-        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
-
-        var inserted = await inserter.InsertTableFromPlanAsync(plan.Tables[0]);
-        Assert.Equal(RowCount, inserted);
+        await ExecutePlanAsync(plan);
 
         var validStatuses = new HashSet<string> { "Active", "Inactive", "Suspended" };
         var rows = await _fixture.ExecuteQueryAsync("SELECT Status FROM dbo.TestCheckEnum");
@@ -1603,9 +1517,7 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var tables = allTables.Where(t => t.TableName == "TestCheckDateRange").ToList();
+        var (_, tables) = await GeneratePlanAsync("TestCheckDateRange");
 
         Assert.Single(tables[0].CheckConstraints);
         Assert.Contains("EndDate", tables[0].CheckConstraints[0].Definition);
@@ -1661,31 +1573,17 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var table = allTables.First(t => t.TableName == "TestUniqueSingle");
+        var (table, inserted) = await GenerateDataForTableAsync("TestUniqueSingle", 50);
+        Assert.Equal(50, inserted);
 
-        // Verify unique constraint was read
         Assert.Single(table.UniqueConstraints);
         Assert.Equal("UQ_Email", table.UniqueConstraints[0].Name);
         Assert.Single(table.UniqueConstraints[0].Columns);
         Assert.Equal("Email", table.UniqueConstraints[0].Columns[0]);
 
-        // Verify column flag
         var emailCol = table.Columns.First(c =>
             c.Name.Equals("Email", StringComparison.OrdinalIgnoreCase));
         Assert.True(emailCol.IsUnique);
-
-        var graph = new DependencyGraph();
-        graph.Build([table]);
-        var sorted = graph.GetTopologicalOrder();
-
-        var valueGen = new ColumnValueGenerator(seed: Seed);
-        var inserter = new DataInserter(
-            _fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
-
-        var inserted = await inserter.InsertTableAsync(table, 50);
-        Assert.Equal(50, inserted);
 
         var distinctEmails = (int)(await _fixture.ExecuteScalarAsync(
             "SELECT COUNT(DISTINCT Email) FROM dbo.TestUniqueSingle"))!;
@@ -1709,23 +1607,11 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var table = allTables.First(t => t.TableName == "TestUniqueMulti");
+        var (table, inserted) = await GenerateDataForTableAsync("TestUniqueMulti", 50);
+        Assert.Equal(50, inserted);
 
         Assert.Single(table.UniqueConstraints);
         Assert.Equal(2, table.UniqueConstraints[0].Columns.Count);
-
-        var graph = new DependencyGraph();
-        graph.Build([table]);
-        var sorted = graph.GetTopologicalOrder();
-
-        var valueGen = new ColumnValueGenerator(seed: Seed);
-        var inserter = new DataInserter(
-            _fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
-
-        var inserted = await inserter.InsertTableAsync(table, 50);
-        Assert.Equal(50, inserted);
 
         var distinctPairs = (int)(await _fixture.ExecuteScalarAsync(
             "SELECT COUNT(DISTINCT CONCAT(FirstName, '|', LastName)) FROM dbo.TestUniqueMulti"))!;
@@ -1748,22 +1634,10 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var table = allTables.First(t => t.TableName == "TestUniqueNullable");
+        var (table, inserted) = await GenerateDataForTableAsync("TestUniqueNullable", RowCount);
+        Assert.Equal(RowCount, inserted);
 
         Assert.Single(table.UniqueConstraints);
-
-        var graph = new DependencyGraph();
-        graph.Build([table]);
-        var sorted = graph.GetTopologicalOrder();
-
-        var valueGen = new ColumnValueGenerator(seed: Seed);
-        var inserter = new DataInserter(
-            _fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
-
-        var inserted = await inserter.InsertTableAsync(table, RowCount);
-        Assert.Equal(RowCount, inserted);
 
         // Non-NULL values must be distinct
         var nonNullDistinct = (int)(await _fixture.ExecuteScalarAsync("""
@@ -1795,27 +1669,13 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var tables = allTables.Where(t => t.TableName == "TestUniquePlan").ToList();
+        var (plan, _) = await GeneratePlanAsync("TestUniquePlan", 50);
 
-        var graph = new DependencyGraph();
-        graph.Build(tables);
-        var sorted = graph.GetTopologicalOrder();
-
-        var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, 50, Seed, "en");
-
-        // Verify IsUnique propagated to plan
         var emailCol = plan.Tables[0].Columns.First(c =>
             c.Name.Equals("Email", StringComparison.OrdinalIgnoreCase));
         Assert.True(emailCol.IsUnique);
 
-        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
-
-        var inserted = await inserter.InsertTableFromPlanAsync(plan.Tables[0]);
-        Assert.Equal(50, inserted);
+        await ExecutePlanAsync(plan);
 
         var distinctEmails = (int)(await _fixture.ExecuteScalarAsync(
             "SELECT COUNT(DISTINCT Email) FROM dbo.TestUniquePlan"))!;
@@ -1837,19 +1697,10 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var tables = allTables.Where(t => t.TableName == "TestCheckViolation").ToList();
+        var (plan, tables) = await GeneratePlanAsync("TestCheckViolation", 1);
 
         Assert.Single(tables[0].CheckConstraints);
         Assert.Equal("CK_Age", tables[0].CheckConstraints[0].Name);
-
-        var graph = new DependencyGraph();
-        graph.Build(tables);
-        var sorted = graph.GetTopologicalOrder();
-
-        var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, 1, Seed, "en");
 
         // Force a value that violates the CHECK constraint
         var ageCol = plan.Tables[0].Columns.First(c =>
@@ -1860,11 +1711,8 @@ public class IntegrationTests
             ["values"] = new[] { "999" }
         };
 
-        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
-
         var ex = await Assert.ThrowsAsync<DataGenerationException>(
-            () => inserter.InsertTableFromPlanAsync(plan.Tables[0]));
+            () => ExecutePlanAsync(plan));
 
         Assert.Contains("CK_Age", ex.Message);
         Assert.Contains("CHECK constraint", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -1888,25 +1736,14 @@ public class IntegrationTests
                 WHERE Email IS NOT NULL;
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var table = allTables.First(t => t.TableName == "TestFilteredUniqueNotNull");
+        var (table, inserted) = await GenerateDataForTableAsync("TestFilteredUniqueNotNull", 50);
+        Assert.Equal(50, inserted);
 
         Assert.Single(table.UniqueConstraints);
         Assert.Equal("UX_Email_NotNull", table.UniqueConstraints[0].Name);
         Assert.NotNull(table.UniqueConstraints[0].FilterDefinition);
         Assert.Contains("IS NOT NULL", table.UniqueConstraints[0].FilterDefinition!,
             StringComparison.OrdinalIgnoreCase);
-
-        var graph = new DependencyGraph();
-        graph.Build([table]);
-
-        var valueGen = new ColumnValueGenerator(seed: Seed);
-        var inserter = new DataInserter(
-            _fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
-
-        var inserted = await inserter.InsertTableAsync(table, 50);
-        Assert.Equal(50, inserted);
 
         // Non-null emails must be distinct
         var nonNullDistinct = (int)(await _fixture.ExecuteScalarAsync("""
@@ -1940,22 +1777,11 @@ public class IntegrationTests
                 WHERE Status = 'Active';
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var table = allTables.First(t => t.TableName == "TestFilteredUniqueEquality");
+        var (table, inserted) = await GenerateDataForTableAsync("TestFilteredUniqueEquality", 50);
+        Assert.Equal(50, inserted);
 
         Assert.Single(table.UniqueConstraints);
         Assert.NotNull(table.UniqueConstraints[0].FilterDefinition);
-
-        var graph = new DependencyGraph();
-        graph.Build([table]);
-
-        var valueGen = new ColumnValueGenerator(seed: Seed);
-        var inserter = new DataInserter(
-            _fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
-
-        var inserted = await inserter.InsertTableAsync(table, 50);
-        Assert.Equal(50, inserted);
 
         // Among Active rows, Code must be distinct
         var activeDistinct = (int)(await _fixture.ExecuteScalarAsync("""
@@ -2026,28 +1852,14 @@ public class IntegrationTests
                 WHERE Email IS NOT NULL;
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var tables = allTables.Where(t => t.TableName == "TestFilteredUniquePlan").ToList();
+        var (plan, _) = await GeneratePlanAsync("TestFilteredUniquePlan", 50);
 
-        var graph = new DependencyGraph();
-        graph.Build(tables);
-        var sorted = graph.GetTopologicalOrder();
-
-        var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, 50, Seed, "en");
-
-        // Verify UniqueConstraints propagated to plan with filter
         Assert.NotNull(plan.Tables[0].UniqueConstraints);
         Assert.Single(plan.Tables[0].UniqueConstraints!);
         Assert.Equal("UX_PlanEmail_NotNull", plan.Tables[0].UniqueConstraints![0].Name);
         Assert.NotNull(plan.Tables[0].UniqueConstraints![0].FilterDefinition);
 
-        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
-
-        var inserted = await inserter.InsertTableFromPlanAsync(plan.Tables[0]);
-        Assert.Equal(50, inserted);
+        await ExecutePlanAsync(plan);
 
         // Non-null emails must be distinct
         var nonNullDistinct = (int)(await _fixture.ExecuteScalarAsync("""
@@ -2159,20 +1971,9 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var tables = allTables.Where(t => t.TableName == "TestSeqPKPlan").ToList();
-
-        var graph = new DependencyGraph();
-        graph.Build(tables);
-        var sorted = graph.GetTopologicalOrder();
-
-        var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
-
+        var (plan, _) = await GeneratePlanAsync("TestSeqPKPlan");
         var tablePlan = plan.Tables[0];
 
-        // Verify the plan correctly marks the sequence column
         var idPlan = tablePlan.Columns.First(c => c.Name == "Id");
         Assert.True(idPlan.IsSequenceDefault, "Plan should have IsSequenceDefault = true for Id");
         Assert.Equal("skip", idPlan.Generator);
@@ -2180,11 +1981,7 @@ public class IntegrationTests
         var namePlan = tablePlan.Columns.First(c => c.Name == "Name");
         Assert.NotEqual("skip", namePlan.Generator);
 
-        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
-
-        var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
-        Assert.Equal(RowCount, inserted);
+        await ExecutePlanAsync(plan);
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT Id, Name FROM dbo.TestSeqPKPlan ORDER BY Id");
         Assert.Equal(RowCount, rows.Count);
@@ -2210,19 +2007,12 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestRowVersion");
-        Assert.Equal(RowCount, results["dbo.TestRowVersion"]);
+        await GenerateAndVerifyCountAsync("TestRowVersion");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT Id, Name, RowVer FROM dbo.TestRowVersion ORDER BY Id");
         Assert.Equal(RowCount, rows.Count);
 
-        var rowVersions = new HashSet<string>();
-        foreach (var row in rows)
-        {
-            Assert.NotNull(row["RowVer"]);
-            var hex = Convert.ToHexString((byte[])row["RowVer"]!);
-            Assert.True(rowVersions.Add(hex), "Each row should have a distinct rowversion value");
-        }
+        AssertDistinctBinaryColumn(rows, "RowVer");
     }
 
     // ══════════════════════════════════════════════
@@ -2240,19 +2030,12 @@ public class IntegrationTests
             )
             """);
 
-        var results = await GenerateDataAsync("TestTimestamp");
-        Assert.Equal(RowCount, results["dbo.TestTimestamp"]);
+        await GenerateAndVerifyCountAsync("TestTimestamp");
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT Id, Name, Stamp FROM dbo.TestTimestamp ORDER BY Id");
         Assert.Equal(RowCount, rows.Count);
 
-        var timestamps = new HashSet<string>();
-        foreach (var row in rows)
-        {
-            Assert.NotNull(row["Stamp"]);
-            var hex = Convert.ToHexString((byte[])row["Stamp"]!);
-            Assert.True(timestamps.Add(hex), "Each row should have a distinct timestamp value");
-        }
+        AssertDistinctBinaryColumn(rows, "Stamp");
     }
 
     // ══════════════════════════════════════════════
@@ -2270,46 +2053,25 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var tables = allTables.Where(t => t.TableName == "TestRowVersionPlan").ToList();
+        var (plan, tables) = await GeneratePlanAsync("TestRowVersionPlan");
 
         Assert.Single(tables);
         var rvCol = tables[0].Columns.First(c => c.Name == "RowVer");
         Assert.True(rvCol.IsRowVersion, "RowVer column should be detected as rowversion");
 
-        var graph = new DependencyGraph();
-        graph.Build(tables);
-        var sorted = graph.GetTopologicalOrder();
-
-        var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
-
-        var tablePlan = plan.Tables[0];
-
-        var rvPlan = tablePlan.Columns.First(c => c.Name == "RowVer");
+        var rvPlan = plan.Tables[0].Columns.First(c => c.Name == "RowVer");
         Assert.True(rvPlan.IsRowVersion, "Plan should have IsRowVersion = true for RowVer");
         Assert.Equal("skip", rvPlan.Generator);
 
-        var namePlan = tablePlan.Columns.First(c => c.Name == "Name");
+        var namePlan = plan.Tables[0].Columns.First(c => c.Name == "Name");
         Assert.NotEqual("skip", namePlan.Generator);
 
-        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
-
-        var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
-        Assert.Equal(RowCount, inserted);
+        await ExecutePlanAsync(plan);
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT RowVer FROM dbo.TestRowVersionPlan");
         Assert.Equal(RowCount, rows.Count);
 
-        var rowVersions = new HashSet<string>();
-        foreach (var row in rows)
-        {
-            Assert.NotNull(row["RowVer"]);
-            var hex = Convert.ToHexString((byte[])row["RowVer"]!);
-            Assert.True(rowVersions.Add(hex), "Each row should have a distinct rowversion value");
-        }
+        AssertDistinctBinaryColumn(rows, "RowVer");
     }
 
     // ══════════════════════════════════════════════
@@ -2327,45 +2089,24 @@ public class IntegrationTests
             )
             """);
 
-        var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
-        var tables = allTables.Where(t => t.TableName == "TestTimestampPlan").ToList();
+        var (plan, tables) = await GeneratePlanAsync("TestTimestampPlan");
 
         Assert.Single(tables);
         var tsCol = tables[0].Columns.First(c => c.Name == "Stamp");
         Assert.True(tsCol.IsRowVersion, "Stamp column (TIMESTAMP) should be detected as rowversion");
 
-        var graph = new DependencyGraph();
-        graph.Build(tables);
-        var sorted = graph.GetTopologicalOrder();
-
-        var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
-
-        var tablePlan = plan.Tables[0];
-
-        var tsPlan = tablePlan.Columns.First(c => c.Name == "Stamp");
+        var tsPlan = plan.Tables[0].Columns.First(c => c.Name == "Stamp");
         Assert.True(tsPlan.IsRowVersion, "Plan should have IsRowVersion = true for Stamp");
         Assert.Equal("skip", tsPlan.Generator);
 
-        var namePlan = tablePlan.Columns.First(c => c.Name == "Name");
+        var namePlan = plan.Tables[0].Columns.First(c => c.Name == "Name");
         Assert.NotEqual("skip", namePlan.Generator);
 
-        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
-
-        var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
-        Assert.Equal(RowCount, inserted);
+        await ExecutePlanAsync(plan);
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT Stamp FROM dbo.TestTimestampPlan");
         Assert.Equal(RowCount, rows.Count);
 
-        var timestamps = new HashSet<string>();
-        foreach (var row in rows)
-        {
-            Assert.NotNull(row["Stamp"]);
-            var hex = Convert.ToHexString((byte[])row["Stamp"]!);
-            Assert.True(timestamps.Add(hex), "Each row should have a distinct timestamp value");
-        }
+        AssertDistinctBinaryColumn(rows, "Stamp");
     }
 }
