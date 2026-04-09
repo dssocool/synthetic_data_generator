@@ -31,9 +31,9 @@ public class GeneratorOrchestrator
         _tablesToExclude = tablesToExclude;
     }
 
-    public async Task RunGeneratePlanAsync(string outputPath)
+    public async Task RunGeneratePlanAsync(string outputPath, string mode = "bootstrap")
     {
-        Console.WriteLine("=== Synthetic Data Generator - Generate Plan ===");
+        Console.WriteLine($"=== Synthetic Data Generator - Generate Plan ({mode}) ===");
         Console.WriteLine($"Target: {MaskConnectionString(_connectionString)}");
         Console.WriteLine($"Output: {outputPath}");
         Console.WriteLine();
@@ -42,7 +42,7 @@ public class GeneratorOrchestrator
         if (sortedTables is null) return;
 
         var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sortedTables, graph!.SelfReferencingTables, _rowsPerTable, _seed, _locale);
+        var plan = planGen.Generate(sortedTables, graph!.SelfReferencingTables, _rowsPerTable, _seed, _locale, mode);
 
         await planGen.WritePlanAsync(plan, outputPath);
 
@@ -76,6 +76,17 @@ public class GeneratorOrchestrator
         }
 
         var plan = await PlanGenerator.ReadPlanAsync(planPath);
+        var planMode = string.IsNullOrWhiteSpace(plan.Mode) ? "bootstrap" : plan.Mode;
+        Console.WriteLine($"Plan mode: {planMode}");
+
+        if (planMode.Equals("update", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("Update execution from plan is not yet implemented.");
+            Console.ResetColor();
+            return;
+        }
+
         var sortedTables = plan.Tables.OrderBy(t => t.Order).ToList();
 
         Console.WriteLine($"Executing plan with {sortedTables.Count} table(s):");
@@ -105,9 +116,9 @@ public class GeneratorOrchestrator
         });
     }
 
-    public async Task RunDirectAsync()
+    public async Task RunDirectAsync(string mode = "bootstrap")
     {
-        Console.WriteLine("=== Synthetic Data Generator ===");
+        Console.WriteLine($"=== Synthetic Data Generator - Direct ({mode}) ===");
         Console.WriteLine($"Target: {MaskConnectionString(_connectionString)}");
         Console.WriteLine($"Rows per table: {_rowsPerTable}");
         Console.WriteLine($"Seed: {_seed?.ToString() ?? "(random)"}");
@@ -142,7 +153,7 @@ public class GeneratorOrchestrator
 
         var planOutputPath = "plan.yaml";
         var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sortedTables, graph!.SelfReferencingTables, _rowsPerTable, _seed, _locale);
+        var plan = planGen.Generate(sortedTables, graph!.SelfReferencingTables, _rowsPerTable, _seed, _locale, mode);
         await planGen.WritePlanAsync(plan, planOutputPath);
         Console.WriteLine($"Plan saved to: {Path.GetFullPath(planOutputPath)}");
     }

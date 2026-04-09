@@ -54,10 +54,12 @@ public class PlanGenerator
         IReadOnlySet<string> selfReferencingTables,
         int defaultRowCount,
         int? seed,
-        string locale = "en")
+        string locale = "en",
+        string mode = "bootstrap")
     {
         var plan = new GenerationPlan
         {
+            Mode = mode,
             Seed = seed,
             Locale = locale,
             Tables = []
