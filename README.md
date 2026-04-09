@@ -27,7 +27,8 @@ synthetic_data_generator/
 │       ├── Program.cs                   # Entry point and CLI argument parsing
 │       ├── Models/
 │       │   ├── TableMetadata.cs         # ColumnInfo, ForeignKeyInfo, TableInfo
-│       │   └── GenerationPlan.cs        # YAML plan DTOs
+│       │   ├── GenerationPlan.cs        # YAML plan DTOs
+│       │   └── UpdateColumnsSpec.cs     # Update columns YAML file parser
 │       └── Services/
 │           ├── SchemaReader.cs          # Reads DB metadata from sys views
 │           ├── DependencyGraph.cs       # FK graph + topological sort
@@ -78,11 +79,11 @@ The tool requires a subcommand (`bootstrap` or `update`). Running without one pr
 
 ```
 Usage:
-  dotnet run -- bootstrap                          Insert synthetic data directly
-  dotnet run -- bootstrap --generate-plan [path]   Generate a plan file without inserting
-  dotnet run -- update                             Update existing data directly (not yet implemented)
-  dotnet run -- update --generate-plan [path]      Generate an update plan file (not yet implemented)
-  dotnet run -- --execute-plan <path>              Execute a previously generated plan
+  dotnet run -- bootstrap                                        Insert synthetic data directly
+  dotnet run -- bootstrap --generate-plan [path]                 Generate a plan file without inserting
+  dotnet run -- update <columns-file>                            Update existing data directly
+  dotnet run -- update --generate-plan [plan-path] <columns-file>   Generate an update plan file
+  dotnet run -- --execute-plan <path>                             Execute a previously generated plan
 ```
 
 ### Bootstrap — Direct Mode
@@ -103,18 +104,50 @@ dotnet run --project src/SyntheticDataGenerator -- bootstrap --generate-plan pla
 
 If the output path is omitted it defaults to `plan.yaml`.
 
-### Update (not yet implemented)
+### Update — Direct Mode
 
-The `update` subcommand is reserved for updating existing data without inserting new rows. Both direct mode and plan generation are placeholders:
+Updates existing rows in place with new synthetic data. Requires a YAML columns file that lists which columns to update for each table. Every row in the original table is updated:
 
 ```bash
-dotnet run --project src/SyntheticDataGenerator -- update
-dotnet run --project src/SyntheticDataGenerator -- update --generate-plan plan.yaml
+dotnet run --project src/SyntheticDataGenerator -- update columns.yaml
 ```
+
+The columns file is a YAML file where each top-level key is `schema.tableName` and the value is a list of column names to regenerate:
+
+```yaml
+dbo.Users:
+  - FirstName
+  - LastName
+  - Email
+dbo.Orders:
+  - Status
+  - Amount
+```
+
+Under the hood the tool:
+1. Reads the database schema and validates that all listed tables/columns exist and each table has a primary key.
+2. For each table, creates a SQL Server temp table (`#TableName`) with an `Id` identity column, `OriginalId_<pk>` columns matching the original primary key types, and the listed data columns.
+3. Loads every primary key from the original table, generates synthetic values for the listed columns, and inserts them into the temp table.
+4. Runs a single `UPDATE ... FROM ... INNER JOIN` to apply the temp table values back to the original table.
+
+A `plan.yaml` file is also saved after completion.
+
+### Update — Generate Plan
+
+Creates a YAML plan file (with `mode: update`) that you can review and edit before executing:
+
+```bash
+dotnet run --project src/SyntheticDataGenerator -- update --generate-plan plan.yaml columns.yaml
+```
+
+The generated plan includes only the PK columns (with `generator: skip`) and the listed update columns (with generators assigned by name heuristics / SQL type). Edit generators or add `valuesFile` entries, then run `--execute-plan`.
 
 ### Execute Plan
 
-Inserts data according to a previously generated (and optionally edited) plan file. The plan's `mode` field (`bootstrap` or `update`) determines what operation is performed:
+Executes a previously generated (and optionally edited) plan file. The plan's `mode` field determines the operation:
+
+- `mode: bootstrap` — inserts new rows into each table.
+- `mode: update` — updates existing rows using the temp-table strategy described above. The plan must include PK columns (generator `skip`) so the tool can identify which rows to update.
 
 ```bash
 dotnet run --project src/SyntheticDataGenerator -- --execute-plan plan.yaml
@@ -122,7 +155,7 @@ dotnet run --project src/SyntheticDataGenerator -- --execute-plan plan.yaml
 
 ## Plan File Reference
 
-When you run `bootstrap --generate-plan`, the tool produces a YAML file (`plan.yaml` by default) that fully describes what data will be generated. You can review and edit this file before running `--execute-plan`.
+When you run `bootstrap --generate-plan` or `update --generate-plan`, the tool produces a YAML file (`plan.yaml` by default) that fully describes what data will be generated or updated. You can review and edit this file before running `--execute-plan`.
 
 ### Top-level properties
 

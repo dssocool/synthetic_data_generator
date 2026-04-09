@@ -885,4 +885,402 @@ public class DataInserter
             }
         }
     }
+
+    public record UpdateFkGroup(string RefFullName, string ParentColumn, string ReferencedColumn);
+
+    public async Task<int> UpdateTableAsync(
+        TableInfo table,
+        List<ColumnInfo> columnsToUpdate,
+        List<UpdateFkGroup> fkGroups,
+        Func<IColumnMetadata, object> generateValue)
+    {
+        if (table.PrimaryKeyColumns.Count == 0)
+            throw new InvalidOperationException(
+                $"Table [{table.FullName}] has no primary key. Update mode requires a primary key.");
+
+        var pkColumns = table.Columns
+            .Where(c => c.IsPrimaryKey)
+            .ToList();
+
+        var uniqueConstraints = table.UniqueConstraints
+            .Where(uc => uc.Columns.All(c =>
+                columnsToUpdate.Any(u => u.Name.Equals(c, StringComparison.OrdinalIgnoreCase))))
+            .ToList();
+
+        var tempTableName = $"#{table.TableName}";
+
+        _generatedKeys.TryAdd(table.FullName, []);
+        InitUniqueConstraintSets(table.FullName, uniqueConstraints);
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+
+        try
+        {
+            var createSql = BuildCreateTempTableSql(tempTableName, pkColumns, columnsToUpdate);
+            await using (var cmd = new SqlCommand(createSql, connection, transaction))
+                await cmd.ExecuteNonQueryAsync();
+
+            var selectPkSql = BuildSelectPkSql(table);
+            var originalRows = new List<Dictionary<string, object>>();
+            await using (var cmd = new SqlCommand(selectPkSql, connection, transaction))
+            await using (var reader = await cmd.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    var pkValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                    for (var i = 0; i < pkColumns.Count; i++)
+                        pkValues[pkColumns[i].Name] = reader.GetValue(i);
+                    originalRows.Add(pkValues);
+                }
+            }
+
+            if (originalRows.Count == 0)
+            {
+                await transaction.RollbackAsync();
+                return 0;
+            }
+
+            var fkColNames = new HashSet<string>(
+                fkGroups.Select(g => g.ParentColumn), StringComparer.OrdinalIgnoreCase);
+
+            var insertedCount = 0;
+            foreach (var pkRow in originalRows)
+            {
+                var attempt = 0;
+                Dictionary<string, object?> row;
+                bool uniqueOk;
+                do
+                {
+                    row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var pk in pkColumns)
+                        row[$"OriginalId_{pk.Name}"] = pkRow[pk.Name];
+
+                    foreach (var col in columnsToUpdate)
+                    {
+                        if (fkColNames.Contains(col.Name))
+                        {
+                            var fkg = fkGroups.First(g =>
+                                g.ParentColumn.Equals(col.Name, StringComparison.OrdinalIgnoreCase));
+                            row[col.Name] = ResolveFkValueForUpdate(fkg);
+                        }
+                        else
+                        {
+                            row[col.Name] = generateValue(col);
+                        }
+                    }
+
+                    uniqueOk = TryAddUniqueKeys(table.FullName, uniqueConstraints, row, attempt > 0);
+                    attempt++;
+                } while (!uniqueOk && attempt < MaxPkRetries);
+
+                if (attempt >= MaxPkRetries)
+                    throw new InvalidOperationException(
+                        $"Could not generate unique values for [{table.FullName}] " +
+                        $"after {MaxPkRetries} attempts.");
+
+                await InsertIntoTempTableAsync(connection, transaction, tempTableName,
+                    pkColumns, columnsToUpdate, row);
+
+                var keyEntry = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                foreach (var col in columnsToUpdate)
+                {
+                    if (row.TryGetValue(col.Name, out var v) && v is not null and not DBNull)
+                        keyEntry[col.Name] = v;
+                }
+                _generatedKeys[table.FullName].Add(keyEntry);
+
+                insertedCount++;
+            }
+
+            var updateSql = BuildUpdateFromTempSql(table, tempTableName, pkColumns, columnsToUpdate);
+            await using (var cmd = new SqlCommand(updateSql, connection, transaction))
+                await cmd.ExecuteNonQueryAsync();
+
+            await using (var cmd = new SqlCommand($"DROP TABLE {tempTableName}", connection, transaction))
+                await cmd.ExecuteNonQueryAsync();
+
+            await transaction.CommitAsync();
+            return insertedCount;
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+    }
+
+    public async Task<int> UpdateTableFromPlanAsync(
+        TablePlan tablePlan,
+        Func<IColumnMetadata, object> generateValue)
+    {
+        var table = TablePlanToTableInfo(tablePlan);
+        if (table.PrimaryKeyColumns.Count == 0)
+            throw new InvalidOperationException(
+                $"Table [{tablePlan.FullName}] has no primary key. Update mode requires a primary key.");
+
+        var pkColumns = table.Columns.Where(c => c.IsPrimaryKey).ToList();
+
+        var updateColumnPlans = tablePlan.Columns
+            .Where(c => !c.IsPrimaryKey
+                        && !c.Generator.Equals("skip", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var updateColumnInfos = updateColumnPlans
+            .Select(cp => table.Columns.First(c =>
+                c.Name.Equals(cp.Name, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        var fkPlans = updateColumnPlans
+            .Where(c => c.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase))
+            .Select(c => new UpdateFkGroup(
+                Helpers.GetArgString(c.GeneratorArgs, "referencedTable"),
+                c.Name,
+                Helpers.GetArgString(c.GeneratorArgs, "referencedColumn")))
+            .ToList();
+
+        var fkColNames = new HashSet<string>(
+            fkPlans.Select(g => g.ParentColumn), StringComparer.OrdinalIgnoreCase);
+
+        var uniqueConstraints = BuildUniqueConstraintsFromPlan(tablePlan);
+
+        var tempTableName = $"#{table.TableName}";
+
+        _generatedKeys.TryAdd(tablePlan.FullName, []);
+        InitUniqueConstraintSets(tablePlan.FullName, uniqueConstraints);
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+
+        try
+        {
+            var createSql = BuildCreateTempTableSql(tempTableName, pkColumns, updateColumnInfos);
+            await using (var cmd = new SqlCommand(createSql, connection, transaction))
+                await cmd.ExecuteNonQueryAsync();
+
+            var selectPkSql = BuildSelectPkSql(table);
+            var originalRows = new List<Dictionary<string, object>>();
+            await using (var cmd = new SqlCommand(selectPkSql, connection, transaction))
+            await using (var reader = await cmd.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    var pkValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                    for (var i = 0; i < pkColumns.Count; i++)
+                        pkValues[pkColumns[i].Name] = reader.GetValue(i);
+                    originalRows.Add(pkValues);
+                }
+            }
+
+            if (originalRows.Count == 0)
+            {
+                await transaction.RollbackAsync();
+                return 0;
+            }
+
+            var insertedCount = 0;
+            foreach (var pkRow in originalRows)
+            {
+                var attempt = 0;
+                Dictionary<string, object?> row;
+                bool uniqueOk;
+                do
+                {
+                    row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var pk in pkColumns)
+                        row[$"OriginalId_{pk.Name}"] = pkRow[pk.Name];
+
+                    for (var i = 0; i < updateColumnPlans.Count; i++)
+                    {
+                        var colPlan = updateColumnPlans[i];
+                        if (fkColNames.Contains(colPlan.Name))
+                        {
+                            var fkg = fkPlans.First(g =>
+                                g.ParentColumn.Equals(colPlan.Name, StringComparison.OrdinalIgnoreCase));
+                            row[updateColumnInfos[i].Name] = ResolveFkValueForUpdate(fkg);
+                        }
+                        else
+                        {
+                            row[updateColumnInfos[i].Name] = generateValue(colPlan);
+                        }
+                    }
+
+                    uniqueOk = TryAddUniqueKeys(tablePlan.FullName, uniqueConstraints, row, attempt > 0);
+                    attempt++;
+                } while (!uniqueOk && attempt < MaxPkRetries);
+
+                if (attempt >= MaxPkRetries)
+                    throw new InvalidOperationException(
+                        $"Could not generate unique values for [{tablePlan.FullName}] " +
+                        $"after {MaxPkRetries} attempts.");
+
+                await InsertIntoTempTableAsync(connection, transaction, tempTableName,
+                    pkColumns, updateColumnInfos, row);
+
+                var keyEntry = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                foreach (var col in updateColumnInfos)
+                {
+                    if (row.TryGetValue(col.Name, out var v) && v is not null and not DBNull)
+                        keyEntry[col.Name] = v;
+                }
+                _generatedKeys[tablePlan.FullName].Add(keyEntry);
+
+                insertedCount++;
+            }
+
+            var updateSql = BuildUpdateFromTempSql(table, tempTableName, pkColumns, updateColumnInfos);
+            await using (var cmd = new SqlCommand(updateSql, connection, transaction))
+                await cmd.ExecuteNonQueryAsync();
+
+            await using (var cmd = new SqlCommand($"DROP TABLE {tempTableName}", connection, transaction))
+                await cmd.ExecuteNonQueryAsync();
+
+            await transaction.CommitAsync();
+            return insertedCount;
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+    }
+
+    private object ResolveFkValueForUpdate(UpdateFkGroup fkg)
+    {
+        if (_generatedKeys.TryGetValue(fkg.RefFullName, out var parentRows) && parentRows.Count > 0)
+        {
+            var parentRow = parentRows[_random.Next(parentRows.Count)];
+            if (parentRow.TryGetValue(fkg.ReferencedColumn, out var value))
+                return value;
+        }
+        return DBNull.Value;
+    }
+
+    internal static string BuildCreateTempTableSql(
+        string tempTableName,
+        List<ColumnInfo> pkColumns,
+        List<ColumnInfo> dataColumns)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"CREATE TABLE {tempTableName} (");
+        sb.AppendLine("    [Id] INT IDENTITY(1,1) PRIMARY KEY,");
+
+        foreach (var pk in pkColumns)
+            sb.AppendLine($"    [OriginalId_{pk.Name}] {FormatSqlColumnType(pk)} NOT NULL,");
+
+        for (var i = 0; i < dataColumns.Count; i++)
+        {
+            var col = dataColumns[i];
+            var trailing = i < dataColumns.Count - 1 ? "," : "";
+            sb.AppendLine($"    [{col.Name}] {FormatSqlColumnType(col)} NULL{trailing}");
+        }
+
+        sb.AppendLine(");");
+        return sb.ToString();
+    }
+
+    internal static string BuildSelectPkSql(TableInfo table)
+    {
+        var cols = string.Join(", ", table.PrimaryKeyColumns.Select(pk => $"[{pk}]"));
+        return $"SELECT {cols} FROM [{table.Schema}].[{table.TableName}]";
+    }
+
+    internal static string BuildUpdateFromTempSql(
+        TableInfo table,
+        string tempTableName,
+        List<ColumnInfo> pkColumns,
+        List<ColumnInfo> dataColumns)
+    {
+        var setClauses = string.Join(",\n           ",
+            dataColumns.Select(c => $"t.[{c.Name}] = tmp.[{c.Name}]"));
+
+        var joinClauses = string.Join(" AND ",
+            pkColumns.Select(pk => $"t.[{pk.Name}] = tmp.[OriginalId_{pk.Name}]"));
+
+        return $"""
+            UPDATE t
+               SET {setClauses}
+              FROM [{table.Schema}].[{table.TableName}] t
+             INNER JOIN {tempTableName} tmp ON {joinClauses}
+            """;
+    }
+
+    private static string FormatSqlColumnType(ColumnInfo col)
+    {
+        var type = col.SqlType.ToLowerInvariant();
+        return type switch
+        {
+            "nvarchar" or "nchar" => col.MaxLength == -1
+                ? $"{col.SqlType}(MAX)"
+                : $"{col.SqlType}({col.MaxLength / 2})",
+            "varchar" or "char" or "varbinary" or "binary" => col.MaxLength == -1
+                ? $"{col.SqlType}(MAX)"
+                : $"{col.SqlType}({col.MaxLength})",
+            "decimal" or "numeric" => $"{col.SqlType}({col.Precision},{col.Scale})",
+            "datetime2" => col.Scale > 0
+                ? $"{col.SqlType}({col.Scale})"
+                : col.SqlType,
+            "datetimeoffset" => col.Scale > 0
+                ? $"{col.SqlType}({col.Scale})"
+                : col.SqlType,
+            "time" => col.Scale > 0
+                ? $"{col.SqlType}({col.Scale})"
+                : col.SqlType,
+            _ => col.SqlType
+        };
+    }
+
+    private static async Task InsertIntoTempTableAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        string tempTableName,
+        List<ColumnInfo> pkColumns,
+        List<ColumnInfo> dataColumns,
+        Dictionary<string, object?> row)
+    {
+        var allCols = new List<string>();
+        foreach (var pk in pkColumns)
+            allCols.Add($"[OriginalId_{pk.Name}]");
+        foreach (var col in dataColumns)
+            allCols.Add($"[{col.Name}]");
+
+        var allParams = new List<string>();
+        foreach (var pk in pkColumns)
+            allParams.Add($"@OriginalId_{pk.Name}");
+        foreach (var col in dataColumns)
+            allParams.Add($"@{col.Name}");
+
+        var sql = $"INSERT INTO {tempTableName} ({string.Join(", ", allCols)}) " +
+                  $"VALUES ({string.Join(", ", allParams)})";
+
+        await using var cmd = new SqlCommand(sql, connection, transaction);
+
+        foreach (var pk in pkColumns)
+        {
+            var paramValue = row.TryGetValue($"OriginalId_{pk.Name}", out var v) ? v ?? DBNull.Value : DBNull.Value;
+            var param = new SqlParameter($"@OriginalId_{pk.Name}", MapSqlType(pk.SqlType)) { Value = paramValue };
+            if (param.SqlDbType is SqlDbType.Decimal or SqlDbType.Money or SqlDbType.SmallMoney)
+            {
+                param.Precision = pk.Precision;
+                param.Scale = pk.Scale;
+            }
+            cmd.Parameters.Add(param);
+        }
+
+        foreach (var col in dataColumns)
+        {
+            var paramValue = row.TryGetValue(col.Name, out var v) ? v ?? DBNull.Value : DBNull.Value;
+            var param = new SqlParameter($"@{col.Name}", MapSqlType(col.SqlType)) { Value = paramValue };
+            if (param.SqlDbType is SqlDbType.Decimal or SqlDbType.Money or SqlDbType.SmallMoney)
+            {
+                param.Precision = col.Precision;
+                param.Scale = col.Scale;
+            }
+            cmd.Parameters.Add(param);
+        }
+
+        await cmd.ExecuteNonQueryAsync();
+    }
 }

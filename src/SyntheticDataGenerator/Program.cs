@@ -37,14 +37,21 @@ switch (parsed.Subcommand)
         await orchestrator.RunDirectAsync("bootstrap");
         break;
     case "update" when parsed.GeneratePlan:
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("Update plan generation is not yet implemented.");
-        Console.ResetColor();
+        if (parsed.ColumnsFile is null)
+        {
+            PrintUsage();
+            return 1;
+        }
+        await orchestrator.RunUpdateGeneratePlanAsync(
+            parsed.Arg ?? "plan.yaml", parsed.ColumnsFile);
         break;
     case "update":
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("Update direct mode is not yet implemented.");
-        Console.ResetColor();
+        if (parsed.ColumnsFile is null)
+        {
+            PrintUsage();
+            return 1;
+        }
+        await orchestrator.RunUpdateDirectAsync(parsed.ColumnsFile);
         break;
     case "execute-plan":
         await orchestrator.RunExecutePlanAsync(parsed.Arg ?? throw new InvalidOperationException(
@@ -62,6 +69,7 @@ static ParsedArgs ParseArgs(string[] args)
     string? subcommand = null;
     var generatePlan = false;
     string? arg = null;
+    string? columnsFile = null;
 
     for (var i = 0; i < args.Length; i++)
     {
@@ -74,26 +82,38 @@ static ParsedArgs ParseArgs(string[] args)
                 generatePlan = true;
                 if (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
                     arg = args[++i];
+                if (subcommand == "update" && i + 1 < args.Length && !args[i + 1].StartsWith("--"))
+                    columnsFile = args[++i];
                 break;
             case "--execute-plan":
                 subcommand = "execute-plan";
                 if (i + 1 < args.Length)
                     arg = args[++i];
                 break;
+            default:
+                if (subcommand == "update" && !generatePlan && columnsFile is null
+                    && !args[i].StartsWith("--"))
+                    columnsFile = args[i];
+                break;
         }
     }
 
-    return new ParsedArgs(subcommand, generatePlan, arg);
+    return new ParsedArgs(subcommand, generatePlan, arg, columnsFile);
 }
 
 static void PrintUsage()
 {
     Console.WriteLine("Usage:");
-    Console.WriteLine("  dotnet run -- bootstrap                          Insert synthetic data directly");
-    Console.WriteLine("  dotnet run -- bootstrap --generate-plan [path]   Generate a plan file without inserting");
-    Console.WriteLine("  dotnet run -- update                             Update existing data directly (not yet implemented)");
-    Console.WriteLine("  dotnet run -- update --generate-plan [path]      Generate an update plan file (not yet implemented)");
-    Console.WriteLine("  dotnet run -- --execute-plan <path>              Execute a previously generated plan");
+    Console.WriteLine("  dotnet run -- bootstrap                                       Insert synthetic data directly");
+    Console.WriteLine("  dotnet run -- bootstrap --generate-plan [path]                Generate a plan file without inserting");
+    Console.WriteLine("  dotnet run -- update <columns-file>                           Update existing data directly");
+    Console.WriteLine("  dotnet run -- update --generate-plan [plan-path] <columns-file>  Generate an update plan file");
+    Console.WriteLine("  dotnet run -- --execute-plan <path>                            Execute a previously generated plan");
+    Console.WriteLine();
+    Console.WriteLine("The <columns-file> is a YAML file listing columns to update per table:");
+    Console.WriteLine("  dbo.Users:");
+    Console.WriteLine("    - FirstName");
+    Console.WriteLine("    - LastName");
 }
 
-record ParsedArgs(string? Subcommand, bool GeneratePlan, string? Arg);
+record ParsedArgs(string? Subcommand, bool GeneratePlan, string? Arg, string? ColumnsFile = null);
