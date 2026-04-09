@@ -74,27 +74,47 @@ Locale: en
 dotnet build
 ```
 
-### Run — Direct Mode
+The tool requires a subcommand (`bootstrap` or `update`). Running without one prints usage and exits:
+
+```
+Usage:
+  dotnet run -- bootstrap                          Insert synthetic data directly
+  dotnet run -- bootstrap --generate-plan [path]   Generate a plan file without inserting
+  dotnet run -- update                             Update existing data directly (not yet implemented)
+  dotnet run -- update --generate-plan [path]      Generate an update plan file (not yet implemented)
+  dotnet run -- --execute-plan <path>              Execute a previously generated plan
+```
+
+### Bootstrap — Direct Mode
 
 Reads the database schema and inserts synthetic rows immediately. A `plan.yaml` file is also saved in the current directory so you can inspect or re-run what was generated:
 
 ```bash
-dotnet run --project src/SyntheticDataGenerator
+dotnet run --project src/SyntheticDataGenerator -- bootstrap
 ```
 
-### Run — Generate Plan
+### Bootstrap — Generate Plan
 
-Creates a YAML plan file that you can review and edit before inserting any data:
+Creates a YAML plan file (with `mode: bootstrap`) that you can review and edit before inserting any data:
 
 ```bash
-dotnet run --project src/SyntheticDataGenerator -- --generate-plan plan.yaml
+dotnet run --project src/SyntheticDataGenerator -- bootstrap --generate-plan plan.yaml
 ```
 
 If the output path is omitted it defaults to `plan.yaml`.
 
-### Run — Execute Plan
+### Update (not yet implemented)
 
-Inserts data according to a previously generated (and optionally edited) plan file:
+The `update` subcommand is reserved for updating existing data without inserting new rows. Both direct mode and plan generation are placeholders:
+
+```bash
+dotnet run --project src/SyntheticDataGenerator -- update
+dotnet run --project src/SyntheticDataGenerator -- update --generate-plan plan.yaml
+```
+
+### Execute Plan
+
+Inserts data according to a previously generated (and optionally edited) plan file. The plan's `mode` field (`bootstrap` or `update`) determines what operation is performed:
 
 ```bash
 dotnet run --project src/SyntheticDataGenerator -- --execute-plan plan.yaml
@@ -102,12 +122,13 @@ dotnet run --project src/SyntheticDataGenerator -- --execute-plan plan.yaml
 
 ## Plan File Reference
 
-When you run `--generate-plan`, the tool produces a YAML file (`plan.yaml` by default) that fully describes what data will be generated. You can review and edit this file before running `--execute-plan`.
+When you run `bootstrap --generate-plan`, the tool produces a YAML file (`plan.yaml` by default) that fully describes what data will be generated. You can review and edit this file before running `--execute-plan`.
 
 ### Top-level properties
 
 | Key | Type | Description |
 |-----|------|-------------|
+| `mode` | `string` | Operation mode: `bootstrap` (insert new data) or `update` (update existing data). Defaults to `bootstrap`. Used by `--execute-plan` to determine behavior. |
 | `seed` | `int?` | Random seed for reproducible output. Remove or set to `null` for random data each run. |
 | `locale` | `string` | Bogus locale code (e.g. `en`, `fr`, `de`, `ja`). Affects names, addresses, etc. |
 | `tables` | `list` | Ordered list of table definitions to generate data for. |
