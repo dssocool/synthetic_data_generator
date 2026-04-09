@@ -475,7 +475,8 @@ public class DataInserter
             if (!RowSatisfiesFilter(uc, row))
                 continue;
 
-            var key = BuildUniqueKey(uc.Columns, row);
+            var isFiltered = !string.IsNullOrWhiteSpace(uc.FilterDefinition);
+            var key = BuildUniqueKey(uc.Columns, row, isFiltered);
             if (key == null) continue;
 
             if (!sets.TryGetValue(uc.Name, out var set)) continue;
@@ -503,16 +504,25 @@ public class DataInserter
         return true;
     }
 
-    private static string? BuildUniqueKey(List<string> columns, Dictionary<string, object?> row)
+    private static string? BuildUniqueKey(
+        List<string> columns, Dictionary<string, object?> row, bool isFiltered)
     {
         var parts = new List<string>(columns.Count);
+        var hasNull = false;
         foreach (var col in columns)
         {
             if (row.TryGetValue(col, out var val) && val is not null and not DBNull)
                 parts.Add(val.ToString()!);
             else
-                return null;
+            {
+                hasNull = true;
+                parts.Add("\0NULL\0");
+            }
         }
+
+        if (hasNull && isFiltered)
+            return null;
+
         return string.Join("|", parts);
     }
 

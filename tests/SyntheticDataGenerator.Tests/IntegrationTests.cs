@@ -2109,4 +2109,450 @@ public class IntegrationTests
 
         AssertDistinctBinaryColumn(rows, "Stamp");
     }
+
+    // ──────────────────────────────────────────────
+    // Update mode helpers
+    // ──────────────────────────────────────────────
+
+    private async Task<List<TableInfo>> ReadAllSchemaTablesAsync()
+    {
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        return await reader.ReadSchemaAsync();
+    }
+
+    private static List<TableInfo> FilterTables(List<TableInfo> allTables, params string[] tableNames)
+    {
+        var nameSet = new HashSet<string>(tableNames, StringComparer.OrdinalIgnoreCase);
+        return allTables.Where(t => nameSet.Contains(t.TableName) || nameSet.Contains(t.FullName)).ToList();
+    }
+
+    // ══════════════════════════════════════════════
+    // 52. Update Rejects PK Column
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test52_UpdateRejectsPrimaryKeyColumn()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUpdPKReject (
+                Id   INT IDENTITY(1,1) PRIMARY KEY,
+                Name NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestUpdPKReject");
+
+        var allTables = await ReadAllSchemaTablesAsync();
+        var specTables = FilterTables(allTables, "TestUpdPKReject");
+
+        var spec = new UpdateColumnsSpec
+        {
+            Tables = new Dictionary<string, List<string>>
+            {
+                ["dbo.TestUpdPKReject"] = ["Id"]
+            }
+        };
+
+        var captured = new StringWriter();
+        var originalOut = Console.Out;
+        Console.SetOut(captured);
+        try
+        {
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables));
+            Assert.Contains("primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Id", ex.Message);
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        var output = captured.ToString();
+        Assert.Contains("FATAL", output);
+        Assert.Contains("primary key", output, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ══════════════════════════════════════════════
+    // 53. Update Rejects FK Column When Referenced Column Missing (Forward)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test53_UpdateRejectsFKColumnWhenReferencedMissing()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUpdFKParent (
+                ParentId INT IDENTITY(1,1) PRIMARY KEY,
+                Name     NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUpdFKChild (
+                ChildId  INT IDENTITY(1,1) PRIMARY KEY,
+                ParentId INT NOT NULL,
+                Value    NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_UpdChild_Parent FOREIGN KEY (ParentId)
+                    REFERENCES dbo.TestUpdFKParent(ParentId)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestUpdFKParent", "TestUpdFKChild");
+
+        var allTables = await ReadAllSchemaTablesAsync();
+        var specTables = FilterTables(allTables, "TestUpdFKChild");
+
+        var spec = new UpdateColumnsSpec
+        {
+            Tables = new Dictionary<string, List<string>>
+            {
+                ["dbo.TestUpdFKChild"] = ["ParentId"]
+            }
+        };
+
+        var captured = new StringWriter();
+        var originalOut = Console.Out;
+        Console.SetOut(captured);
+        try
+        {
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables));
+            Assert.Contains("FK validation failed", ex.Message);
+            Assert.Contains("TestUpdFKChild", ex.Message);
+            Assert.Contains("ParentId", ex.Message);
+            Assert.Contains("TestUpdFKParent", ex.Message);
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        var output = captured.ToString();
+        Assert.Contains("FATAL", output);
+        Assert.Contains("TestUpdFKChild", output);
+        Assert.Contains("ParentId", output);
+    }
+
+    // ══════════════════════════════════════════════
+    // 54. Update Rejects Referenced Column When FK Source Missing (Reverse)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test54_UpdateRejectsReferencedColumnWhenFKSourceMissing()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUpdRevParent (
+                Id   INT IDENTITY(1,1) PRIMARY KEY,
+                Code INT NOT NULL,
+                CONSTRAINT UQ_UpdRevCode UNIQUE (Code)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUpdRevChild (
+                Id      INT IDENTITY(1,1) PRIMARY KEY,
+                RefCode INT NOT NULL,
+                Label   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_UpdRevChild_Parent FOREIGN KEY (RefCode)
+                    REFERENCES dbo.TestUpdRevParent(Code)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestUpdRevParent", "TestUpdRevChild");
+
+        var allTables = await ReadAllSchemaTablesAsync();
+        var specTables = FilterTables(allTables, "TestUpdRevParent");
+
+        var spec = new UpdateColumnsSpec
+        {
+            Tables = new Dictionary<string, List<string>>
+            {
+                ["dbo.TestUpdRevParent"] = ["Code"]
+            }
+        };
+
+        var captured = new StringWriter();
+        var originalOut = Console.Out;
+        Console.SetOut(captured);
+        try
+        {
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables));
+            Assert.Contains("FK validation failed", ex.Message);
+            Assert.Contains("Code", ex.Message);
+            Assert.Contains("TestUpdRevChild", ex.Message);
+            Assert.Contains("RefCode", ex.Message);
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        var output = captured.ToString();
+        Assert.Contains("FATAL", output);
+        Assert.Contains("TestUpdRevChild", output);
+        Assert.Contains("RefCode", output);
+    }
+
+    // ══════════════════════════════════════════════
+    // 55. Update With Both FK Sides — Dependency Order and Value Propagation
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test55_UpdateBothFKSides_DependencyOrderAndValuePropagation()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUpdRefParent (
+                Id   INT IDENTITY(1,1) PRIMARY KEY,
+                Code INT NOT NULL,
+                CONSTRAINT UQ_UpdRefCode UNIQUE (Code)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUpdRefChild (
+                Id      INT IDENTITY(1,1) PRIMARY KEY,
+                RefCode INT NOT NULL,
+                Label   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_UpdRefChild_Parent FOREIGN KEY (RefCode)
+                    REFERENCES dbo.TestUpdRefParent(Code)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestUpdRefParent", "TestUpdRefChild");
+
+        var allTables = await ReadAllSchemaTablesAsync();
+        var specTables = FilterTables(allTables, "TestUpdRefParent", "TestUpdRefChild");
+
+        var spec = new UpdateColumnsSpec
+        {
+            Tables = new Dictionary<string, List<string>>
+            {
+                ["dbo.TestUpdRefParent"] = ["Code"],
+                ["dbo.TestUpdRefChild"] = ["RefCode"]
+            }
+        };
+
+        GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables);
+        var sorted = GeneratorOrchestrator.BuildUpdateDependencyOrder(spec, specTables);
+
+        var parentIdx = sorted.FindIndex(t => t.TableName == "TestUpdRefParent");
+        var childIdx = sorted.FindIndex(t => t.TableName == "TestUpdRefChild");
+        Assert.True(parentIdx < childIdx,
+            "Parent (referenced) table should be processed before child (FK) table");
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        foreach (var table in sorted)
+        {
+            var columnNames = spec.Tables[table.FullName];
+            var columnsToUpdate = table.Columns
+                .Where(c => columnNames.Contains(c.Name, StringComparer.OrdinalIgnoreCase))
+                .ToList();
+            var fkGroups = GeneratorOrchestrator.BuildUpdateFkGroups(table, columnsToUpdate, spec);
+
+            await inserter.UpdateTableAsync(
+                table, columnsToUpdate, fkGroups,
+                col => valueGen.Generate((ColumnInfo)col) ?? DBNull.Value);
+        }
+
+        var parentCodes = (await _fixture.ExecuteQueryAsync("SELECT Code FROM dbo.TestUpdRefParent"))
+            .Select(r => (int)r["Code"]!)
+            .ToHashSet();
+
+        var childRefCodes = (await _fixture.ExecuteQueryAsync("SELECT RefCode FROM dbo.TestUpdRefChild"))
+            .Select(r => (int)r["RefCode"]!)
+            .ToList();
+
+        Assert.True(parentCodes.Count > 0, "Parent should have rows");
+        foreach (var refCode in childRefCodes)
+        {
+            Assert.Contains(refCode, parentCodes);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 56. Basic Update Direct Mode
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test56_BasicUpdateDirect()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUpdBasic (
+                Id    INT IDENTITY(1,1) PRIMARY KEY,
+                Name  NVARCHAR(100) NOT NULL,
+                Value INT NOT NULL
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestUpdBasic");
+
+        var originalRows = await _fixture.ExecuteQueryAsync(
+            "SELECT Id, Name, Value FROM dbo.TestUpdBasic ORDER BY Id");
+        var originalNames = originalRows.Select(r => (string)r["Name"]!).ToList();
+
+        var allTables = await ReadAllSchemaTablesAsync();
+        var specTables = FilterTables(allTables, "TestUpdBasic");
+
+        var spec = new UpdateColumnsSpec
+        {
+            Tables = new Dictionary<string, List<string>>
+            {
+                ["dbo.TestUpdBasic"] = ["Name"]
+            }
+        };
+
+        GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables);
+
+        var table = specTables[0];
+        var columnsToUpdate = table.Columns
+            .Where(c => c.Name.Equals("Name", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var valueGen = new ColumnValueGenerator(seed: 9999);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        var updated = await inserter.UpdateTableAsync(
+            table, columnsToUpdate, [],
+            col => valueGen.Generate((ColumnInfo)col) ?? DBNull.Value);
+        Assert.Equal(RowCount, updated);
+
+        var afterRows = await _fixture.ExecuteQueryAsync(
+            "SELECT Id, Name, Value FROM dbo.TestUpdBasic ORDER BY Id");
+        Assert.Equal(RowCount, afterRows.Count);
+
+        var afterNames = afterRows.Select(r => (string)r["Name"]!).ToList();
+        Assert.NotEqual(originalNames, afterNames);
+
+        for (var i = 0; i < originalRows.Count; i++)
+        {
+            Assert.Equal((int)originalRows[i]["Id"]!, (int)afterRows[i]["Id"]!);
+            Assert.Equal((int)originalRows[i]["Value"]!, (int)afterRows[i]["Value"]!);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 57. Update Via Generate-Plan + Execute-Plan
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test57_UpdateViaPlan()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUpdPlan (
+                Id    INT IDENTITY(1,1) PRIMARY KEY,
+                Label NVARCHAR(100) NOT NULL,
+                Score INT NOT NULL
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestUpdPlan");
+
+        var originalRows = await _fixture.ExecuteQueryAsync(
+            "SELECT Id, Label, Score FROM dbo.TestUpdPlan ORDER BY Id");
+
+        var allTables = await ReadAllSchemaTablesAsync();
+        var specTables = FilterTables(allTables, "TestUpdPlan");
+
+        var spec = new UpdateColumnsSpec
+        {
+            Tables = new Dictionary<string, List<string>>
+            {
+                ["dbo.TestUpdPlan"] = ["Label"]
+            }
+        };
+
+        GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables);
+        var sorted = GeneratorOrchestrator.BuildUpdateDependencyOrder(spec, specTables);
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.GenerateUpdatePlan(sorted, spec.Tables, Seed, "en");
+
+        Assert.Equal("update", plan.Mode);
+        Assert.Single(plan.Tables);
+
+        var tablePlan = plan.Tables[0];
+        var idPlan = tablePlan.Columns.First(c => c.Name == "Id");
+        Assert.True(idPlan.IsPrimaryKey);
+        Assert.Equal("skip", idPlan.Generator);
+
+        var labelPlan = tablePlan.Columns.First(c => c.Name == "Label");
+        Assert.NotEqual("skip", labelPlan.Generator);
+
+        Assert.DoesNotContain(tablePlan.Columns, c => c.Name.Equals("Score", StringComparison.OrdinalIgnoreCase));
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        foreach (var tp in plan.Tables.OrderBy(t => t.Order))
+        {
+            await inserter.UpdateTableFromPlanAsync(
+                tp, col => valueGen.GenerateFromPlan((ColumnPlan)col) ?? DBNull.Value);
+        }
+
+        var afterRows = await _fixture.ExecuteQueryAsync(
+            "SELECT Id, Label, Score FROM dbo.TestUpdPlan ORDER BY Id");
+        Assert.Equal(RowCount, afterRows.Count);
+
+        var originalLabels = originalRows.Select(r => (string)r["Label"]!).ToList();
+        var afterLabels = afterRows.Select(r => (string)r["Label"]!).ToList();
+        Assert.NotEqual(originalLabels, afterLabels);
+
+        for (var i = 0; i < originalRows.Count; i++)
+        {
+            Assert.Equal((int)originalRows[i]["Score"]!, (int)afterRows[i]["Score"]!);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 58. Update Enforces Uniqueness
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test58_UpdateEnforcesUniqueness()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestUpdUnique (
+                Id    INT IDENTITY(1,1) PRIMARY KEY,
+                Email NVARCHAR(200) NOT NULL,
+                Label NVARCHAR(50) NOT NULL,
+                CONSTRAINT UQ_UpdEmail UNIQUE (Email)
+            )
+            """);
+
+        var (_, inserted) = await GenerateDataForTableAsync("TestUpdUnique", 30);
+        Assert.Equal(30, inserted);
+
+        var allTables = await ReadAllSchemaTablesAsync();
+        var specTables = FilterTables(allTables, "TestUpdUnique");
+
+        var spec = new UpdateColumnsSpec
+        {
+            Tables = new Dictionary<string, List<string>>
+            {
+                ["dbo.TestUpdUnique"] = ["Email"]
+            }
+        };
+
+        GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables);
+
+        var table = specTables[0];
+        var columnsToUpdate = table.Columns
+            .Where(c => c.Name.Equals("Email", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+
+        var updated = await inserter.UpdateTableAsync(
+            table, columnsToUpdate, [],
+            col => valueGen.Generate((ColumnInfo)col) ?? DBNull.Value);
+        Assert.Equal(30, updated);
+
+        var distinctEmails = (int)(await _fixture.ExecuteScalarAsync(
+            "SELECT COUNT(DISTINCT Email) FROM dbo.TestUpdUnique"))!;
+        Assert.Equal(30, distinctEmails);
+    }
 }

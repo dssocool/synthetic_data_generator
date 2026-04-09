@@ -16,6 +16,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="SyntheticDataGenerator.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="appsettings.yaml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

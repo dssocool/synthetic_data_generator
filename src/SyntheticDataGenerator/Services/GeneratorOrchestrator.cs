@@ -287,7 +287,7 @@ public class GeneratorOrchestrator
         return (specTables, allTables);
     }
 
-    private static void ValidateUpdateSpec(
+    internal static void ValidateUpdateSpec(
         UpdateColumnsSpec spec, List<TableInfo> specTables, List<TableInfo> allTables)
     {
         foreach (var table in specTables)
@@ -329,7 +329,7 @@ public class GeneratorOrchestrator
         ValidateUpdateForeignKeys(spec, specTables, allTables);
     }
 
-    private static void ValidateUpdateForeignKeys(
+    internal static void ValidateUpdateForeignKeys(
         UpdateColumnsSpec spec, List<TableInfo> specTables, List<TableInfo> allTables)
     {
         var specColumnLookup = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
