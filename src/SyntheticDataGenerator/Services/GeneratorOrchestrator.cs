@@ -231,6 +231,7 @@ public class GeneratorOrchestrator
 
         if (_scope.TablesToInclude.Length > 0)
         {
+            ValidateScope(tables, _scope.TablesToInclude);
             var includeSet = _scope.GetIncludeTableNames();
             tables = tables.Where(t => includeSet.Contains(t.TableName) || includeSet.Contains(t.FullName)).ToList();
         }
@@ -262,6 +263,62 @@ public class GeneratorOrchestrator
         }
 
         return (sortedTables, graph);
+    }
+
+    internal static void ValidateScope(
+        List<TableInfo> allTables,
+        TableScope[] tablesToInclude)
+    {
+        var tableByName = new Dictionary<string, TableInfo>(StringComparer.OrdinalIgnoreCase);
+        var tableByFullName = new Dictionary<string, TableInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in allTables)
+        {
+            tableByName.TryAdd(t.TableName, t);
+            tableByFullName.TryAdd(t.FullName, t);
+        }
+
+        var missingTables = new List<string>();
+        var missingColumns = new List<(string Table, string Column)>();
+
+        foreach (var entry in tablesToInclude)
+        {
+            if (!tableByFullName.TryGetValue(entry.Table, out var matched)
+                && !tableByName.TryGetValue(entry.Table, out matched))
+            {
+                missingTables.Add(entry.Table);
+                continue;
+            }
+
+            if (entry.Columns is not { Count: > 0 })
+                continue;
+
+            var dbColumns = new HashSet<string>(
+                matched.Columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var col in entry.Columns)
+            {
+                if (!dbColumns.Contains(col))
+                    missingColumns.Add((matched.FullName, col));
+            }
+        }
+
+        if (missingTables.Count == 0 && missingColumns.Count == 0)
+            return;
+
+        foreach (var table in missingTables)
+            PrintFatal($"Table [{table}] does not exist in the database.");
+
+        foreach (var (table, column) in missingColumns)
+            PrintFatal($"Column [{column}] does not exist in table [{table}].");
+
+        var parts = new List<string>();
+        if (missingTables.Count > 0)
+            parts.Add($"{missingTables.Count} table(s) not found: {string.Join(", ", missingTables)}");
+        if (missingColumns.Count > 0)
+            parts.Add($"{missingColumns.Count} column(s) not found: {string.Join(", ", missingColumns.Select(c => $"[{c.Table}].[{c.Column}]"))}");
+
+        throw new InvalidOperationException(
+            $"Scope validation failed — {string.Join("; ", parts)}.");
     }
 
     internal static void ValidateUpdateScope(

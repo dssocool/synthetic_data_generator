@@ -2541,4 +2541,211 @@ public class IntegrationTests
             "SELECT COUNT(DISTINCT Email) FROM dbo.TestUpdUnique"))!;
         Assert.Equal(30, distinctEmails);
     }
+
+    // ══════════════════════════════════════════════
+    // 59. Scope Validation — Nonexistent Table
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test59_ScopeValidationRejectsNonexistentTable()
+    {
+        var allTables = await ReadAllSchemaTablesAsync();
+
+        var scope = new[]
+        {
+            new TableScope { Table = "dbo.CompletelyFakeTable" }
+        };
+
+        var captured = new StringWriter();
+        var originalOut = Console.Out;
+        Console.SetOut(captured);
+        try
+        {
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => GeneratorOrchestrator.ValidateScope(allTables, scope));
+            Assert.Contains("CompletelyFakeTable", ex.Message);
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        var output = captured.ToString();
+        Assert.Contains("FATAL", output);
+        Assert.Contains("CompletelyFakeTable", output);
+        Assert.Contains("does not exist", output);
+    }
+
+    // ══════════════════════════════════════════════
+    // 60. Scope Validation — Nonexistent Column
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test60_ScopeValidationRejectsNonexistentColumn()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestScopeCol (
+                Id   INT IDENTITY(1,1) PRIMARY KEY,
+                Name NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        var allTables = await ReadAllSchemaTablesAsync();
+
+        var scope = new[]
+        {
+            new TableScope
+            {
+                Table = "dbo.TestScopeCol",
+                Columns = ["Name", "NonExistentColumn"]
+            }
+        };
+
+        var captured = new StringWriter();
+        var originalOut = Console.Out;
+        Console.SetOut(captured);
+        try
+        {
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => GeneratorOrchestrator.ValidateScope(allTables, scope));
+            Assert.Contains("NonExistentColumn", ex.Message);
+            Assert.Contains("TestScopeCol", ex.Message);
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        var output = captured.ToString();
+        Assert.Contains("FATAL", output);
+        Assert.Contains("NonExistentColumn", output);
+        Assert.Contains("TestScopeCol", output);
+    }
+
+    // ══════════════════════════════════════════════
+    // 61. Scope Validation — Mix of Valid and Invalid Tables
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test61_ScopeValidationRejectsMixedTables()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestScopeMixTbl (
+                Id   INT IDENTITY(1,1) PRIMARY KEY,
+                Name NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        var allTables = await ReadAllSchemaTablesAsync();
+
+        var scope = new[]
+        {
+            new TableScope { Table = "dbo.TestScopeMixTbl" },
+            new TableScope { Table = "dbo.TotallyBogusTable" }
+        };
+
+        var captured = new StringWriter();
+        var originalOut = Console.Out;
+        Console.SetOut(captured);
+        try
+        {
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => GeneratorOrchestrator.ValidateScope(allTables, scope));
+            Assert.Contains("TotallyBogusTable", ex.Message);
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        var output = captured.ToString();
+        Assert.Contains("FATAL", output);
+        Assert.Contains("TotallyBogusTable", output);
+    }
+
+    // ══════════════════════════════════════════════
+    // 62. Scope Validation — Mix of Valid and Invalid Columns
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test62_ScopeValidationRejectsMixedColumns()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestScopeMixCol (
+                Id    INT IDENTITY(1,1) PRIMARY KEY,
+                Name  NVARCHAR(50) NOT NULL,
+                Email NVARCHAR(200) NOT NULL
+            )
+            """);
+
+        var allTables = await ReadAllSchemaTablesAsync();
+
+        var scope = new[]
+        {
+            new TableScope
+            {
+                Table = "dbo.TestScopeMixCol",
+                Columns = ["Name", "FakeColumn"]
+            }
+        };
+
+        var captured = new StringWriter();
+        var originalOut = Console.Out;
+        Console.SetOut(captured);
+        try
+        {
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => GeneratorOrchestrator.ValidateScope(allTables, scope));
+            Assert.Contains("FakeColumn", ex.Message);
+            Assert.Contains("TestScopeMixCol", ex.Message);
+        }
+        finally
+        {
+            Console.SetOut(originalOut);
+        }
+
+        var output = captured.ToString();
+        Assert.Contains("FATAL", output);
+        Assert.Contains("FakeColumn", output);
+    }
+
+    // ══════════════════════════════════════════════
+    // 63. Scope Validation — Valid Tables and Columns Pass
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test63_ScopeValidationPassesForValidScope()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestScopeValid (
+                Id    INT IDENTITY(1,1) PRIMARY KEY,
+                Name  NVARCHAR(50) NOT NULL,
+                Email NVARCHAR(200) NOT NULL
+            )
+            """);
+
+        var allTables = await ReadAllSchemaTablesAsync();
+
+        var scopeTableOnly = new[]
+        {
+            new TableScope { Table = "dbo.TestScopeValid" }
+        };
+        GeneratorOrchestrator.ValidateScope(allTables, scopeTableOnly);
+
+        var scopeWithColumns = new[]
+        {
+            new TableScope
+            {
+                Table = "dbo.TestScopeValid",
+                Columns = ["Name", "Email"]
+            }
+        };
+        GeneratorOrchestrator.ValidateScope(allTables, scopeWithColumns);
+
+        var scopeShortName = new[]
+        {
+            new TableScope { Table = "TestScopeValid" }
+        };
+        GeneratorOrchestrator.ValidateScope(allTables, scopeShortName);
+    }
 }
