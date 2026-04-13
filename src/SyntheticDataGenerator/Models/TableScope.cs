@@ -12,7 +12,6 @@ public class ScopeConfig
 {
     public string? SchemaFilter { get; }
     public TableScope[] TablesToInclude { get; }
-    public string[] TablesToExclude { get; }
     public int RowsPerTable { get; }
     public int? Seed { get; }
     public string Locale { get; }
@@ -20,14 +19,12 @@ public class ScopeConfig
     public ScopeConfig(
         string? schemaFilter,
         TableScope[] tablesToInclude,
-        string[] tablesToExclude,
         int rowsPerTable,
         int? seed,
         string locale)
     {
         SchemaFilter = schemaFilter;
         TablesToInclude = tablesToInclude;
-        TablesToExclude = tablesToExclude;
         RowsPerTable = rowsPerTable;
         Seed = seed;
         Locale = locale;
@@ -54,8 +51,9 @@ public class ScopeConfig
     }
 
     /// <summary>
-    /// Parses TablesToInclude from IConfiguration, handling both plain strings
-    /// ("- dbo.Users") and structured objects ("- Table: dbo.Users / Columns: [...]").
+    /// Parses TablesToInclude from IConfiguration. Supports two forms:
+    /// simple ("- dbo.Users") and structured ("- Table: dbo.Users / Columns: [...]").
+    /// An empty list is not valid — TablesToInclude must contain at least one entry.
     /// </summary>
     public static TableScope[] ParseTablesToInclude(IConfigurationSection section)
     {

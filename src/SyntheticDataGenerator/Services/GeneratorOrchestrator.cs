@@ -235,12 +235,6 @@ public class GeneratorOrchestrator
             tables = tables.Where(t => includeSet.Contains(t.TableName) || includeSet.Contains(t.FullName)).ToList();
         }
 
-        if (_scope.TablesToExclude.Length > 0)
-        {
-            var excludeSet = new HashSet<string>(_scope.TablesToExclude, StringComparer.OrdinalIgnoreCase);
-            tables = tables.Where(t => !excludeSet.Contains(t.TableName) && !excludeSet.Contains(t.FullName)).ToList();
-        }
-
         Console.WriteLine($"Found {tables.Count} table(s).");
         Console.WriteLine();
 

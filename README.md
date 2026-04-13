@@ -49,8 +49,9 @@ Create an `appsettings.yaml` file in `src/SyntheticDataGenerator/` (this file is
 ConnectionString: Server=YOUR_SERVER;Trusted_Connection=True;TrustServerCertificate=True;
 DatabaseName: YOUR_DATABASE
 Schema: dbo
-TablesToInclude: []
-TablesToExclude: []
+TablesToInclude:
+  - dbo.Users
+  - dbo.Orders
 RowsPerTable: 100
 Seed: 12345
 Locale: en
@@ -61,8 +62,7 @@ Locale: en
 | `ConnectionString` | Yes | — | SQL Server connection string |
 | `DatabaseName` | No | — | Database name; overrides `Initial Catalog` / `Database` in the connection string |
 | `Schema` | No | all schemas | Restrict to a single schema name |
-| `TablesToInclude` | No | `[]` | Tables (and optionally columns) in scope — see below |
-| `TablesToExclude` | No | `[]` | Skip these tables |
+| `TablesToInclude` | No | all tables | Tables (and optionally columns) in scope — see below |
 | `RowsPerTable` | No | `100` | Number of rows to insert per table (bootstrap mode) |
 | `Seed` | No | random | Integer seed for reproducible data |
 | `Locale` | No | `en` | Bogus locale for generated data |

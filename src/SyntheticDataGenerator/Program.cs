@@ -19,7 +19,6 @@ var connectionString = string.IsNullOrWhiteSpace(databaseName)
 var scope = new ScopeConfig(
     schemaFilter: config["Schema"],
     tablesToInclude: ScopeConfig.ParseTablesToInclude(config.GetSection("TablesToInclude")),
-    tablesToExclude: config.GetSection("TablesToExclude").Get<string[]>() ?? [],
     rowsPerTable: int.TryParse(config["RowsPerTable"], out var r) ? r : 100,
     seed: int.TryParse(config["Seed"], out var s) ? s : null,
     locale: config["Locale"] ?? "en");
