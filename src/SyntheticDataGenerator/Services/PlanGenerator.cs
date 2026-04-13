@@ -55,8 +55,11 @@ public class PlanGenerator
         int defaultRowCount,
         int? seed,
         string locale = "en",
-        string mode = "bootstrap")
+        string mode = "bootstrap",
+        Dictionary<string, HashSet<string>>? columnsInScope = null)
     {
+        var isUpdate = mode.Equals("update", StringComparison.OrdinalIgnoreCase);
+
         var plan = new GenerationPlan
         {
             Mode = mode,
@@ -68,20 +71,34 @@ public class PlanGenerator
         for (var i = 0; i < sortedTables.Count; i++)
         {
             var table = sortedTables[i];
+
+            HashSet<string>? columnSet = null;
+            if (columnsInScope is not null)
+            {
+                columnsInScope.TryGetValue(table.FullName, out columnSet);
+                if (columnSet is null && isUpdate)
+                    continue;
+            }
+
             var fkColumnNames = new HashSet<string>(
-                table.ForeignKeys.Select(fk => fk.ParentColumn),
+                table.ForeignKeys
+                    .Where(fk => columnSet is null || columnSet.Contains(fk.ParentColumn))
+                    .Select(fk => fk.ParentColumn),
                 StringComparer.OrdinalIgnoreCase);
 
             var tablePlan = new TablePlan
             {
                 Table = table.FullName,
                 Order = i + 1,
-                RowCount = defaultRowCount,
+                RowCount = isUpdate ? 0 : defaultRowCount,
                 Columns = []
             };
 
             foreach (var col in table.Columns)
             {
+                if (columnSet is not null && !col.IsPrimaryKey && !columnSet.Contains(col.Name))
+                    continue;
+
                 var colPlan = new ColumnPlan
                 {
                     Name = col.Name,
@@ -99,7 +116,11 @@ public class PlanGenerator
                     IsSequenceDefault = col.IsSequenceDefault,
                 };
 
-                if (col.IsIdentity || col.IsComputed || col.IsRowVersion || col.IsSequenceDefault)
+                if (isUpdate && col.IsPrimaryKey)
+                {
+                    colPlan.Generator = "skip";
+                }
+                else if (col.IsIdentity || col.IsComputed || col.IsRowVersion || col.IsSequenceDefault)
                 {
                     colPlan.Generator = "skip";
                 }
@@ -125,9 +146,15 @@ public class PlanGenerator
                 tablePlan.Columns.Add(colPlan);
             }
 
-            if (table.UniqueConstraints.Count > 0)
+            var constraints = columnSet is not null
+                ? table.UniqueConstraints
+                    .Where(uc => uc.Columns.All(c => columnSet.Contains(c)))
+                    .ToList()
+                : table.UniqueConstraints;
+
+            if (constraints.Count > 0)
             {
-                tablePlan.UniqueConstraints = table.UniqueConstraints
+                tablePlan.UniqueConstraints = constraints
                     .Select(uc => new UniqueConstraintPlan
                     {
                         Name = uc.Name,
@@ -202,111 +229,6 @@ public class PlanGenerator
             colPlan.Generator = "Random.AlphaNumeric";
             colPlan.GeneratorArgs = new Dictionary<string, object?> { ["length"] = 8 };
         }
-    }
-
-    public GenerationPlan GenerateUpdatePlan(
-        List<TableInfo> sortedTables,
-        Dictionary<string, List<string>> columnsToUpdate,
-        int? seed,
-        string locale = "en")
-    {
-        var plan = new GenerationPlan
-        {
-            Mode = "update",
-            Seed = seed,
-            Locale = locale,
-            Tables = []
-        };
-
-        for (var i = 0; i < sortedTables.Count; i++)
-        {
-            var table = sortedTables[i];
-            if (!columnsToUpdate.TryGetValue(table.FullName, out var columnNames))
-                continue;
-
-            var columnSet = new HashSet<string>(columnNames, StringComparer.OrdinalIgnoreCase);
-
-            var fkColumnNames = new HashSet<string>(
-                table.ForeignKeys
-                    .Where(fk => columnSet.Contains(fk.ParentColumn))
-                    .Select(fk => fk.ParentColumn),
-                StringComparer.OrdinalIgnoreCase);
-
-            var tablePlan = new TablePlan
-            {
-                Table = table.FullName,
-                Order = i + 1,
-                RowCount = 0,
-                Columns = []
-            };
-
-            foreach (var col in table.Columns)
-            {
-                if (!col.IsPrimaryKey && !columnSet.Contains(col.Name))
-                    continue;
-
-                var colPlan = new ColumnPlan
-                {
-                    Name = col.Name,
-                    SqlType = col.SqlType,
-                    MaxLength = col.MaxLength,
-                    Precision = col.Precision,
-                    Scale = col.Scale,
-                    IsNullable = col.IsNullable,
-                    IsIdentity = col.IsIdentity,
-                    IsPrimaryKey = col.IsPrimaryKey,
-                    IsComputed = col.IsComputed,
-                    IsRowVersion = col.IsRowVersion,
-                    HasDefault = col.HasDefault,
-                    IsUnique = col.IsUnique,
-                    IsSequenceDefault = col.IsSequenceDefault,
-                };
-
-                if (col.IsPrimaryKey)
-                {
-                    colPlan.Generator = "skip";
-                }
-                else if (fkColumnNames.Contains(col.Name))
-                {
-                    var fk = table.ForeignKeys.First(f =>
-                        f.ParentColumn.Equals(col.Name, StringComparison.OrdinalIgnoreCase));
-
-                    colPlan.Generator = "foreignKey";
-                    colPlan.GeneratorArgs = new Dictionary<string, object?>
-                    {
-                        ["referencedTable"] = fk.FullReferencedTableName,
-                        ["referencedColumn"] = fk.ReferencedColumn,
-                        ["isSelfReferencing"] = fk.IsSelfReferencing,
-                        ["compositeFkGroup"] = fk.FkName
-                    };
-                }
-                else
-                {
-                    ResolveGenerator(col, colPlan);
-                }
-
-                tablePlan.Columns.Add(colPlan);
-            }
-
-            var relevantConstraints = table.UniqueConstraints
-                .Where(uc => uc.Columns.All(c => columnSet.Contains(c)))
-                .ToList();
-            if (relevantConstraints.Count > 0)
-            {
-                tablePlan.UniqueConstraints = relevantConstraints
-                    .Select(uc => new UniqueConstraintPlan
-                    {
-                        Name = uc.Name,
-                        Columns = new List<string>(uc.Columns),
-                        FilterDefinition = uc.FilterDefinition
-                    })
-                    .ToList();
-            }
-
-            plan.Tables.Add(tablePlan);
-        }
-
-        return plan;
     }
 
     internal static bool IsUnsupportedType(ColumnInfo col) =>

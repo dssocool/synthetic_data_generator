@@ -11,7 +11,9 @@ public class DependencyGraph
 
     public IReadOnlySet<string> SelfReferencingTables => _selfReferencingTables;
 
-    public void Build(List<TableInfo> tables)
+    public void Build(
+        List<TableInfo> tables,
+        Dictionary<string, HashSet<string>>? columnsInScope = null)
     {
         foreach (var table in tables)
         {
@@ -30,6 +32,11 @@ public class DependencyGraph
                     _selfReferencingTables.Add(table.FullName);
                     continue;
                 }
+
+                if (columnsInScope is not null
+                    && columnsInScope.TryGetValue(table.FullName, out var scopedCols)
+                    && !scopedCols.Contains(fk.ParentColumn))
+                    continue;
 
                 var from = fk.FullReferencedTableName;
                 var to = fk.FullParentTableName;

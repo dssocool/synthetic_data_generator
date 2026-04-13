@@ -6,29 +6,12 @@ namespace SyntheticDataGenerator.Services;
 public class GeneratorOrchestrator
 {
     private readonly string _connectionString;
-    private readonly int _rowsPerTable;
-    private readonly int? _seed;
-    private readonly string? _schemaFilter;
-    private readonly string _locale;
-    private readonly string[] _tablesToInclude;
-    private readonly string[] _tablesToExclude;
+    private readonly ScopeConfig _scope;
 
-    public GeneratorOrchestrator(
-        string connectionString,
-        int rowsPerTable,
-        int? seed,
-        string? schemaFilter,
-        string locale,
-        string[] tablesToInclude,
-        string[] tablesToExclude)
+    public GeneratorOrchestrator(string connectionString, ScopeConfig scope)
     {
         _connectionString = connectionString;
-        _rowsPerTable = rowsPerTable;
-        _seed = seed;
-        _schemaFilter = schemaFilter;
-        _locale = locale;
-        _tablesToInclude = tablesToInclude;
-        _tablesToExclude = tablesToExclude;
+        _scope = scope;
     }
 
     public async Task RunGeneratePlanAsync(string outputPath, string mode = "bootstrap")
@@ -38,11 +21,17 @@ public class GeneratorOrchestrator
         Console.WriteLine($"Output: {outputPath}");
         Console.WriteLine();
 
-        var (sortedTables, graph) = await ReadAndSortSchemaAsync();
+        var columnScope = _scope.BuildColumnScope();
+        var (sortedTables, graph) = await ReadAndScopeSchemaAsync(mode, columnScope);
         if (sortedTables is null) return;
 
+        if (mode.Equals("update", StringComparison.OrdinalIgnoreCase))
+            ValidateUpdateScope(columnScope!, sortedTables, await ReadAllTablesAsync());
+
         var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sortedTables, graph!.SelfReferencingTables, _rowsPerTable, _seed, _locale, mode);
+        var plan = planGen.Generate(
+            sortedTables, graph!.SelfReferencingTables, _scope.RowsPerTable,
+            _scope.Seed, _scope.Locale, mode, columnScope);
 
         await planGen.WritePlanAsync(plan, outputPath);
 
@@ -118,14 +107,24 @@ public class GeneratorOrchestrator
     {
         Console.WriteLine($"=== Synthetic Data Generator - Direct ({mode}) ===");
         Console.WriteLine($"Target: {MaskConnectionString(_connectionString)}");
-        Console.WriteLine($"Rows per table: {_rowsPerTable}");
-        Console.WriteLine($"Seed: {_seed?.ToString() ?? "(random)"}");
-        if (!string.IsNullOrEmpty(_schemaFilter))
-            Console.WriteLine($"Schema filter: {_schemaFilter}");
+        Console.WriteLine($"Rows per table: {_scope.RowsPerTable}");
+        Console.WriteLine($"Seed: {_scope.Seed?.ToString() ?? "(random)"}");
+        if (!string.IsNullOrEmpty(_scope.SchemaFilter))
+            Console.WriteLine($"Schema filter: {_scope.SchemaFilter}");
         Console.WriteLine();
 
-        var (sortedTables, graph) = await ReadAndSortSchemaAsync();
+        var columnScope = _scope.BuildColumnScope();
+        var isUpdate = mode.Equals("update", StringComparison.OrdinalIgnoreCase);
+
+        var (sortedTables, graph) = await ReadAndScopeSchemaAsync(mode, columnScope);
         if (sortedTables is null) return;
+
+        if (isUpdate)
+        {
+            ValidateUpdateScope(columnScope!, sortedTables, await ReadAllTablesAsync());
+            await RunUpdateDirectInternalAsync(sortedTables, columnScope!);
+            return;
+        }
 
         Console.WriteLine("Insertion order:");
         for (var i = 0; i < sortedTables.Count; i++)
@@ -140,48 +139,41 @@ public class GeneratorOrchestrator
 
         WarnUnsupportedColumns(sortedTables);
 
-        var valueGen = new ColumnValueGenerator(_seed, _locale);
+        var valueGen = new ColumnValueGenerator(_scope.Seed, _scope.Locale);
         var inserter = new DataInserter(_connectionString, valueGen, graph!.SelfReferencingTables);
 
         await InsertTablesAsync(sortedTables, async table =>
         {
-            var inserted = await inserter.InsertTableAsync(table, _rowsPerTable);
+            var inserted = await inserter.InsertTableAsync(table, _scope.RowsPerTable);
             return (table.FullName, inserted);
         });
 
         var planOutputPath = "plan.yaml";
         var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sortedTables, graph!.SelfReferencingTables, _rowsPerTable, _seed, _locale, mode);
+        var plan = planGen.Generate(
+            sortedTables, graph!.SelfReferencingTables, _scope.RowsPerTable,
+            _scope.Seed, _scope.Locale, mode, columnScope);
         await planGen.WritePlanAsync(plan, planOutputPath);
         Console.WriteLine($"Plan saved to: {Path.GetFullPath(planOutputPath)}");
     }
 
-    public async Task RunUpdateDirectAsync(string columnsFilePath)
+    private async Task RunUpdateDirectInternalAsync(
+        List<TableInfo> sortedTables,
+        Dictionary<string, HashSet<string>> columnScope)
     {
-        Console.WriteLine("=== Synthetic Data Generator - Direct (update) ===");
-        Console.WriteLine($"Target: {MaskConnectionString(_connectionString)}");
-        Console.WriteLine($"Columns file: {columnsFilePath}");
-        Console.WriteLine($"Seed: {_seed?.ToString() ?? "(random)"}");
-        Console.WriteLine();
-
-        var spec = await UpdateColumnsSpec.ReadAsync(columnsFilePath);
-        var (specTables, allTables) = await ReadSchemaForUpdateAsync(spec);
-        if (specTables is null) return;
-
-        ValidateUpdateSpec(spec, specTables, allTables!);
-        var sortedSpecTables = BuildUpdateDependencyOrder(spec, specTables);
-
-        var valueGen = new ColumnValueGenerator(_seed, _locale);
+        var valueGen = new ColumnValueGenerator(_scope.Seed, _scope.Locale);
         var inserter = new DataInserter(_connectionString, valueGen, new HashSet<string>());
 
-        await UpdateTablesAsync(sortedSpecTables, spec, async table =>
+        await UpdateTablesAsync(sortedTables, async table =>
         {
-            var columnNames = spec.Tables[table.FullName];
+            if (!columnScope.TryGetValue(table.FullName, out var scopedCols))
+                return (table.FullName, 0);
+
             var columnsToUpdate = table.Columns
-                .Where(c => columnNames.Contains(c.Name, StringComparer.OrdinalIgnoreCase))
+                .Where(c => scopedCols.Contains(c.Name))
                 .ToList();
 
-            var fkGroups = BuildUpdateFkGroups(table, columnsToUpdate, spec);
+            var fkGroups = BuildUpdateFkGroups(table, columnsToUpdate, columnScope);
 
             var updated = await inserter.UpdateTableAsync(
                 table, columnsToUpdate, fkGroups,
@@ -191,41 +183,11 @@ public class GeneratorOrchestrator
 
         var planOutputPath = "plan.yaml";
         var planGen = new PlanGenerator();
-        var plan = planGen.GenerateUpdatePlan(sortedSpecTables, spec.Tables, _seed, _locale);
+        var plan = planGen.Generate(
+            sortedTables, new HashSet<string>(), _scope.RowsPerTable,
+            _scope.Seed, _scope.Locale, "update", columnScope);
         await planGen.WritePlanAsync(plan, planOutputPath);
         Console.WriteLine($"Plan saved to: {Path.GetFullPath(planOutputPath)}");
-    }
-
-    public async Task RunUpdateGeneratePlanAsync(string outputPath, string columnsFilePath)
-    {
-        Console.WriteLine("=== Synthetic Data Generator - Generate Plan (update) ===");
-        Console.WriteLine($"Target: {MaskConnectionString(_connectionString)}");
-        Console.WriteLine($"Columns file: {columnsFilePath}");
-        Console.WriteLine($"Output: {outputPath}");
-        Console.WriteLine();
-
-        var spec = await UpdateColumnsSpec.ReadAsync(columnsFilePath);
-        var (specTables, allTables) = await ReadSchemaForUpdateAsync(spec);
-        if (specTables is null) return;
-
-        ValidateUpdateSpec(spec, specTables, allTables!);
-        var sortedSpecTables = BuildUpdateDependencyOrder(spec, specTables);
-
-        var planGen = new PlanGenerator();
-        var plan = planGen.GenerateUpdatePlan(sortedSpecTables, spec.Tables, _seed, _locale);
-
-        await planGen.WritePlanAsync(plan, outputPath);
-
-        Console.WriteLine($"Plan generated with {plan.Tables.Count} table(s):");
-        foreach (var t in plan.Tables)
-        {
-            var genCols = t.Columns.Count(c => !c.Generator.Equals("skip", StringComparison.OrdinalIgnoreCase));
-            Console.WriteLine($"  {t.Order,3}. {t.FullName,-40} [{t.Columns.Count} cols, {genCols} generated]");
-        }
-        Console.WriteLine();
-        Console.WriteLine($"Plan written to: {Path.GetFullPath(outputPath)}");
-        Console.WriteLine("Edit the plan file to customize generators, then run:");
-        Console.WriteLine($"  dotnet run -- --execute-plan {outputPath}");
     }
 
     private async Task ExecuteUpdatePlanAsync(GenerationPlan plan, string planPath)
@@ -244,7 +206,7 @@ public class GeneratorOrchestrator
         valueGen.SetPlanBasePath(Path.GetDirectoryName(Path.GetFullPath(planPath))!);
         var inserter = new DataInserter(_connectionString, valueGen, new HashSet<string>());
 
-        await UpdateTablesAsync(tables, null, async tablePlan =>
+        await UpdateTablesAsync(tables, async tablePlan =>
         {
             var updated = await inserter.UpdateTableFromPlanAsync(
                 tablePlan,
@@ -253,44 +215,67 @@ public class GeneratorOrchestrator
         });
     }
 
-    private async Task<(List<TableInfo>? SpecTables, List<TableInfo>? AllTables)> ReadSchemaForUpdateAsync(
-        UpdateColumnsSpec spec)
+    private async Task<List<TableInfo>> ReadAllTablesAsync()
+    {
+        var schemaReader = new SchemaReader(_connectionString);
+        return await schemaReader.ReadSchemaAsync(
+            string.IsNullOrWhiteSpace(_scope.SchemaFilter) ? null : _scope.SchemaFilter);
+    }
+
+    private async Task<(List<TableInfo>? SortedTables, DependencyGraph? Graph)> ReadAndScopeSchemaAsync(
+        string mode,
+        Dictionary<string, HashSet<string>>? columnScope)
     {
         Console.WriteLine("Reading database schema...");
-        var schemaReader = new SchemaReader(_connectionString);
-        var allTables = await schemaReader.ReadSchemaAsync(
-            string.IsNullOrWhiteSpace(_schemaFilter) ? null : _schemaFilter);
+        var tables = await ReadAllTablesAsync();
 
-        var requestedNames = new HashSet<string>(spec.Tables.Keys, StringComparer.OrdinalIgnoreCase);
-        var specTables = allTables.Where(t => requestedNames.Contains(t.FullName)).ToList();
-
-        Console.WriteLine($"Found {specTables.Count} of {spec.Tables.Count} requested table(s).");
-        Console.WriteLine();
-
-        var foundNames = new HashSet<string>(specTables.Select(t => t.FullName), StringComparer.OrdinalIgnoreCase);
-        foreach (var name in spec.Tables.Keys)
+        if (_scope.TablesToInclude.Length > 0)
         {
-            if (!foundNames.Contains(name))
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"  ERROR: Table [{name}] not found in database.");
-                Console.ResetColor();
-            }
+            var includeSet = _scope.GetIncludeTableNames();
+            tables = tables.Where(t => includeSet.Contains(t.TableName) || includeSet.Contains(t.FullName)).ToList();
         }
 
-        if (specTables.Count == 0)
+        if (_scope.TablesToExclude.Length > 0)
         {
-            Console.WriteLine("No matching tables found. Exiting.");
+            var excludeSet = new HashSet<string>(_scope.TablesToExclude, StringComparer.OrdinalIgnoreCase);
+            tables = tables.Where(t => !excludeSet.Contains(t.TableName) && !excludeSet.Contains(t.FullName)).ToList();
+        }
+
+        Console.WriteLine($"Found {tables.Count} table(s).");
+        Console.WriteLine();
+
+        if (tables.Count == 0)
+        {
+            Console.WriteLine("No tables found. Exiting.");
             return (null, null);
         }
 
-        return (specTables, allTables);
+        Console.WriteLine("Building dependency graph...");
+        var graph = new DependencyGraph();
+        graph.Build(tables, columnScope);
+
+        List<TableInfo> sortedTables;
+        try
+        {
+            sortedTables = graph.GetTopologicalOrder();
+        }
+        catch (InvalidOperationException ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"ERROR: {ex.Message}");
+            Console.ResetColor();
+            return (null, null);
+        }
+
+        return (sortedTables, graph);
     }
 
-    internal static void ValidateUpdateSpec(
-        UpdateColumnsSpec spec, List<TableInfo> specTables, List<TableInfo> allTables)
+    internal static void ValidateUpdateScope(
+        Dictionary<string, HashSet<string>> columnScope,
+        List<TableInfo> scopeTables,
+        List<TableInfo> allTables)
     {
-        foreach (var table in specTables)
+        foreach (var table in scopeTables)
         {
             if (table.PrimaryKeyColumns.Count == 0)
             {
@@ -299,7 +284,7 @@ public class GeneratorOrchestrator
                     $"Table [{table.FullName}] has no primary key.");
             }
 
-            if (!spec.Tables.TryGetValue(table.FullName, out var columnNames))
+            if (!columnScope.TryGetValue(table.FullName, out var columnNames))
                 continue;
 
             var tableColumnNames = new HashSet<string>(
@@ -326,19 +311,17 @@ public class GeneratorOrchestrator
             }
         }
 
-        ValidateUpdateForeignKeys(spec, specTables, allTables);
+        ValidateUpdateForeignKeys(columnScope, scopeTables, allTables);
     }
 
     internal static void ValidateUpdateForeignKeys(
-        UpdateColumnsSpec spec, List<TableInfo> specTables, List<TableInfo> allTables)
+        Dictionary<string, HashSet<string>> columnScope,
+        List<TableInfo> scopeTables,
+        List<TableInfo> allTables)
     {
-        var specColumnLookup = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (tableName, cols) in spec.Tables)
-            specColumnLookup[tableName] = new HashSet<string>(cols, StringComparer.OrdinalIgnoreCase);
-
-        foreach (var table in specTables)
+        foreach (var table in scopeTables)
         {
-            if (!specColumnLookup.TryGetValue(table.FullName, out var userCols))
+            if (!columnScope.TryGetValue(table.FullName, out var userCols))
                 continue;
 
             foreach (var fk in table.ForeignKeys)
@@ -346,7 +329,7 @@ public class GeneratorOrchestrator
                 if (!userCols.Contains(fk.ParentColumn))
                     continue;
 
-                if (!specColumnLookup.TryGetValue(fk.FullReferencedTableName, out var refCols)
+                if (!columnScope.TryGetValue(fk.FullReferencedTableName, out var refCols)
                     || !refCols.Contains(fk.ReferencedColumn))
                 {
                     PrintFatal(
@@ -365,12 +348,12 @@ public class GeneratorOrchestrator
         {
             foreach (var fk in table.ForeignKeys)
             {
-                if (!specColumnLookup.TryGetValue(fk.FullReferencedTableName, out var refUserCols))
+                if (!columnScope.TryGetValue(fk.FullReferencedTableName, out var refUserCols))
                     continue;
                 if (!refUserCols.Contains(fk.ReferencedColumn))
                     continue;
 
-                if (!specColumnLookup.TryGetValue(fk.FullParentTableName, out var parentUserCols)
+                if (!columnScope.TryGetValue(fk.FullParentTableName, out var parentUserCols)
                     || !parentUserCols.Contains(fk.ParentColumn))
                 {
                     PrintFatal(
@@ -386,76 +369,10 @@ public class GeneratorOrchestrator
         }
     }
 
-    internal static List<TableInfo> BuildUpdateDependencyOrder(
-        UpdateColumnsSpec spec, List<TableInfo> specTables)
-    {
-        var specColumnLookup = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (tableName, cols) in spec.Tables)
-            specColumnLookup[tableName] = new HashSet<string>(cols, StringComparer.OrdinalIgnoreCase);
-
-        var tableMap = new Dictionary<string, TableInfo>(StringComparer.OrdinalIgnoreCase);
-        var adjacency = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-        var inDegree = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var t in specTables)
-        {
-            tableMap[t.FullName] = t;
-            adjacency.TryAdd(t.FullName, []);
-            inDegree.TryAdd(t.FullName, 0);
-        }
-
-        foreach (var table in specTables)
-        {
-            if (!specColumnLookup.TryGetValue(table.FullName, out var userCols))
-                continue;
-
-            foreach (var fk in table.ForeignKeys)
-            {
-                if (fk.IsSelfReferencing) continue;
-                if (!userCols.Contains(fk.ParentColumn)) continue;
-                if (!specColumnLookup.ContainsKey(fk.FullReferencedTableName)) continue;
-
-                var from = fk.FullReferencedTableName;
-                var to = table.FullName;
-
-                if (adjacency.ContainsKey(from) && adjacency[from].Add(to))
-                    inDegree[to]++;
-            }
-        }
-
-        var queue = new Queue<string>();
-        foreach (var (node, degree) in inDegree)
-        {
-            if (degree == 0) queue.Enqueue(node);
-        }
-
-        var sorted = new List<TableInfo>();
-        while (queue.Count > 0)
-        {
-            var current = queue.Dequeue();
-            sorted.Add(tableMap[current]);
-            if (!adjacency.TryGetValue(current, out var neighbors)) continue;
-            foreach (var neighbor in neighbors)
-            {
-                inDegree[neighbor]--;
-                if (inDegree[neighbor] == 0) queue.Enqueue(neighbor);
-            }
-        }
-
-        if (sorted.Count != tableMap.Count)
-        {
-            var remaining = tableMap.Keys
-                .Where(k => !sorted.Any(s => s.FullName.Equals(k, StringComparison.OrdinalIgnoreCase)))
-                .ToList();
-            foreach (var r in remaining)
-                sorted.Add(tableMap[r]);
-        }
-
-        return sorted;
-    }
-
     internal static List<DataInserter.UpdateFkGroup> BuildUpdateFkGroups(
-        TableInfo table, List<ColumnInfo> columnsToUpdate, UpdateColumnsSpec spec)
+        TableInfo table,
+        List<ColumnInfo> columnsToUpdate,
+        Dictionary<string, HashSet<string>> columnScope)
     {
         var groups = new List<DataInserter.UpdateFkGroup>();
         var updateColNames = new HashSet<string>(
@@ -465,7 +382,7 @@ public class GeneratorOrchestrator
         {
             if (fk.IsSelfReferencing) continue;
             if (!updateColNames.Contains(fk.ParentColumn)) continue;
-            if (!spec.Tables.ContainsKey(fk.FullReferencedTableName)) continue;
+            if (!columnScope.ContainsKey(fk.FullReferencedTableName)) continue;
 
             groups.Add(new DataInserter.UpdateFkGroup(
                 fk.FullReferencedTableName, fk.ParentColumn, fk.ReferencedColumn));
@@ -483,7 +400,6 @@ public class GeneratorOrchestrator
 
     private static async Task UpdateTablesAsync<T>(
         List<T> tables,
-        UpdateColumnsSpec? spec,
         Func<T, Task<(string FullName, int Updated)>> updateFunc)
     {
         var totalRows = 0;
@@ -554,54 +470,6 @@ public class GeneratorOrchestrator
         stopwatch.Stop();
         Console.WriteLine();
         Console.WriteLine($"Done. {totalRows} total rows inserted in {stopwatch.Elapsed.TotalSeconds:F1}s.");
-    }
-
-    private async Task<(List<TableInfo>? SortedTables, DependencyGraph? Graph)> ReadAndSortSchemaAsync()
-    {
-        Console.WriteLine("Reading database schema...");
-        var schemaReader = new SchemaReader(_connectionString);
-        var tables = await schemaReader.ReadSchemaAsync(
-            string.IsNullOrWhiteSpace(_schemaFilter) ? null : _schemaFilter);
-
-        if (_tablesToInclude.Length > 0)
-        {
-            var includeSet = new HashSet<string>(_tablesToInclude, StringComparer.OrdinalIgnoreCase);
-            tables = tables.Where(t => includeSet.Contains(t.TableName) || includeSet.Contains(t.FullName)).ToList();
-        }
-
-        if (_tablesToExclude.Length > 0)
-        {
-            var excludeSet = new HashSet<string>(_tablesToExclude, StringComparer.OrdinalIgnoreCase);
-            tables = tables.Where(t => !excludeSet.Contains(t.TableName) && !excludeSet.Contains(t.FullName)).ToList();
-        }
-
-        Console.WriteLine($"Found {tables.Count} table(s).");
-        Console.WriteLine();
-
-        if (tables.Count == 0)
-        {
-            Console.WriteLine("No tables found. Exiting.");
-            return (null, null);
-        }
-
-        Console.WriteLine("Building dependency graph...");
-        var graph = new DependencyGraph();
-        graph.Build(tables);
-
-        List<TableInfo> sortedTables;
-        try
-        {
-            sortedTables = graph.GetTopologicalOrder();
-        }
-        catch (InvalidOperationException ex)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"ERROR: {ex.Message}");
-            Console.ResetColor();
-            return (null, null);
-        }
-
-        return (sortedTables, graph);
     }
 
     internal static void PrintDataGenerationError(string tableName, DataGenerationException ex)

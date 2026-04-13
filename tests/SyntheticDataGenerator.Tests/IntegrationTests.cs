@@ -2145,12 +2145,9 @@ public class IntegrationTests
         var allTables = await ReadAllSchemaTablesAsync();
         var specTables = FilterTables(allTables, "TestUpdPKReject");
 
-        var spec = new UpdateColumnsSpec
+        var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            Tables = new Dictionary<string, List<string>>
-            {
-                ["dbo.TestUpdPKReject"] = ["Id"]
-            }
+            ["dbo.TestUpdPKReject"] = new(["Id"], StringComparer.OrdinalIgnoreCase)
         };
 
         var captured = new StringWriter();
@@ -2159,7 +2156,7 @@ public class IntegrationTests
         try
         {
             var ex = Assert.Throws<InvalidOperationException>(
-                () => GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables));
+                () => GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables));
             Assert.Contains("primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("Id", ex.Message);
         }
@@ -2202,12 +2199,9 @@ public class IntegrationTests
         var allTables = await ReadAllSchemaTablesAsync();
         var specTables = FilterTables(allTables, "TestUpdFKChild");
 
-        var spec = new UpdateColumnsSpec
+        var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            Tables = new Dictionary<string, List<string>>
-            {
-                ["dbo.TestUpdFKChild"] = ["ParentId"]
-            }
+            ["dbo.TestUpdFKChild"] = new(["ParentId"], StringComparer.OrdinalIgnoreCase)
         };
 
         var captured = new StringWriter();
@@ -2216,7 +2210,7 @@ public class IntegrationTests
         try
         {
             var ex = Assert.Throws<InvalidOperationException>(
-                () => GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables));
+                () => GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables));
             Assert.Contains("FK validation failed", ex.Message);
             Assert.Contains("TestUpdFKChild", ex.Message);
             Assert.Contains("ParentId", ex.Message);
@@ -2263,12 +2257,9 @@ public class IntegrationTests
         var allTables = await ReadAllSchemaTablesAsync();
         var specTables = FilterTables(allTables, "TestUpdRevParent");
 
-        var spec = new UpdateColumnsSpec
+        var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            Tables = new Dictionary<string, List<string>>
-            {
-                ["dbo.TestUpdRevParent"] = ["Code"]
-            }
+            ["dbo.TestUpdRevParent"] = new(["Code"], StringComparer.OrdinalIgnoreCase)
         };
 
         var captured = new StringWriter();
@@ -2277,7 +2268,7 @@ public class IntegrationTests
         try
         {
             var ex = Assert.Throws<InvalidOperationException>(
-                () => GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables));
+                () => GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables));
             Assert.Contains("FK validation failed", ex.Message);
             Assert.Contains("Code", ex.Message);
             Assert.Contains("TestUpdRevChild", ex.Message);
@@ -2324,17 +2315,17 @@ public class IntegrationTests
         var allTables = await ReadAllSchemaTablesAsync();
         var specTables = FilterTables(allTables, "TestUpdRefParent", "TestUpdRefChild");
 
-        var spec = new UpdateColumnsSpec
+        var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            Tables = new Dictionary<string, List<string>>
-            {
-                ["dbo.TestUpdRefParent"] = ["Code"],
-                ["dbo.TestUpdRefChild"] = ["RefCode"]
-            }
+            ["dbo.TestUpdRefParent"] = new(["Code"], StringComparer.OrdinalIgnoreCase),
+            ["dbo.TestUpdRefChild"] = new(["RefCode"], StringComparer.OrdinalIgnoreCase)
         };
 
-        GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables);
-        var sorted = GeneratorOrchestrator.BuildUpdateDependencyOrder(spec, specTables);
+        GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables);
+
+        var graph = new DependencyGraph();
+        graph.Build(specTables, columnScope);
+        var sorted = graph.GetTopologicalOrder();
 
         var parentIdx = sorted.FindIndex(t => t.TableName == "TestUpdRefParent");
         var childIdx = sorted.FindIndex(t => t.TableName == "TestUpdRefChild");
@@ -2346,11 +2337,12 @@ public class IntegrationTests
 
         foreach (var table in sorted)
         {
-            var columnNames = spec.Tables[table.FullName];
+            if (!columnScope.TryGetValue(table.FullName, out var scopedCols))
+                continue;
             var columnsToUpdate = table.Columns
-                .Where(c => columnNames.Contains(c.Name, StringComparer.OrdinalIgnoreCase))
+                .Where(c => scopedCols.Contains(c.Name))
                 .ToList();
-            var fkGroups = GeneratorOrchestrator.BuildUpdateFkGroups(table, columnsToUpdate, spec);
+            var fkGroups = GeneratorOrchestrator.BuildUpdateFkGroups(table, columnsToUpdate, columnScope);
 
             await inserter.UpdateTableAsync(
                 table, columnsToUpdate, fkGroups,
@@ -2396,15 +2388,12 @@ public class IntegrationTests
         var allTables = await ReadAllSchemaTablesAsync();
         var specTables = FilterTables(allTables, "TestUpdBasic");
 
-        var spec = new UpdateColumnsSpec
+        var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            Tables = new Dictionary<string, List<string>>
-            {
-                ["dbo.TestUpdBasic"] = ["Name"]
-            }
+            ["dbo.TestUpdBasic"] = new(["Name"], StringComparer.OrdinalIgnoreCase)
         };
 
-        GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables);
+        GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables);
 
         var table = specTables[0];
         var columnsToUpdate = table.Columns
@@ -2456,19 +2445,19 @@ public class IntegrationTests
         var allTables = await ReadAllSchemaTablesAsync();
         var specTables = FilterTables(allTables, "TestUpdPlan");
 
-        var spec = new UpdateColumnsSpec
+        var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            Tables = new Dictionary<string, List<string>>
-            {
-                ["dbo.TestUpdPlan"] = ["Label"]
-            }
+            ["dbo.TestUpdPlan"] = new(["Label"], StringComparer.OrdinalIgnoreCase)
         };
 
-        GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables);
-        var sorted = GeneratorOrchestrator.BuildUpdateDependencyOrder(spec, specTables);
+        GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables);
+
+        var graph = new DependencyGraph();
+        graph.Build(specTables, columnScope);
+        var sorted = graph.GetTopologicalOrder();
 
         var planGen = new PlanGenerator();
-        var plan = planGen.GenerateUpdatePlan(sorted, spec.Tables, Seed, "en");
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, 0, Seed, "en", "update", columnScope);
 
         Assert.Equal("update", plan.Mode);
         Assert.Single(plan.Tables);
@@ -2528,15 +2517,12 @@ public class IntegrationTests
         var allTables = await ReadAllSchemaTablesAsync();
         var specTables = FilterTables(allTables, "TestUpdUnique");
 
-        var spec = new UpdateColumnsSpec
+        var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            Tables = new Dictionary<string, List<string>>
-            {
-                ["dbo.TestUpdUnique"] = ["Email"]
-            }
+            ["dbo.TestUpdUnique"] = new(["Email"], StringComparer.OrdinalIgnoreCase)
         };
 
-        GeneratorOrchestrator.ValidateUpdateSpec(spec, specTables, allTables);
+        GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables);
 
         var table = specTables[0];
         var columnsToUpdate = table.Columns

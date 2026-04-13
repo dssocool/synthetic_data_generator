@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Configuration;
+using SyntheticDataGenerator.Models;
 using SyntheticDataGenerator.Services;
 
 var config = new ConfigurationBuilder()
@@ -15,16 +16,15 @@ var connectionString = string.IsNullOrWhiteSpace(databaseName)
     : new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(baseConnectionString)
         { InitialCatalog = databaseName }.ConnectionString;
 
-var rowsPerTable = int.TryParse(config["RowsPerTable"], out var r) ? r : 100;
-var seed = int.TryParse(config["Seed"], out var s) ? s : (int?)null;
-var schemaFilter = config["Schema"];
-var locale = config["Locale"] ?? "en";
-var tablesToInclude = config.GetSection("TablesToInclude").Get<string[]>() ?? [];
-var tablesToExclude = config.GetSection("TablesToExclude").Get<string[]>() ?? [];
+var scope = new ScopeConfig(
+    schemaFilter: config["Schema"],
+    tablesToInclude: ScopeConfig.ParseTablesToInclude(config.GetSection("TablesToInclude")),
+    tablesToExclude: config.GetSection("TablesToExclude").Get<string[]>() ?? [],
+    rowsPerTable: int.TryParse(config["RowsPerTable"], out var r) ? r : 100,
+    seed: int.TryParse(config["Seed"], out var s) ? s : null,
+    locale: config["Locale"] ?? "en");
 
-var orchestrator = new GeneratorOrchestrator(
-    connectionString, rowsPerTable, seed, schemaFilter, locale,
-    tablesToInclude, tablesToExclude);
+var orchestrator = new GeneratorOrchestrator(connectionString, scope);
 
 var parsed = ParseArgs(args);
 
@@ -37,21 +37,10 @@ switch (parsed.Subcommand)
         await orchestrator.RunDirectAsync("bootstrap");
         break;
     case "update" when parsed.GeneratePlan:
-        if (parsed.ColumnsFile is null)
-        {
-            PrintUsage();
-            return 1;
-        }
-        await orchestrator.RunUpdateGeneratePlanAsync(
-            parsed.Arg ?? "plan.yaml", parsed.ColumnsFile);
+        await orchestrator.RunGeneratePlanAsync(parsed.Arg ?? "plan.yaml", "update");
         break;
     case "update":
-        if (parsed.ColumnsFile is null)
-        {
-            PrintUsage();
-            return 1;
-        }
-        await orchestrator.RunUpdateDirectAsync(parsed.ColumnsFile);
+        await orchestrator.RunDirectAsync("update");
         break;
     case "execute-plan":
         await orchestrator.RunExecutePlanAsync(parsed.Arg ?? throw new InvalidOperationException(
@@ -69,7 +58,6 @@ static ParsedArgs ParseArgs(string[] args)
     string? subcommand = null;
     var generatePlan = false;
     string? arg = null;
-    string? columnsFile = null;
 
     for (var i = 0; i < args.Length; i++)
     {
@@ -82,38 +70,28 @@ static ParsedArgs ParseArgs(string[] args)
                 generatePlan = true;
                 if (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
                     arg = args[++i];
-                if (subcommand == "update" && i + 1 < args.Length && !args[i + 1].StartsWith("--"))
-                    columnsFile = args[++i];
                 break;
             case "--execute-plan":
                 subcommand = "execute-plan";
                 if (i + 1 < args.Length)
                     arg = args[++i];
                 break;
-            default:
-                if (subcommand == "update" && !generatePlan && columnsFile is null
-                    && !args[i].StartsWith("--"))
-                    columnsFile = args[i];
-                break;
         }
     }
 
-    return new ParsedArgs(subcommand, generatePlan, arg, columnsFile);
+    return new ParsedArgs(subcommand, generatePlan, arg);
 }
 
 static void PrintUsage()
 {
     Console.WriteLine("Usage:");
-    Console.WriteLine("  dotnet run -- bootstrap                                       Insert synthetic data directly");
-    Console.WriteLine("  dotnet run -- bootstrap --generate-plan [path]                Generate a plan file without inserting");
-    Console.WriteLine("  dotnet run -- update <columns-file>                           Update existing data directly");
-    Console.WriteLine("  dotnet run -- update --generate-plan [plan-path] <columns-file>  Generate an update plan file");
-    Console.WriteLine("  dotnet run -- --execute-plan <path>                            Execute a previously generated plan");
+    Console.WriteLine("  dotnet run -- bootstrap                          Insert synthetic data directly");
+    Console.WriteLine("  dotnet run -- bootstrap --generate-plan [path]   Generate a plan file without inserting");
+    Console.WriteLine("  dotnet run -- update                             Update existing data directly");
+    Console.WriteLine("  dotnet run -- update --generate-plan [path]      Generate an update plan file");
+    Console.WriteLine("  dotnet run -- --execute-plan <path>              Execute a previously generated plan");
     Console.WriteLine();
-    Console.WriteLine("The <columns-file> is a YAML file listing columns to update per table:");
-    Console.WriteLine("  dbo.Users:");
-    Console.WriteLine("    - FirstName");
-    Console.WriteLine("    - LastName");
+    Console.WriteLine("Tables and columns to include/update are configured in appsettings.yaml (TablesToInclude).");
 }
 
-record ParsedArgs(string? Subcommand, bool GeneratePlan, string? Arg, string? ColumnsFile = null);
+record ParsedArgs(string? Subcommand, bool GeneratePlan, string? Arg);

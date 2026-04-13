@@ -28,7 +28,7 @@ synthetic_data_generator/
 │       ├── Models/
 │       │   ├── TableMetadata.cs         # ColumnInfo, ForeignKeyInfo, TableInfo
 │       │   ├── GenerationPlan.cs        # YAML plan DTOs
-│       │   └── UpdateColumnsSpec.cs     # Update columns YAML file parser
+│       │   └── TableScope.cs           # Scope configuration (tables + columns)
 │       └── Services/
 │           ├── SchemaReader.cs          # Reads DB metadata from sys views
 │           ├── DependencyGraph.cs       # FK graph + topological sort
@@ -38,7 +38,7 @@ synthetic_data_generator/
 └── tests/
     └── SyntheticDataGenerator.Tests/    # xUnit integration tests
         ├── DatabaseFixture.cs           # Creates/drops a LocalDB test database
-        └── IntegrationTests.cs          # 20 integration tests
+        └── IntegrationTests.cs          # Integration tests
 ```
 
 ## Configuration
@@ -61,11 +61,40 @@ Locale: en
 | `ConnectionString` | Yes | — | SQL Server connection string |
 | `DatabaseName` | No | — | Database name; overrides `Initial Catalog` / `Database` in the connection string |
 | `Schema` | No | all schemas | Restrict to a single schema name |
-| `TablesToInclude` | No | `[]` | Only generate data for these tables |
+| `TablesToInclude` | No | `[]` | Tables (and optionally columns) in scope — see below |
 | `TablesToExclude` | No | `[]` | Skip these tables |
-| `RowsPerTable` | No | `100` | Number of rows to insert per table |
+| `RowsPerTable` | No | `100` | Number of rows to insert per table (bootstrap mode) |
 | `Seed` | No | random | Integer seed for reproducible data |
 | `Locale` | No | `en` | Bogus locale for generated data |
+
+### TablesToInclude
+
+`TablesToInclude` controls which tables are in scope and, optionally, which columns within each table. It supports two formats that can be mixed:
+
+**Simple form** — table names only, all columns are in scope:
+
+```yaml
+TablesToInclude:
+  - dbo.Users
+  - dbo.Orders
+```
+
+**Structured form** — with per-table column lists:
+
+```yaml
+TablesToInclude:
+  - Table: dbo.Users
+    Columns:
+      - FirstName
+      - LastName
+      - Email
+  - Table: dbo.Orders
+```
+
+When `Columns` is omitted (or empty), all columns on that table are in scope. When `Columns` is provided, only those columns are targeted. This is used by both `bootstrap` and `update` modes:
+
+- **Bootstrap mode**: columns not listed get `generator: skip` in the plan. All columns still appear in the schema.
+- **Update mode**: only the listed columns are regenerated. Primary key columns are always included automatically (with `generator: skip`) so the tool can identify which rows to update.
 
 ## Usage
 
@@ -79,12 +108,14 @@ The tool requires a subcommand (`bootstrap` or `update`). Running without one pr
 
 ```
 Usage:
-  dotnet run -- bootstrap                                        Insert synthetic data directly
-  dotnet run -- bootstrap --generate-plan [path]                 Generate a plan file without inserting
-  dotnet run -- update <columns-file>                            Update existing data directly
-  dotnet run -- update --generate-plan [plan-path] <columns-file>   Generate an update plan file
-  dotnet run -- --execute-plan <path>                             Execute a previously generated plan
+  dotnet run -- bootstrap                          Insert synthetic data directly
+  dotnet run -- bootstrap --generate-plan [path]   Generate a plan file without inserting
+  dotnet run -- update                             Update existing data directly
+  dotnet run -- update --generate-plan [path]      Generate an update plan file
+  dotnet run -- --execute-plan <path>              Execute a previously generated plan
 ```
+
+Both `bootstrap` and `update` read their scope (which tables and columns) from `appsettings.yaml` via `TablesToInclude`.
 
 ### Bootstrap — Direct Mode
 
@@ -106,22 +137,10 @@ If the output path is omitted it defaults to `plan.yaml`.
 
 ### Update — Direct Mode
 
-Updates existing rows in place with new synthetic data. Requires a YAML columns file that lists which columns to update for each table. Every row in the original table is updated:
+Updates existing rows in place with new synthetic data. The tables and columns to update are configured in `appsettings.yaml` via `TablesToInclude` with per-table `Columns` lists. Every row in each listed table is updated:
 
 ```bash
-dotnet run --project src/SyntheticDataGenerator -- update columns.yaml
-```
-
-The columns file is a YAML file where each top-level key is `schema.tableName` and the value is a list of column names to regenerate:
-
-```yaml
-dbo.Users:
-  - FirstName
-  - LastName
-  - Email
-dbo.Orders:
-  - Status
-  - Amount
+dotnet run --project src/SyntheticDataGenerator -- update
 ```
 
 Under the hood the tool:
@@ -137,10 +156,10 @@ A `plan.yaml` file is also saved after completion.
 Creates a YAML plan file (with `mode: update`) that you can review and edit before executing:
 
 ```bash
-dotnet run --project src/SyntheticDataGenerator -- update --generate-plan plan.yaml columns.yaml
+dotnet run --project src/SyntheticDataGenerator -- update --generate-plan plan.yaml
 ```
 
-The generated plan includes only the PK columns (with `generator: skip`) and the listed update columns (with generators assigned by name heuristics / SQL type). Edit generators or add `valuesFile` entries, then run `--execute-plan`.
+The generated plan includes only the PK columns (with `generator: skip`) and the columns listed in `TablesToInclude` (with generators assigned by name heuristics / SQL type). Edit generators or add `valuesFile` entries, then run `--execute-plan`.
 
 ### Execute Plan
 
@@ -155,7 +174,7 @@ dotnet run --project src/SyntheticDataGenerator -- --execute-plan plan.yaml
 
 ## Plan File Reference
 
-When you run `bootstrap --generate-plan` or `update --generate-plan`, the tool produces a YAML file (`plan.yaml` by default) that fully describes what data will be generated or updated. You can review and edit this file before running `--execute-plan`.
+When you run `--generate-plan` (with either `bootstrap` or `update`), the tool produces a YAML file (`plan.yaml` by default) that fully describes what data will be generated or updated. You can review and edit this file before running `--execute-plan`.
 
 ### Top-level properties
 
