@@ -33,14 +33,18 @@ public class IntegrationTests
         graph.Build(tables);
         var sorted = graph.GetTopologicalOrder();
 
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en");
+
         var valueGen = new ColumnValueGenerator(seed: Seed);
         var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
 
         var results = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var table in sorted)
+        foreach (var tablePlan in plan.Tables.OrderBy(t => t.Order))
         {
-            var inserted = await inserter.InsertTableAsync(table, RowCount);
-            results[table.FullName] = inserted;
+            var staging = await inserter.StageToTempTableAsync(tablePlan);
+            var inserted = await inserter.InsertFromTempTableAsync(staging);
+            results[tablePlan.FullName] = inserted;
         }
 
         return results;
@@ -66,13 +70,22 @@ public class IntegrationTests
 
         var graph = new DependencyGraph();
         graph.Build([table]);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, rowCount, Seed, "en");
 
         var valueGen = new ColumnValueGenerator(seed: Seed);
         var inserter = new DataInserter(
             _fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
 
-        var inserted = await inserter.InsertTableAsync(table, rowCount);
-        return (table, inserted);
+        var totalInserted = 0;
+        foreach (var tablePlan in plan.Tables.OrderBy(t => t.Order))
+        {
+            var staging = await inserter.StageToTempTableAsync(tablePlan);
+            totalInserted += await inserter.InsertFromTempTableAsync(staging);
+        }
+        return (table, totalInserted);
     }
 
     private async Task<(GenerationPlan Plan, List<TableInfo> Tables)> GeneratePlanAsync(
@@ -94,14 +107,28 @@ public class IntegrationTests
 
     private async Task<Dictionary<string, int>> ExecutePlanAsync(GenerationPlan plan)
     {
-        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
-        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
+        var selfRefTables = new HashSet<string>(
+            plan.Tables
+                .Where(t => t.Columns.Any(c =>
+                    c.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase)
+                    && c.GeneratorArgs.TryGetValue("isSelfReferencing", out var sr)
+                    && Helpers.IsTruthy(sr)))
+                .Select(t => t.FullName));
 
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, selfRefTables);
+
+        var isUpdate = plan.Mode.Equals("update", StringComparison.OrdinalIgnoreCase);
         var results = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var tablePlan in plan.Tables.OrderBy(t => t.Order))
         {
-            var inserted = await inserter.InsertTableFromPlanAsync(tablePlan);
-            results[tablePlan.FullName] = inserted;
+            var staging = await inserter.StageToTempTableAsync(tablePlan);
+            int affected;
+            if (isUpdate)
+                affected = await inserter.UpdateFromTempTableAsync(staging);
+            else
+                affected = await inserter.InsertFromTempTableAsync(staging);
+            results[tablePlan.FullName] = affected;
         }
         return results;
     }
@@ -1117,7 +1144,13 @@ public class IntegrationTests
         foreach (var tbl in sorted)
         {
             var rows = tbl.TableName == "TestJuncBridge" ? bridgeRowCount : parentRowCount;
-            await inserter.InsertTableAsync(tbl, rows);
+            var planGen = new PlanGenerator();
+            var tablePlan = planGen.Generate([tbl], graph.SelfReferencingTables, rows, Seed, "en");
+            foreach (var tp in tablePlan.Tables.OrderBy(t => t.Order))
+            {
+                var staging = await inserter.StageToTempTableAsync(tp);
+                await inserter.InsertFromTempTableAsync(staging);
+            }
         }
 
         var count = (int)(await _fixture.ExecuteScalarAsync(
@@ -2332,21 +2365,16 @@ public class IntegrationTests
         Assert.True(parentIdx < childIdx,
             "Parent (referenced) table should be processed before child (FK) table");
 
-        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en", "update", columnScope);
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
         var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
 
-        foreach (var table in sorted)
+        foreach (var tp in plan.Tables.OrderBy(t => t.Order))
         {
-            if (!columnScope.TryGetValue(table.FullName, out var scopedCols))
-                continue;
-            var columnsToUpdate = table.Columns
-                .Where(c => scopedCols.Contains(c.Name))
-                .ToList();
-            var fkGroups = DataGenerationExecutor.BuildUpdateFkGroups(table, columnsToUpdate, columnScope);
-
-            await inserter.UpdateTableAsync(
-                table, columnsToUpdate, fkGroups,
-                col => valueGen.Generate((ColumnInfo)col) ?? DBNull.Value);
+            var staging = await inserter.StageToTempTableAsync(tp);
+            await inserter.UpdateFromTempTableAsync(staging);
         }
 
         var parentCodes = (await _fixture.ExecuteQueryAsync("SELECT Code FROM dbo.TestUpdRefParent"))
@@ -2395,17 +2423,22 @@ public class IntegrationTests
 
         DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
 
-        var table = specTables[0];
-        var columnsToUpdate = table.Columns
-            .Where(c => c.Name.Equals("Name", StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        var graph = new DependencyGraph();
+        graph.Build(specTables, columnScope);
+        var sorted = graph.GetTopologicalOrder();
 
-        var valueGen = new ColumnValueGenerator(seed: 9999);
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, 9999, "en", "update", columnScope);
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
         var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
 
-        var updated = await inserter.UpdateTableAsync(
-            table, columnsToUpdate, [],
-            col => valueGen.Generate((ColumnInfo)col) ?? DBNull.Value);
+        var updated = 0;
+        foreach (var tp in plan.Tables.OrderBy(t => t.Order))
+        {
+            var staging = await inserter.StageToTempTableAsync(tp);
+            updated += await inserter.UpdateFromTempTableAsync(staging);
+        }
         Assert.Equal(RowCount, updated);
 
         var afterRows = await _fixture.ExecuteQueryAsync(
@@ -2457,7 +2490,7 @@ public class IntegrationTests
         var sorted = graph.GetTopologicalOrder();
 
         var planGen = new PlanGenerator();
-        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, 0, Seed, "en", "update", columnScope);
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en", "update", columnScope);
 
         Assert.Equal("update", plan.Mode);
         Assert.Single(plan.Tables);
@@ -2477,8 +2510,8 @@ public class IntegrationTests
 
         foreach (var tp in plan.Tables.OrderBy(t => t.Order))
         {
-            await inserter.UpdateTableFromPlanAsync(
-                tp, col => valueGen.GenerateFromPlan((ColumnPlan)col) ?? DBNull.Value);
+            var staging = await inserter.StageToTempTableAsync(tp);
+            await inserter.UpdateFromTempTableAsync(staging);
         }
 
         var afterRows = await _fixture.ExecuteQueryAsync(
@@ -2524,17 +2557,22 @@ public class IntegrationTests
 
         DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
 
-        var table = specTables[0];
-        var columnsToUpdate = table.Columns
-            .Where(c => c.Name.Equals("Email", StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        var graph = new DependencyGraph();
+        graph.Build(specTables, columnScope);
+        var sorted = graph.GetTopologicalOrder();
 
-        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, 30, Seed, "en", "update", columnScope);
+
+        var valueGen = new ColumnValueGenerator(plan.Seed, plan.Locale);
         var inserter = new DataInserter(_fixture.ConnectionString, valueGen, new HashSet<string>());
 
-        var updated = await inserter.UpdateTableAsync(
-            table, columnsToUpdate, [],
-            col => valueGen.Generate((ColumnInfo)col) ?? DBNull.Value);
+        var updated = 0;
+        foreach (var tp in plan.Tables.OrderBy(t => t.Order))
+        {
+            var staging = await inserter.StageToTempTableAsync(tp);
+            updated += await inserter.UpdateFromTempTableAsync(staging);
+        }
         Assert.Equal(30, updated);
 
         var distinctEmails = (int)(await _fixture.ExecuteScalarAsync(

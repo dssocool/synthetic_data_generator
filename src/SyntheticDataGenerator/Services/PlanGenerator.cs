@@ -58,8 +58,6 @@ public class PlanGenerator
         string mode = "bootstrap",
         Dictionary<string, HashSet<string>>? columnsInScope = null)
     {
-        var isUpdate = mode.Equals("update", StringComparison.OrdinalIgnoreCase);
-
         var plan = new GenerationPlan
         {
             Mode = mode,
@@ -74,11 +72,7 @@ public class PlanGenerator
 
             HashSet<string>? columnSet = null;
             if (columnsInScope is not null)
-            {
                 columnsInScope.TryGetValue(table.FullName, out columnSet);
-                if (columnSet is null && isUpdate)
-                    continue;
-            }
 
             var fkColumnNames = new HashSet<string>(
                 table.ForeignKeys
@@ -90,7 +84,7 @@ public class PlanGenerator
             {
                 Table = table.FullName,
                 Order = i + 1,
-                RowCount = isUpdate ? 0 : defaultRowCount,
+                RowCount = defaultRowCount,
                 Columns = []
             };
 
@@ -116,11 +110,7 @@ public class PlanGenerator
                     IsSequenceDefault = col.IsSequenceDefault,
                 };
 
-                if (isUpdate && col.IsPrimaryKey)
-                {
-                    colPlan.Generator = "skip";
-                }
-                else if (col.IsIdentity || col.IsComputed || col.IsRowVersion || col.IsSequenceDefault)
+                if (col.IsIdentity || col.IsComputed || col.IsRowVersion || col.IsSequenceDefault)
                 {
                     colPlan.Generator = "skip";
                 }

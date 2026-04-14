@@ -21,7 +21,8 @@ public record ValidateScopeResult(
 public record GeneratePlanCommand(
     ValidateScopeResult ValidationResult,
     ScopeConfig Scope,
-    string? OutputPath);
+    string? OutputPath,
+    string Mode = "bootstrap");
 
 public record GeneratePlanResult(
     GenerationPlan Plan,

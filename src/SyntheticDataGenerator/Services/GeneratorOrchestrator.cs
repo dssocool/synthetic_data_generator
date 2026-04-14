@@ -41,7 +41,7 @@ public class GeneratorOrchestrator
         WarnUnsupportedColumns(validateResult.ScopedTables);
 
         var planResult = await _planner.GeneratePlanAsync(
-            new GeneratePlanCommand(validateResult, _scope, outputPath), CancellationToken.None);
+            new GeneratePlanCommand(validateResult, _scope, outputPath, mode), CancellationToken.None);
 
         Console.WriteLine($"Plan generated with {planResult.Plan.Tables.Count} table(s):");
         foreach (var t in planResult.Plan.Tables)
@@ -138,7 +138,7 @@ public class GeneratorOrchestrator
 
         var planOutputPath = "plan.yaml";
         var planResult = await _planner.GeneratePlanAsync(
-            new GeneratePlanCommand(validateResult, _scope, planOutputPath), CancellationToken.None);
+            new GeneratePlanCommand(validateResult, _scope, planOutputPath, mode), CancellationToken.None);
 
         var stopwatch = Stopwatch.StartNew();
         Console.WriteLine(isUpdate ? "Generating data and updating..." : "Generating and inserting data...");

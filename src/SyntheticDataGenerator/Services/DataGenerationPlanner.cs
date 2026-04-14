@@ -68,9 +68,7 @@ public class DataGenerationPlanner : IDataGenerationPlanner
     {
         var validation = command.ValidationResult;
         var scope = command.Scope;
-        var mode = validation.ScopedTables.Count > 0 && validation.Graph != null
-            ? (validation.ColumnScope != null ? "update" : "bootstrap")
-            : "bootstrap";
+        var mode = command.Mode;
 
         var planGen = new PlanGenerator();
         var plan = planGen.Generate(
