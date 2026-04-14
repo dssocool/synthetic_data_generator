@@ -1,5 +1,3 @@
-using SyntheticDataGenerator.Services;
-
 namespace SyntheticDataGenerator.Models;
 
 public record ValidateScopeCommand(
@@ -11,7 +9,7 @@ public record ValidateScopeResult(
     bool IsValid,
     List<string> Errors,
     List<TableInfo> ScopedTables,
-    DependencyGraph? Graph,
+    IReadOnlySet<string>? SelfReferencingTables,
     Dictionary<string, HashSet<string>>? ColumnScope,
     List<ExternalDependency>? ExternalDependencies = null,
     List<CustomDependencyGroup>? CustomDependencies = null)

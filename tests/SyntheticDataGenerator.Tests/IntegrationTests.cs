@@ -2183,24 +2183,10 @@ public class IntegrationTests
             ["dbo.TestUpdPKReject"] = new(["Id"], StringComparer.OrdinalIgnoreCase)
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables));
-            Assert.Contains("primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("Id", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("primary key", output, StringComparison.OrdinalIgnoreCase);
+        var errors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("primary key", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(errors, e => e.Contains("Id"));
     }
 
     // ══════════════════════════════════════════════
@@ -2237,27 +2223,12 @@ public class IntegrationTests
             ["dbo.TestUpdFKChild"] = new(["ParentId"], StringComparer.OrdinalIgnoreCase)
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables));
-            Assert.Contains("FK validation failed", ex.Message);
-            Assert.Contains("TestUpdFKChild", ex.Message);
-            Assert.Contains("ParentId", ex.Message);
-            Assert.Contains("TestUpdFKParent", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("TestUpdFKChild", output);
-        Assert.Contains("ParentId", output);
+        var errors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("FK validation failed"));
+        Assert.Contains(errors, e => e.Contains("TestUpdFKChild"));
+        Assert.Contains(errors, e => e.Contains("ParentId"));
+        Assert.Contains(errors, e => e.Contains("TestUpdFKParent"));
     }
 
     // ══════════════════════════════════════════════
@@ -2295,27 +2266,12 @@ public class IntegrationTests
             ["dbo.TestUpdRevParent"] = new(["Code"], StringComparer.OrdinalIgnoreCase)
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables));
-            Assert.Contains("FK validation failed", ex.Message);
-            Assert.Contains("Code", ex.Message);
-            Assert.Contains("TestUpdRevChild", ex.Message);
-            Assert.Contains("RefCode", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("TestUpdRevChild", output);
-        Assert.Contains("RefCode", output);
+        var errors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("FK validation failed"));
+        Assert.Contains(errors, e => e.Contains("Code"));
+        Assert.Contains(errors, e => e.Contains("TestUpdRevChild"));
+        Assert.Contains(errors, e => e.Contains("RefCode"));
     }
 
     // ══════════════════════════════════════════════
@@ -2354,7 +2310,8 @@ public class IntegrationTests
             ["dbo.TestUpdRefChild"] = new(["RefCode"], StringComparer.OrdinalIgnoreCase)
         };
 
-        DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
+        var validationErrors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.Empty(validationErrors);
 
         var graph = new DependencyGraph();
         graph.Build(specTables, columnScope);
@@ -2421,7 +2378,8 @@ public class IntegrationTests
             ["dbo.TestUpdBasic"] = new(["Name"], StringComparer.OrdinalIgnoreCase)
         };
 
-        DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
+        var validationErrors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.Empty(validationErrors);
 
         var graph = new DependencyGraph();
         graph.Build(specTables, columnScope);
@@ -2483,7 +2441,8 @@ public class IntegrationTests
             ["dbo.TestUpdPlan"] = new(["Label"], StringComparer.OrdinalIgnoreCase)
         };
 
-        DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
+        var validationErrors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.Empty(validationErrors);
 
         var graph = new DependencyGraph();
         graph.Build(specTables, columnScope);
@@ -2555,7 +2514,8 @@ public class IntegrationTests
             ["dbo.TestUpdUnique"] = new(["Email"], StringComparer.OrdinalIgnoreCase)
         };
 
-        DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
+        var validationErrors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.Empty(validationErrors);
 
         var graph = new DependencyGraph();
         graph.Build(specTables, columnScope);
@@ -2594,24 +2554,10 @@ public class IntegrationTests
             new TableScope { Table = "dbo.CompletelyFakeTable" }
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateScope(allTables, scope));
-            Assert.Contains("CompletelyFakeTable", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("CompletelyFakeTable", output);
-        Assert.Contains("does not exist", output);
+        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("CompletelyFakeTable"));
+        Assert.Contains(errors, e => e.Contains("does not exist"));
     }
 
     // ══════════════════════════════════════════════
@@ -2639,25 +2585,10 @@ public class IntegrationTests
             }
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateScope(allTables, scope));
-            Assert.Contains("NonExistentColumn", ex.Message);
-            Assert.Contains("TestScopeCol", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("NonExistentColumn", output);
-        Assert.Contains("TestScopeCol", output);
+        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("NonExistentColumn"));
+        Assert.Contains(errors, e => e.Contains("TestScopeCol"));
     }
 
     // ══════════════════════════════════════════════
@@ -2682,23 +2613,9 @@ public class IntegrationTests
             new TableScope { Table = "dbo.TotallyBogusTable" }
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateScope(allTables, scope));
-            Assert.Contains("TotallyBogusTable", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("TotallyBogusTable", output);
+        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("TotallyBogusTable"));
     }
 
     // ══════════════════════════════════════════════
@@ -2727,24 +2644,10 @@ public class IntegrationTests
             }
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateScope(allTables, scope));
-            Assert.Contains("FakeColumn", ex.Message);
-            Assert.Contains("TestScopeMixCol", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("FakeColumn", output);
+        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("FakeColumn"));
+        Assert.Contains(errors, e => e.Contains("TestScopeMixCol"));
     }
 
     // ══════════════════════════════════════════════
@@ -2768,7 +2671,7 @@ public class IntegrationTests
         {
             new TableScope { Table = "dbo.TestScopeValid" }
         };
-        DataGenerationPlanner.ValidateScope(allTables, scopeTableOnly);
+        Assert.Empty(DataGenerationPlanner.CollectScopeErrors(allTables, scopeTableOnly));
 
         var scopeWithColumns = new[]
         {
@@ -2778,13 +2681,13 @@ public class IntegrationTests
                 Columns = ["Name", "Email"]
             }
         };
-        DataGenerationPlanner.ValidateScope(allTables, scopeWithColumns);
+        Assert.Empty(DataGenerationPlanner.CollectScopeErrors(allTables, scopeWithColumns));
 
         var scopeShortName = new[]
         {
             new TableScope { Table = "TestScopeValid" }
         };
-        DataGenerationPlanner.ValidateScope(allTables, scopeShortName);
+        Assert.Empty(DataGenerationPlanner.CollectScopeErrors(allTables, scopeShortName));
     }
 
     // ══════════════════════════════════════════════

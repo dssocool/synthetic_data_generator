@@ -1,6 +1,6 @@
 namespace SyntheticDataGenerator.Models;
 
-public class ColumnFailureDetail
+public class ColumnFailureDetail : IColumnMetadata
 {
     public string ColumnName { get; init; } = string.Empty;
     public string SqlType { get; init; } = string.Empty;
@@ -10,6 +10,16 @@ public class ColumnFailureDetail
     public string Generator { get; init; } = string.Empty;
     public string? GeneratedValueType { get; init; }
     public string? GeneratedValuePreview { get; init; }
+
+    string IColumnMetadata.Name => ColumnName;
+    bool IColumnMetadata.IsNullable => false;
+    bool IColumnMetadata.IsPrimaryKey => false;
+    bool IColumnMetadata.IsIdentity => false;
+    bool IColumnMetadata.IsComputed => false;
+    bool IColumnMetadata.IsRowVersion => false;
+    bool IColumnMetadata.IsUnique => false;
+    bool IColumnMetadata.IsSequenceDefault => false;
+    bool IColumnMetadata.HasDefault => false;
 }
 
 public class DataGenerationException : Exception
