@@ -23,7 +23,9 @@ var scope = new ScopeConfig(
     seed: int.TryParse(config["Seed"], out var s) ? s : null,
     locale: config["Locale"] ?? "en");
 
-var orchestrator = new GeneratorOrchestrator(connectionString, scope);
+var planner = new DataGenerationPlanner();
+var executor = new DataGenerationExecutor();
+var orchestrator = new GeneratorOrchestrator(connectionString, scope, planner, executor);
 
 var parsed = ParseArgs(args);
 

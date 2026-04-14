@@ -2156,7 +2156,7 @@ public class IntegrationTests
         try
         {
             var ex = Assert.Throws<InvalidOperationException>(
-                () => GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables));
+                () => DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables));
             Assert.Contains("primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("Id", ex.Message);
         }
@@ -2210,7 +2210,7 @@ public class IntegrationTests
         try
         {
             var ex = Assert.Throws<InvalidOperationException>(
-                () => GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables));
+                () => DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables));
             Assert.Contains("FK validation failed", ex.Message);
             Assert.Contains("TestUpdFKChild", ex.Message);
             Assert.Contains("ParentId", ex.Message);
@@ -2268,7 +2268,7 @@ public class IntegrationTests
         try
         {
             var ex = Assert.Throws<InvalidOperationException>(
-                () => GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables));
+                () => DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables));
             Assert.Contains("FK validation failed", ex.Message);
             Assert.Contains("Code", ex.Message);
             Assert.Contains("TestUpdRevChild", ex.Message);
@@ -2321,7 +2321,7 @@ public class IntegrationTests
             ["dbo.TestUpdRefChild"] = new(["RefCode"], StringComparer.OrdinalIgnoreCase)
         };
 
-        GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables);
+        DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
 
         var graph = new DependencyGraph();
         graph.Build(specTables, columnScope);
@@ -2342,7 +2342,7 @@ public class IntegrationTests
             var columnsToUpdate = table.Columns
                 .Where(c => scopedCols.Contains(c.Name))
                 .ToList();
-            var fkGroups = GeneratorOrchestrator.BuildUpdateFkGroups(table, columnsToUpdate, columnScope);
+            var fkGroups = DataGenerationExecutor.BuildUpdateFkGroups(table, columnsToUpdate, columnScope);
 
             await inserter.UpdateTableAsync(
                 table, columnsToUpdate, fkGroups,
@@ -2393,7 +2393,7 @@ public class IntegrationTests
             ["dbo.TestUpdBasic"] = new(["Name"], StringComparer.OrdinalIgnoreCase)
         };
 
-        GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables);
+        DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
 
         var table = specTables[0];
         var columnsToUpdate = table.Columns
@@ -2450,7 +2450,7 @@ public class IntegrationTests
             ["dbo.TestUpdPlan"] = new(["Label"], StringComparer.OrdinalIgnoreCase)
         };
 
-        GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables);
+        DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
 
         var graph = new DependencyGraph();
         graph.Build(specTables, columnScope);
@@ -2522,7 +2522,7 @@ public class IntegrationTests
             ["dbo.TestUpdUnique"] = new(["Email"], StringComparer.OrdinalIgnoreCase)
         };
 
-        GeneratorOrchestrator.ValidateUpdateScope(columnScope, specTables, allTables);
+        DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
 
         var table = specTables[0];
         var columnsToUpdate = table.Columns
@@ -2562,7 +2562,7 @@ public class IntegrationTests
         try
         {
             var ex = Assert.Throws<InvalidOperationException>(
-                () => GeneratorOrchestrator.ValidateScope(allTables, scope));
+                () => DataGenerationPlanner.ValidateScope(allTables, scope));
             Assert.Contains("CompletelyFakeTable", ex.Message);
         }
         finally
@@ -2607,7 +2607,7 @@ public class IntegrationTests
         try
         {
             var ex = Assert.Throws<InvalidOperationException>(
-                () => GeneratorOrchestrator.ValidateScope(allTables, scope));
+                () => DataGenerationPlanner.ValidateScope(allTables, scope));
             Assert.Contains("NonExistentColumn", ex.Message);
             Assert.Contains("TestScopeCol", ex.Message);
         }
@@ -2650,7 +2650,7 @@ public class IntegrationTests
         try
         {
             var ex = Assert.Throws<InvalidOperationException>(
-                () => GeneratorOrchestrator.ValidateScope(allTables, scope));
+                () => DataGenerationPlanner.ValidateScope(allTables, scope));
             Assert.Contains("TotallyBogusTable", ex.Message);
         }
         finally
@@ -2695,7 +2695,7 @@ public class IntegrationTests
         try
         {
             var ex = Assert.Throws<InvalidOperationException>(
-                () => GeneratorOrchestrator.ValidateScope(allTables, scope));
+                () => DataGenerationPlanner.ValidateScope(allTables, scope));
             Assert.Contains("FakeColumn", ex.Message);
             Assert.Contains("TestScopeMixCol", ex.Message);
         }
@@ -2730,7 +2730,7 @@ public class IntegrationTests
         {
             new TableScope { Table = "dbo.TestScopeValid" }
         };
-        GeneratorOrchestrator.ValidateScope(allTables, scopeTableOnly);
+        DataGenerationPlanner.ValidateScope(allTables, scopeTableOnly);
 
         var scopeWithColumns = new[]
         {
@@ -2740,12 +2740,12 @@ public class IntegrationTests
                 Columns = ["Name", "Email"]
             }
         };
-        GeneratorOrchestrator.ValidateScope(allTables, scopeWithColumns);
+        DataGenerationPlanner.ValidateScope(allTables, scopeWithColumns);
 
         var scopeShortName = new[]
         {
             new TableScope { Table = "TestScopeValid" }
         };
-        GeneratorOrchestrator.ValidateScope(allTables, scopeShortName);
+        DataGenerationPlanner.ValidateScope(allTables, scopeShortName);
     }
 }
