@@ -2786,4 +2786,217 @@ public class IntegrationTests
         };
         DataGenerationPlanner.ValidateScope(allTables, scopeShortName);
     }
+
+    // ══════════════════════════════════════════════
+    // 64. Custom Dependency — Linked Values (Identity PK)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test64_CustomDependency_LinkedValues_IdentityPk()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCDSource (
+                SourceId INT IDENTITY(1,1) PRIMARY KEY,
+                Code     NVARCHAR(20) NOT NULL
+            );
+            CREATE TABLE dbo.TestCDDependent (
+                Id       INT IDENTITY(1,1) PRIMARY KEY,
+                CodeRef  NVARCHAR(20) NOT NULL,
+                Name     NVARCHAR(50) NOT NULL
+            );
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables
+            .Where(t => t.TableName is "TestCDSource" or "TestCDDependent")
+            .ToList();
+
+        var customDepGroups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.TestCDSource.Code|dbo.TestCDDependent.CodeRef"]);
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        graph.AddCustomDependencies(customDepGroups);
+        var sorted = graph.GetTopologicalOrder();
+
+        var sourceIdx = sorted.FindIndex(t => t.TableName == "TestCDSource");
+        var depIdx = sorted.FindIndex(t => t.TableName == "TestCDDependent");
+        Assert.True(sourceIdx < depIdx, "Source table must come before dependent");
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en",
+            customDependencies: customDepGroups);
+
+        var depPlan = plan.Tables.First(t => t.TableName == "TestCDDependent");
+        var codeRefCol = depPlan.Columns.First(c => c.Name == "CodeRef");
+        Assert.Equal("customDependency", codeRefCol.Generator);
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        foreach (var tp in plan.Tables.OrderBy(t => t.Order))
+        {
+            var staging = await inserter.StageToTempTableAsync(tp);
+            await inserter.InsertFromTempTableAsync(staging);
+        }
+
+        var sourceCodes = await _fixture.ExecuteQueryAsync(
+            "SELECT DISTINCT Code FROM dbo.TestCDSource");
+        var sourceCodeSet = sourceCodes
+            .Select(r => (string)r["Code"]!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var depRows = await _fixture.ExecuteQueryAsync(
+            "SELECT CodeRef FROM dbo.TestCDDependent");
+
+        Assert.Equal(RowCount, depRows.Count);
+        foreach (var row in depRows)
+        {
+            var codeRef = (string)row["CodeRef"]!;
+            Assert.Contains(codeRef, sourceCodeSet);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 65. Custom Dependency — Linked Values (Non-Identity PK)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test65_CustomDependency_LinkedValues_NonIdentityPk()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCDSource2 (
+                Code INT NOT NULL PRIMARY KEY
+            );
+            CREATE TABLE dbo.TestCDDependent2 (
+                Id      INT IDENTITY(1,1) PRIMARY KEY,
+                CodeRef INT NOT NULL
+            );
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables
+            .Where(t => t.TableName is "TestCDSource2" or "TestCDDependent2")
+            .ToList();
+
+        var customDepGroups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.TestCDSource2.Code|dbo.TestCDDependent2.CodeRef"]);
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        graph.AddCustomDependencies(customDepGroups);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en",
+            customDependencies: customDepGroups);
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        foreach (var tp in plan.Tables.OrderBy(t => t.Order))
+        {
+            var staging = await inserter.StageToTempTableAsync(tp);
+            await inserter.InsertFromTempTableAsync(staging);
+        }
+
+        var sourceCodes = await _fixture.ExecuteQueryAsync(
+            "SELECT DISTINCT Code FROM dbo.TestCDSource2");
+        var sourceCodeSet = sourceCodes
+            .Select(r => (int)r["Code"]!)
+            .ToHashSet();
+
+        var depRows = await _fixture.ExecuteQueryAsync(
+            "SELECT CodeRef FROM dbo.TestCDDependent2");
+
+        Assert.Equal(RowCount, depRows.Count);
+        foreach (var row in depRows)
+        {
+            var codeRef = (int)row["CodeRef"]!;
+            Assert.Contains(codeRef, sourceCodeSet);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 66. Custom Dependency — Auto-Corrects Direction When Source Is Identity
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test66_CustomDependency_AutoCorrectsDirection_IdentitySource()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCDAutoSrc (
+                SrcId INT IDENTITY(1,1) PRIMARY KEY,
+                Label NVARCHAR(20) NOT NULL
+            );
+            CREATE TABLE dbo.TestCDAutoDep (
+                Id      INT IDENTITY(1,1) PRIMARY KEY,
+                SrcRef  INT NOT NULL,
+                Name    NVARCHAR(50) NOT NULL
+            );
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables
+            .Where(t => t.TableName is "TestCDAutoSrc" or "TestCDAutoDep")
+            .ToList();
+
+        // Deliberately write the dependency "backwards": dependent column first, source PK second.
+        // The system should auto-detect that SrcId is identity and swap direction.
+        var customDepGroups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.TestCDAutoDep.SrcRef|dbo.TestCDAutoSrc.SrcId"]);
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        graph.AddCustomDependencies(customDepGroups);
+        var sorted = graph.GetTopologicalOrder();
+
+        var srcIdx = sorted.FindIndex(t => t.TableName == "TestCDAutoSrc");
+        var depIdx = sorted.FindIndex(t => t.TableName == "TestCDAutoDep");
+        Assert.True(srcIdx < depIdx,
+            "Auto-corrected: identity table (TestCDAutoSrc) must come before dependent");
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en",
+            customDependencies: customDepGroups);
+
+        // SrcRef on the dependent table should get customDependency, not SrcId on the source
+        var depPlan = plan.Tables.First(t => t.TableName == "TestCDAutoDep");
+        var srcRefCol = depPlan.Columns.First(c => c.Name == "SrcRef");
+        Assert.Equal("customDependency", srcRefCol.Generator);
+        Assert.Equal("dbo.TestCDAutoSrc", Helpers.GetArgString(srcRefCol.GeneratorArgs, "sourceTable"));
+        Assert.Equal("SrcId", Helpers.GetArgString(srcRefCol.GeneratorArgs, "sourceColumn"));
+
+        var srcPlan = plan.Tables.First(t => t.TableName == "TestCDAutoSrc");
+        var srcIdCol = srcPlan.Columns.First(c => c.Name == "SrcId");
+        Assert.Equal("skip", srcIdCol.Generator);
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        foreach (var tp in plan.Tables.OrderBy(t => t.Order))
+        {
+            var staging = await inserter.StageToTempTableAsync(tp);
+            await inserter.InsertFromTempTableAsync(staging);
+        }
+
+        var sourceIds = await _fixture.ExecuteQueryAsync(
+            "SELECT SrcId FROM dbo.TestCDAutoSrc");
+        var sourceIdSet = sourceIds
+            .Select(r => (int)r["SrcId"]!)
+            .ToHashSet();
+
+        var depRows = await _fixture.ExecuteQueryAsync(
+            "SELECT SrcRef FROM dbo.TestCDAutoDep");
+
+        Assert.Equal(RowCount, depRows.Count);
+        foreach (var row in depRows)
+        {
+            var srcRef = (int)row["SrcRef"]!;
+            Assert.Contains(srcRef, sourceIdSet);
+        }
+    }
 }

@@ -68,7 +68,7 @@ public class PlanGenerator
                 outboundFkKeys.Add($"{dep.ScopedTable}.{dep.ScopedColumn}");
         }
 
-        var customDepLookup = BuildCustomDependencyLookup(customDependencies);
+        var customDepLookup = BuildCustomDependencyLookup(customDependencies, sortedTables);
 
         var plan = new GenerationPlan
         {
@@ -188,31 +188,78 @@ public class PlanGenerator
 
     /// <summary>
     /// Builds a lookup from "schema.table.column" -> source CustomColumnRef for all
-    /// non-source columns in custom dependency groups. The first column in each group is the source.
+    /// dependent columns in custom dependency groups. For two-column groups the
+    /// direction is auto-detected: whichever column is identity/computed/rowversion/
+    /// sequence ("skip") becomes the source that provides values, and the other
+    /// column becomes the dependent that copies from it. When neither or both are
+    /// skip columns, the first column is treated as the source.
     /// </summary>
     private static Dictionary<string, CustomColumnRef> BuildCustomDependencyLookup(
-        List<CustomDependencyGroup>? groups)
+        List<CustomDependencyGroup>? groups,
+        List<TableInfo> sortedTables)
     {
         var lookup = new Dictionary<string, CustomColumnRef>(StringComparer.OrdinalIgnoreCase);
         if (groups is null)
             return lookup;
+
+        var columnLookup = new Dictionary<string, ColumnInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var table in sortedTables)
+        {
+            foreach (var col in table.Columns)
+                columnLookup.TryAdd($"{table.FullName}.{col.Name}", col);
+        }
 
         foreach (var group in groups)
         {
             if (group.Columns.Count < 2)
                 continue;
 
+            if (group.Columns.Count == 2)
+            {
+                var (sourceRef, depRef) = ResolveDirection(
+                    group.Columns[0], group.Columns[1], columnLookup);
+                var depKey = $"{depRef.Table}.{depRef.Column}";
+                lookup.TryAdd(depKey, sourceRef);
+                continue;
+            }
+
             var source = group.Columns[0];
             for (var i = 1; i < group.Columns.Count; i++)
             {
                 var dep = group.Columns[i];
-                var key = $"{dep.Table}.{dep.Column}";
-                lookup.TryAdd(key, source);
+                var depColKey = $"{dep.Table}.{dep.Column}";
+                var depIsSkip = columnLookup.TryGetValue(depColKey, out var depCol)
+                                && IsSkipColumn(depCol);
+                if (depIsSkip)
+                    continue;
+
+                lookup.TryAdd(depColKey, source);
             }
         }
 
         return lookup;
     }
+
+    private static (CustomColumnRef Source, CustomColumnRef Dependent) ResolveDirection(
+        CustomColumnRef first, CustomColumnRef second,
+        Dictionary<string, ColumnInfo> columnLookup)
+    {
+        var firstKey = $"{first.Table}.{first.Column}";
+        var secondKey = $"{second.Table}.{second.Column}";
+
+        var firstIsSkip = columnLookup.TryGetValue(firstKey, out var firstCol)
+                          && IsSkipColumn(firstCol);
+        var secondIsSkip = columnLookup.TryGetValue(secondKey, out var secondCol)
+                           && IsSkipColumn(secondCol);
+
+        if (secondIsSkip && !firstIsSkip)
+            return (second, first);
+
+        return (first, second);
+    }
+
+    private static bool IsSkipColumn(ColumnInfo col) =>
+        col.IsIdentity || col.IsComputed || col.IsRowVersion || col.IsSequenceDefault;
 
     public async Task WritePlanAsync(GenerationPlan plan, string outputPath)
     {
