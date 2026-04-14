@@ -39,6 +39,7 @@ public class GeneratorOrchestrator
         }
 
         WarnUnsupportedColumns(validateResult.ScopedTables);
+        WarnExternalDependencies(validateResult.ExternalDependencies);
 
         var planResult = await _planner.GeneratePlanAsync(
             new GeneratePlanCommand(validateResult, _scope, outputPath, mode), CancellationToken.None);
@@ -88,6 +89,8 @@ public class GeneratorOrchestrator
         }
         Console.WriteLine();
 
+        WarnExternalDependencies(plan.ExternalDependencies);
+
         var stopwatch = Stopwatch.StartNew();
         var result = await _executor.ExecutePlanAsync(
             new ExecutePlanCommand(plan, _connectionString,
@@ -135,6 +138,7 @@ public class GeneratorOrchestrator
         }
 
         WarnUnsupportedColumns(validateResult.ScopedTables);
+        WarnExternalDependencies(validateResult.ExternalDependencies);
 
         var planOutputPath = "plan.yaml";
         var planResult = await _planner.GeneratePlanAsync(
@@ -179,6 +183,32 @@ public class GeneratorOrchestrator
         {
             Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine($"  FATAL: {error}");
+            Console.ResetColor();
+        }
+    }
+
+    internal static void WarnExternalDependencies(List<ExternalDependency>? deps)
+    {
+        if (deps is not { Count: > 0 })
+            return;
+
+        foreach (var dep in deps)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            if (dep.Direction.Equals("outbound", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine(
+                    $"  Warning: [{dep.ScopedTable}].[{dep.ScopedColumn}] -> " +
+                    $"[{dep.ExternalTable}].[{dep.ExternalColumn}] " +
+                    $"(outbound: FK references table outside scope)");
+            }
+            else
+            {
+                Console.WriteLine(
+                    $"  Warning: [{dep.ExternalTable}].[{dep.ExternalColumn}] -> " +
+                    $"[{dep.ScopedTable}].[{dep.ScopedColumn}] " +
+                    $"(inbound: external table references scoped table)");
+            }
             Console.ResetColor();
         }
     }

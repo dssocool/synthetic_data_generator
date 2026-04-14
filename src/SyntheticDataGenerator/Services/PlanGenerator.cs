@@ -56,14 +56,24 @@ public class PlanGenerator
         int? seed,
         string locale = "en",
         string mode = "bootstrap",
-        Dictionary<string, HashSet<string>>? columnsInScope = null)
+        Dictionary<string, HashSet<string>>? columnsInScope = null,
+        List<ExternalDependency>? externalDependencies = null)
     {
+        var outboundFkKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (externalDependencies is not null)
+        {
+            foreach (var dep in externalDependencies.Where(d =>
+                         d.Direction.Equals("outbound", StringComparison.OrdinalIgnoreCase)))
+                outboundFkKeys.Add($"{dep.ScopedTable}.{dep.ScopedColumn}");
+        }
+
         var plan = new GenerationPlan
         {
             Mode = mode,
             Seed = seed,
             Locale = locale,
-            Tables = []
+            Tables = [],
+            ExternalDependencies = externalDependencies is { Count: > 0 } ? externalDependencies : null
         };
 
         for (var i = 0; i < sortedTables.Count; i++)
@@ -119,13 +129,16 @@ public class PlanGenerator
                     var fk = table.ForeignKeys.First(f =>
                         f.ParentColumn.Equals(col.Name, StringComparison.OrdinalIgnoreCase));
 
+                    var isExternal = outboundFkKeys.Contains($"{table.FullName}.{col.Name}");
+
                     colPlan.Generator = "foreignKey";
                     colPlan.GeneratorArgs = new Dictionary<string, object?>
                     {
                         ["referencedTable"] = fk.FullReferencedTableName,
                         ["referencedColumn"] = fk.ReferencedColumn,
                         ["isSelfReferencing"] = fk.IsSelfReferencing,
-                        ["compositeFkGroup"] = fk.FkName
+                        ["compositeFkGroup"] = fk.FkName,
+                        ["isExternal"] = isExternal
                     };
                 }
                 else

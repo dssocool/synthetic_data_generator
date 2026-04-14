@@ -92,7 +92,8 @@ public class DataInserter
                     do
                     {
                         row = BuildRowFromFkGroups(firstPassColumns, fkGroups,
-                            col => _valueGen.GenerateFromPlan((ColumnPlan)col) ?? DBNull.Value);
+                            col => _valueGen.GenerateFromPlan((ColumnPlan)col) ?? DBNull.Value,
+                            tablePlan.RowCount);
                         pkKey = BuildPkKeyFromRow(table, row);
                         uniqueOk = TryAddUniqueKeys(fullName, uniqueConstraints, row, attempt > 0);
                         attempt++;
@@ -170,11 +171,18 @@ public class DataInserter
                 .Where(c => !PlanGenerator.IsUnsupportedType(c))
                 .ToList();
 
-            var tempHasColumn = new HashSet<string>(
-                dataColumns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase);
+            var tempColNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await using (var colCmd = new SqlCommand(
+                $"SELECT name FROM tempdb.sys.columns WHERE object_id = OBJECT_ID('tempdb..{tempTableName}') AND name <> 'Id'",
+                connection, transaction))
+            await using (var colReader = await colCmd.ExecuteReaderAsync())
+            {
+                while (await colReader.ReadAsync())
+                    tempColNames.Add(colReader.GetString(0));
+            }
 
             var insertColumns = dataColumns
-                .Where(c => tempHasColumn.Contains(c.Name))
+                .Where(c => tempColNames.Contains(c.Name))
                 .ToList();
 
             if (table.HasIdentityPk || table.HasSequencePk)
@@ -329,15 +337,21 @@ public class DataInserter
         List<ColumnInfo> dataColumns,
         Dictionary<string, object?> row)
     {
-        if (dataColumns.Count == 0) return;
+        if (dataColumns.Count == 0)
+        {
+            var sql = $"INSERT INTO {tempTableName} DEFAULT VALUES";
+            await using var defaultCmd = new SqlCommand(sql, connection, transaction);
+            await defaultCmd.ExecuteNonQueryAsync();
+            return;
+        }
 
         var cols = dataColumns.Select(c => $"[{c.Name}]");
         var parms = dataColumns.Select(c => $"@{c.Name}");
 
-        var sql = $"INSERT INTO {tempTableName} ({string.Join(", ", cols)}) " +
-                  $"VALUES ({string.Join(", ", parms)})";
+        var insertSql = $"INSERT INTO {tempTableName} ({string.Join(", ", cols)}) " +
+                        $"VALUES ({string.Join(", ", parms)})";
 
-        await using var cmd = new SqlCommand(sql, connection, transaction);
+        await using var cmd = new SqlCommand(insertSql, connection, transaction);
 
         foreach (var col in dataColumns)
         {
@@ -449,8 +463,10 @@ public class DataInserter
         var fullName = table.FullName;
         var pkColNames = table.PrimaryKeyColumns;
 
-        var tempRowsSql = $"SELECT [Id], {string.Join(", ", insertColumns.Select(c => $"[{c.Name}]"))} " +
-                          $"FROM {tempTableName} ORDER BY [Id]";
+        var colSelectList = insertColumns.Count > 0
+            ? $"[Id], {string.Join(", ", insertColumns.Select(c => $"[{c.Name}]"))}"
+            : "[Id]";
+        var tempRowsSql = $"SELECT {colSelectList} FROM {tempTableName} ORDER BY [Id]";
 
         var tempRows = new List<(int Id, Dictionary<string, object?> Row)>();
         await using (var cmd = new SqlCommand(tempRowsSql, connection, transaction))
@@ -469,7 +485,7 @@ public class DataInserter
             }
         }
 
-        _generatedKeys[fullName].Clear();
+        var newKeys = new List<Dictionary<string, object>>();
 
         foreach (var (tempId, row) in tempRows)
         {
@@ -510,26 +526,35 @@ public class DataInserter
                 insertCmd.Parameters.Add(param);
             }
 
-            await using var outputReader = await insertCmd.ExecuteReaderAsync();
-            if (await outputReader.ReadAsync())
+            try
             {
-                var pkValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-                for (var idx = 0; idx < pkColNames.Count; idx++)
-                    pkValues[pkColNames[idx]] = outputReader.GetValue(idx);
-
-                foreach (var col in insertColumns)
+                await using var outputReader = await insertCmd.ExecuteReaderAsync();
+                if (await outputReader.ReadAsync())
                 {
-                    if (!pkValues.ContainsKey(col.Name)
-                        && row.TryGetValue(col.Name, out var rv)
-                        && rv is not null and not DBNull)
-                    {
-                        pkValues[col.Name] = rv;
-                    }
-                }
+                    var pkValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                    for (var idx = 0; idx < pkColNames.Count; idx++)
+                        pkValues[pkColNames[idx]] = outputReader.GetValue(idx);
 
-                UpdateGeneratedKeyEntry(fullName, tempId - 1, pkValues);
+                    foreach (var col in insertColumns)
+                    {
+                        if (!pkValues.ContainsKey(col.Name)
+                            && row.TryGetValue(col.Name, out var rv)
+                            && rv is not null and not DBNull)
+                        {
+                            pkValues[col.Name] = rv;
+                        }
+                    }
+
+                    newKeys.Add(pkValues);
+                }
+            }
+            catch (Exception ex) when (IsCheckConstraintViolation(ex))
+            {
+                throw new DataGenerationException(fullName, tempId - 1, null, ex);
             }
         }
+
+        _generatedKeys[fullName] = newKeys;
     }
 
     private async Task InsertFromTempBulkAsync(
@@ -559,8 +584,15 @@ public class DataInserter
         var insertSql = $"INSERT INTO [{table.Schema}].[{table.TableName}] ({colList}) " +
                         $"SELECT {colList} FROM {tempTableName} ORDER BY [Id]";
 
-        await using (var cmd = new SqlCommand(insertSql, connection, transaction))
-            await cmd.ExecuteNonQueryAsync();
+        try
+        {
+            await using (var cmd = new SqlCommand(insertSql, connection, transaction))
+                await cmd.ExecuteNonQueryAsync();
+        }
+        catch (Exception ex) when (IsCheckConstraintViolation(ex))
+        {
+            throw new DataGenerationException(table.FullName, 0, null, ex);
+        }
     }
 
     private void BackfillNonIdentityPks(TableInfo table)
@@ -578,16 +610,6 @@ public class DataInserter
         }
 
         _generatedKeys[fullName] = updated;
-    }
-
-    private void UpdateGeneratedKeyEntry(string fullName, int index, Dictionary<string, object> newKeys)
-    {
-        if (!_generatedKeys.TryGetValue(fullName, out var list)) return;
-        if (index < 0 || index >= list.Count) return;
-
-        var existing = list[index];
-        foreach (var kvp in newKeys)
-            existing[kvp.Key] = kvp.Value;
     }
 
     private async Task ApplySelfReferencesFromTempAsync(
@@ -764,7 +786,8 @@ public class DataInserter
 
     private record FkGroup(
         string RefFullName,
-        List<(string ParentColumn, string ReferencedColumn, bool IsNullable)> Columns);
+        List<(string ParentColumn, string ReferencedColumn, bool IsNullable)> Columns,
+        bool IsExternal = false);
 
     private static List<FkGroup> BuildFkGroupsFromPlan<T>(List<T> columns) where T : IColumnMetadata
     {
@@ -779,9 +802,12 @@ public class DataInserter
             {
                 var first = g.First();
                 var refTable = Helpers.GetArgString(first.GeneratorArgs, "referencedTable");
+                var isExternal = first.GeneratorArgs.TryGetValue("isExternal", out var ext)
+                                 && Helpers.IsTruthy(ext);
                 return new FkGroup(
                     refTable,
-                    g.Select(c => (c.Name, Helpers.GetArgString(c.GeneratorArgs, "referencedColumn"), c.IsNullable)).ToList());
+                    g.Select(c => (c.Name, Helpers.GetArgString(c.GeneratorArgs, "referencedColumn"), c.IsNullable)).ToList(),
+                    isExternal);
             })
             .ToList();
     }
@@ -789,10 +815,11 @@ public class DataInserter
     private Dictionary<string, object?> BuildRowFromFkGroups<T>(
         List<T> columns,
         List<FkGroup> fkGroups,
-        Func<IColumnMetadata, object> generateValue) where T : IColumnMetadata
+        Func<IColumnMetadata, object> generateValue,
+        int sampleSize) where T : IColumnMetadata
     {
         var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-        var resolvedFkValues = ResolveFkValues(fkGroups, columns, generateValue);
+        var resolvedFkValues = ResolveFkValues(fkGroups, columns, generateValue, sampleSize);
 
         foreach (var col in columns)
         {
@@ -823,7 +850,8 @@ public class DataInserter
     private Dictionary<string, object?> ResolveFkValues<T>(
         List<FkGroup> fkGroups,
         List<T> columns,
-        Func<IColumnMetadata, object> generateValue) where T : IColumnMetadata
+        Func<IColumnMetadata, object> generateValue,
+        int sampleSize) where T : IColumnMetadata
     {
         var resolved = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
@@ -837,6 +865,30 @@ public class DataInserter
                 {
                     if (parentRow.TryGetValue(referencedColumn, out var value))
                         resolved[parentColumn] = value;
+                }
+            }
+            else if (group.IsExternal)
+            {
+                var loaded = LoadExternalFkRows(group, sampleSize);
+                if (loaded.Count > 0)
+                {
+                    var parentRow = loaded[_random.Next(loaded.Count)];
+                    foreach (var (parentColumn, referencedColumn, _) in group.Columns)
+                    {
+                        if (parentRow.TryGetValue(referencedColumn, out var value))
+                            resolved[parentColumn] = value;
+                    }
+                }
+                else
+                {
+                    foreach (var (parentColumn, _, isNullable) in group.Columns)
+                    {
+                        var col = columns.FirstOrDefault(c =>
+                            c.Name.Equals(parentColumn, StringComparison.OrdinalIgnoreCase));
+                        resolved[parentColumn] = (col is { IsNullable: true } || isNullable)
+                            ? DBNull.Value
+                            : (col != null ? generateValue(col) : DBNull.Value);
+                    }
                 }
             }
             else
@@ -853,6 +905,46 @@ public class DataInserter
         }
 
         return resolved;
+    }
+
+    private List<Dictionary<string, object>> LoadExternalFkRows(FkGroup group, int sampleSize)
+    {
+        if (_generatedKeys.TryGetValue(group.RefFullName, out var cached) && cached.Count > 0)
+            return cached;
+
+        var capped = Math.Clamp(sampleSize, 100, 1000);
+
+        var refColumns = group.Columns.Select(c => c.ReferencedColumn).Distinct().ToList();
+        var dotIdx = group.RefFullName.IndexOf('.');
+        var schema = dotIdx >= 0 ? group.RefFullName[..dotIdx] : "dbo";
+        var tableName = dotIdx >= 0 ? group.RefFullName[(dotIdx + 1)..] : group.RefFullName;
+
+        var colList = string.Join(", ", refColumns.Select(c => $"[{c}]"));
+        var sql = $"SELECT DISTINCT TOP(@SampleSize) {colList} FROM [{schema}].[{tableName}] ORDER BY NEWID()";
+
+        var rows = new List<Dictionary<string, object>>();
+
+        using var connection = new SqlConnection(_connectionString);
+        connection.Open();
+
+        using var cmd = new SqlCommand(sql, connection);
+        cmd.Parameters.AddWithValue("@SampleSize", capped);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var row = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < refColumns.Count; i++)
+            {
+                var val = reader.GetValue(i);
+                if (val is not DBNull)
+                    row[refColumns[i]] = val;
+            }
+            if (row.Count > 0)
+                rows.Add(row);
+        }
+
+        _generatedKeys[group.RefFullName] = rows;
+        return rows;
     }
 
     #endregion

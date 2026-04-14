@@ -51,15 +51,19 @@ public class DataGenerationPlanner : IDataGenerationPlanner
             return ValidateScopeResult.Failure(errors);
         }
 
+        var allTables = await ReadAllTablesAsync(command.ConnectionString, scope.SchemaFilter);
+
         if (isUpdate)
         {
-            var allTables = await ReadAllTablesAsync(command.ConnectionString, scope.SchemaFilter);
             var updateErrors = CollectUpdateScopeErrors(columnScope!, sortedTables, allTables);
             if (updateErrors.Count > 0)
                 return ValidateScopeResult.Failure(updateErrors);
         }
 
-        return new ValidateScopeResult(true, [], sortedTables, graph, columnScope);
+        var externalDeps = CollectExternalDependencies(sortedTables, allTables);
+
+        return new ValidateScopeResult(true, [], sortedTables, graph, columnScope,
+            externalDeps.Count > 0 ? externalDeps : null);
     }
 
     public async Task<GeneratePlanResult> GeneratePlanAsync(
@@ -78,7 +82,8 @@ public class DataGenerationPlanner : IDataGenerationPlanner
             scope.Seed,
             scope.Locale,
             mode,
-            validation.ColumnScope);
+            validation.ColumnScope,
+            validation.ExternalDependencies);
 
         if (command.OutputPath != null)
             await planGen.WritePlanAsync(plan, command.OutputPath);
@@ -226,6 +231,62 @@ public class DataGenerationPlanner : IDataGenerationPlanner
         }
 
         return errors;
+    }
+
+    internal static List<ExternalDependency> CollectExternalDependencies(
+        List<TableInfo> scopedTables,
+        List<TableInfo> allTables)
+    {
+        var scopedSet = new HashSet<string>(
+            scopedTables.Select(t => t.FullName), StringComparer.OrdinalIgnoreCase);
+        var deps = new List<ExternalDependency>();
+
+        foreach (var table in scopedTables)
+        {
+            foreach (var fk in table.ForeignKeys)
+            {
+                if (fk.IsSelfReferencing)
+                    continue;
+                if (scopedSet.Contains(fk.FullReferencedTableName))
+                    continue;
+
+                deps.Add(new ExternalDependency
+                {
+                    FkName = fk.FkName,
+                    Direction = "outbound",
+                    ScopedTable = table.FullName,
+                    ScopedColumn = fk.ParentColumn,
+                    ExternalTable = fk.FullReferencedTableName,
+                    ExternalColumn = fk.ReferencedColumn
+                });
+            }
+        }
+
+        foreach (var table in allTables)
+        {
+            if (scopedSet.Contains(table.FullName))
+                continue;
+
+            foreach (var fk in table.ForeignKeys)
+            {
+                if (fk.IsSelfReferencing)
+                    continue;
+                if (!scopedSet.Contains(fk.FullReferencedTableName))
+                    continue;
+
+                deps.Add(new ExternalDependency
+                {
+                    FkName = fk.FkName,
+                    Direction = "inbound",
+                    ScopedTable = fk.FullReferencedTableName,
+                    ScopedColumn = fk.ReferencedColumn,
+                    ExternalTable = table.FullName,
+                    ExternalColumn = fk.ParentColumn
+                });
+            }
+        }
+
+        return deps;
     }
 
     #region Legacy static methods kept for backward compatibility with tests

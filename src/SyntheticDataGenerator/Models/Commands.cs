@@ -12,7 +12,8 @@ public record ValidateScopeResult(
     List<string> Errors,
     List<TableInfo> ScopedTables,
     DependencyGraph? Graph,
-    Dictionary<string, HashSet<string>>? ColumnScope)
+    Dictionary<string, HashSet<string>>? ColumnScope,
+    List<ExternalDependency>? ExternalDependencies = null)
 {
     public static ValidateScopeResult Failure(List<string> errors) =>
         new(false, errors, [], null, null);

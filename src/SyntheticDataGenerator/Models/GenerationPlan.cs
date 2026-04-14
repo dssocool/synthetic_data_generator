@@ -15,6 +15,9 @@ public class GenerationPlan
 
     [YamlMember(Alias = "tables")]
     public List<TablePlan> Tables { get; set; } = [];
+
+    [YamlMember(Alias = "externalDependencies")]
+    public List<ExternalDependency>? ExternalDependencies { get; set; }
 }
 
 public class TablePlan
@@ -54,6 +57,31 @@ public class UniqueConstraintPlan
 
     [YamlMember(Alias = "filterDefinition")]
     public string? FilterDefinition { get; set; }
+}
+
+public class ExternalDependency
+{
+    [YamlMember(Alias = "fkName")]
+    public string FkName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// "outbound" = scoped table FK references external table.
+    /// "inbound"  = external table FK references scoped table.
+    /// </summary>
+    [YamlMember(Alias = "direction")]
+    public string Direction { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "scopedTable")]
+    public string ScopedTable { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "scopedColumn")]
+    public string ScopedColumn { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "externalTable")]
+    public string ExternalTable { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "externalColumn")]
+    public string ExternalColumn { get; set; } = string.Empty;
 }
 
 public class ColumnPlan : IColumnMetadata
