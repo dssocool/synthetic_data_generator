@@ -563,6 +563,138 @@ public class CustomDependencyTests
         Assert.True(groups[0].IsNullable);
     }
 
+    [Fact]
+    public void ResolveCustomDepValues_CopiesValueFromSourceTable()
+    {
+        var valueGen = new ColumnValueGenerator(seed: 42);
+        var inserter = new DataInserter("unused", valueGen, new HashSet<string>());
+
+        inserter._generatedKeys["dbo.Regions"] =
+        [
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Code"] = 10 },
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Code"] = 20 },
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Code"] = 30 },
+        ];
+
+        var groups = new List<DataInserter.CustomDepGroup>
+        {
+            new("dbo.Regions", "Code", "RegionCode", false)
+        };
+
+        var resolved = inserter.ResolveCustomDepValues(groups);
+
+        Assert.Single(resolved);
+        Assert.True(resolved.ContainsKey("RegionCode"));
+        var value = (int)resolved["RegionCode"]!;
+        Assert.Contains(value, new[] { 10, 20, 30 });
+    }
+
+    [Fact]
+    public void ResolveCustomDepValues_ReturnsEmptyWhenNoSourceData()
+    {
+        var valueGen = new ColumnValueGenerator(seed: 42);
+        var inserter = new DataInserter("unused", valueGen, new HashSet<string>());
+
+        var groups = new List<DataInserter.CustomDepGroup>
+        {
+            new("dbo.Regions", "Code", "RegionCode", false)
+        };
+
+        var resolved = inserter.ResolveCustomDepValues(groups);
+
+        Assert.Empty(resolved);
+    }
+
+    [Fact]
+    public void ResolveCustomDepValues_ReturnsEmptyWhenNullGroups()
+    {
+        var valueGen = new ColumnValueGenerator(seed: 42);
+        var inserter = new DataInserter("unused", valueGen, new HashSet<string>());
+
+        var resolved = inserter.ResolveCustomDepValues(null);
+
+        Assert.Empty(resolved);
+    }
+
+    [Fact]
+    public void ResolveCustomDepValues_MultipleDepsSameSource()
+    {
+        var valueGen = new ColumnValueGenerator(seed: 42);
+        var inserter = new DataInserter("unused", valueGen, new HashSet<string>());
+
+        inserter._generatedKeys["dbo.Lookup"] =
+        [
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Id"] = 5,
+                ["Name"] = "Test"
+            },
+        ];
+
+        var groups = new List<DataInserter.CustomDepGroup>
+        {
+            new("dbo.Lookup", "Id", "LookupId", false),
+            new("dbo.Lookup", "Name", "LookupName", false),
+        };
+
+        var resolved = inserter.ResolveCustomDepValues(groups);
+
+        Assert.Equal(2, resolved.Count);
+        Assert.Equal(5, resolved["LookupId"]);
+        Assert.Equal("Test", resolved["LookupName"]);
+    }
+
+    [Fact]
+    public void ResolveCustomDepValues_AllRowsPickedOverManyIterations()
+    {
+        var valueGen = new ColumnValueGenerator(seed: 42);
+        var inserter = new DataInserter("unused", valueGen, new HashSet<string>());
+
+        inserter._generatedKeys["dbo.Regions"] =
+        [
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Code"] = 1 },
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Code"] = 2 },
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Code"] = 3 },
+        ];
+
+        var groups = new List<DataInserter.CustomDepGroup>
+        {
+            new("dbo.Regions", "Code", "RegionCode", false)
+        };
+
+        var seenValues = new HashSet<int>();
+        for (var i = 0; i < 200; i++)
+        {
+            var resolved = inserter.ResolveCustomDepValues(groups);
+            seenValues.Add((int)resolved["RegionCode"]!);
+        }
+
+        Assert.Contains(1, seenValues);
+        Assert.Contains(2, seenValues);
+        Assert.Contains(3, seenValues);
+    }
+
+    [Fact]
+    public void ResolveCustomDepValues_SkipsColumnNotInSourceRow()
+    {
+        var valueGen = new ColumnValueGenerator(seed: 42);
+        var inserter = new DataInserter("unused", valueGen, new HashSet<string>());
+
+        inserter._generatedKeys["dbo.Regions"] =
+        [
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Id"] = 1 },
+        ];
+
+        var groups = new List<DataInserter.CustomDepGroup>
+        {
+            new("dbo.Regions", "NonExistentColumn", "RegionCode", false)
+        };
+
+        var resolved = inserter.ResolveCustomDepValues(groups);
+
+        Assert.Empty(resolved);
+    }
+
     #endregion
 
     #region YAML round-trip tests

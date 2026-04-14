@@ -13,7 +13,7 @@ public class DataInserter
     private readonly IReadOnlySet<string> _selfReferencingTables;
     private readonly Random _random = new();
 
-    private readonly Dictionary<string, List<Dictionary<string, object>>> _generatedKeys = new();
+    internal readonly Dictionary<string, List<Dictionary<string, object>>> _generatedKeys = new();
     private readonly Dictionary<string, HashSet<string>> _generatedPkSets = new();
     private readonly Dictionary<string, Dictionary<string, HashSet<string>>> _generatedUniqueSets = new();
 
@@ -842,7 +842,7 @@ public class DataInserter
     {
         var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         var resolvedFkValues = ResolveFkValues(fkGroups, columns, generateValue, sampleSize);
-        var resolvedCustomDepValues = ResolveCustomDepValues(customDepGroups, generateValue);
+        var resolvedCustomDepValues = ResolveCustomDepValues(customDepGroups);
 
         foreach (var col in columns)
         {
@@ -882,9 +882,8 @@ public class DataInserter
         return row;
     }
 
-    private Dictionary<string, object?> ResolveCustomDepValues(
-        List<CustomDepGroup>? customDepGroups,
-        Func<IColumnMetadata, object> generateValue)
+    internal Dictionary<string, object?> ResolveCustomDepValues(
+        List<CustomDepGroup>? customDepGroups)
     {
         var resolved = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
