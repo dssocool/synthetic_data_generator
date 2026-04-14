@@ -73,7 +73,7 @@ RowsPerTable: 100
 Seed: 12345
 Locale: en
 CustomDependencies:
-  - dbo.Orders.CustomerId,dbo.Customers.Id
+  - dbo.Orders.CustomerId|dbo.Customers.Id
 ```
 
 | Key | Required | Default | Description |
@@ -118,12 +118,12 @@ When `Columns` is omitted (or empty), all columns on that table are in scope. Wh
 
 ### CustomDependencies
 
-`CustomDependencies` defines ordering relationships between columns that are not expressed through formal foreign keys. Each entry is a comma-separated list of `schema.table.column` references. The first entry is the source (must be inserted first); subsequent entries depend on it.
+`CustomDependencies` defines ordering relationships between columns that are not expressed through formal foreign keys. Each entry is a pipe-separated (`|`) list of `schema.table.column` references. The first entry is the source (must be inserted first); subsequent entries depend on it.
 
 ```yaml
 CustomDependencies:
-  - dbo.Lookup.Code,dbo.Orders.LookupCode
-  - dbo.Categories.Id,dbo.Products.CategoryId,dbo.Inventory.CategoryId
+  - dbo.Lookup.Code|dbo.Orders.LookupCode
+  - dbo.Categories.Id|dbo.Products.CategoryId|dbo.Inventory.CategoryId
 ```
 
 This adds edges to the dependency graph so that topological sort produces a valid insertion order even without FK constraints. At plan generation time, dependent columns are assigned `generator: customDependency` with `sourceTable`/`sourceColumn` arguments.

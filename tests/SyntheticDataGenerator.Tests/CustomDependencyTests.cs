@@ -28,7 +28,7 @@ public class CustomDependencyTests
     [Fact]
     public void ParseCustomDependencies_BasicGroup()
     {
-        var raw = new[] { "dbo.Orders.RegionCode,dbo.Regions.Code,dbo.RegionStats.RegionCode" };
+        var raw = new[] { "dbo.Orders.RegionCode|dbo.Regions.Code|dbo.RegionStats.RegionCode" };
         var groups = ScopeConfig.ParseCustomDependencies(raw);
 
         Assert.Single(groups);
@@ -46,8 +46,8 @@ public class CustomDependencyTests
     {
         var raw = new[]
         {
-            "dbo.Orders.RegionCode,dbo.Regions.Code",
-            "dbo.Products.CategoryName,dbo.Categories.Name"
+            "dbo.Orders.RegionCode|dbo.Regions.Code",
+            "dbo.Products.CategoryName|dbo.Categories.Name"
         };
         var groups = ScopeConfig.ParseCustomDependencies(raw);
 
@@ -61,7 +61,7 @@ public class CustomDependencyTests
     [Fact]
     public void ParseCustomDependencies_SkipsEmptyAndWhitespace()
     {
-        var raw = new[] { "", "  ", "dbo.A.Col1,dbo.B.Col2" };
+        var raw = new[] { "", "  ", "dbo.A.Col1|dbo.B.Col2" };
         var groups = ScopeConfig.ParseCustomDependencies(raw);
 
         Assert.Single(groups);
@@ -77,9 +77,9 @@ public class CustomDependencyTests
     }
 
     [Fact]
-    public void ParseCustomDependencies_HandlesSpacesAroundCommas()
+    public void ParseCustomDependencies_HandlesSpacesAroundPipes()
     {
-        var raw = new[] { "dbo.Orders.Col1 , dbo.Regions.Col2 , dbo.Stats.Col3" };
+        var raw = new[] { "dbo.Orders.Col1 | dbo.Regions.Col2 | dbo.Stats.Col3" };
         var groups = ScopeConfig.ParseCustomDependencies(raw);
 
         Assert.Single(groups);
@@ -108,7 +108,7 @@ public class CustomDependencyTests
             MakeTable("dbo", "Regions", "Code")
         };
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.RegionCode,dbo.Regions.Code"]);
+            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
 
         var errors = DataGenerationPlanner.CollectCustomDependencyErrors(groups, tables);
 
@@ -123,7 +123,7 @@ public class CustomDependencyTests
             MakeTable("dbo", "Orders", "RegionCode")
         };
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.RegionCode,dbo.Regions.Code"]);
+            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
 
         var errors = DataGenerationPlanner.CollectCustomDependencyErrors(groups, tables);
 
@@ -141,7 +141,7 @@ public class CustomDependencyTests
             MakeTable("dbo", "Regions")
         };
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.RegionCode,dbo.Regions.Code"]);
+            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
 
         var errors = DataGenerationPlanner.CollectCustomDependencyErrors(groups, tables);
 
@@ -158,7 +158,7 @@ public class CustomDependencyTests
             MakeTable("dbo", "Orders")
         };
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.RegionCode,dbo.Regions.Code"]);
+            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
 
         var errors = DataGenerationPlanner.CollectCustomDependencyErrors(groups, tables);
 
@@ -179,7 +179,7 @@ public class CustomDependencyTests
         graph.Build([regions, orders]);
 
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
         graph.AddCustomDependencies(groups);
 
         var sorted = graph.GetTopologicalOrder();
@@ -201,7 +201,7 @@ public class CustomDependencyTests
         graph.Build([regions, orders, stats]);
 
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode,dbo.RegionStats.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode|dbo.RegionStats.RegionCode"]);
         graph.AddCustomDependencies(groups);
 
         var sorted = graph.GetTopologicalOrder();
@@ -222,7 +222,7 @@ public class CustomDependencyTests
         graph.Build([orders]);
 
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
         graph.AddCustomDependencies(groups);
 
         var sorted = graph.GetTopologicalOrder();
@@ -239,7 +239,7 @@ public class CustomDependencyTests
         graph.Build([orders]);
 
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.Col1,dbo.Orders.Col2"]);
+            ["dbo.Orders.Col1|dbo.Orders.Col2"]);
         graph.AddCustomDependencies(groups);
 
         var sorted = graph.GetTopologicalOrder();
@@ -257,8 +257,8 @@ public class CustomDependencyTests
 
         var groups = ScopeConfig.ParseCustomDependencies(
         [
-            "dbo.TableA.Col1,dbo.TableB.Col1",
-            "dbo.TableB.Col1,dbo.TableA.Col1"
+            "dbo.TableA.Col1|dbo.TableB.Col1",
+            "dbo.TableB.Col1|dbo.TableA.Col1"
         ]);
         graph.AddCustomDependencies(groups);
 
@@ -291,7 +291,7 @@ public class CustomDependencyTests
         var graph = new DependencyGraph();
         graph.Build([regions, orders]);
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
         graph.AddCustomDependencies(groups);
         var sorted = graph.GetTopologicalOrder();
 
@@ -315,7 +315,7 @@ public class CustomDependencyTests
         var graph = new DependencyGraph();
         graph.Build([regions, orders]);
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
         graph.AddCustomDependencies(groups);
         var sorted = graph.GetTopologicalOrder();
 
@@ -339,7 +339,7 @@ public class CustomDependencyTests
         var graph = new DependencyGraph();
         graph.Build([regions, orders, stats]);
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode,dbo.RegionStats.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode|dbo.RegionStats.RegionCode"]);
         graph.AddCustomDependencies(groups);
         var sorted = graph.GetTopologicalOrder();
 
@@ -386,7 +386,7 @@ public class CustomDependencyTests
         var graph = new DependencyGraph();
         graph.Build([customers, table]);
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Customers.Id,dbo.Orders.CustomerId"]);
+            ["dbo.Customers.Id|dbo.Orders.CustomerId"]);
         graph.AddCustomDependencies(groups);
         var sorted = graph.GetTopologicalOrder();
 
@@ -405,7 +405,7 @@ public class CustomDependencyTests
         var a = MakeTable("dbo", "TableA", "Col1");
         var b = MakeTable("dbo", "TableB", "Col1");
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.TableA.Col1,dbo.TableB.Col1"]);
+            ["dbo.TableA.Col1|dbo.TableB.Col1"]);
 
         var graph = new DependencyGraph();
         graph.Build([a, b]);
@@ -515,7 +515,7 @@ public class CustomDependencyTests
         var graph = new DependencyGraph();
         graph.Build([regions, orders]);
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
         graph.AddCustomDependencies(groups);
         var sorted = graph.GetTopologicalOrder();
 

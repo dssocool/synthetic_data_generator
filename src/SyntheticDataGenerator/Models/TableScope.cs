@@ -35,7 +35,7 @@ public class ScopeConfig
 
     /// <summary>
     /// Parses CustomDependencies strings into structured groups.
-    /// Each string is "schema.table.col,schema.table2.col2,..." where the first entry is the source.
+    /// Each string is "schema.table.col|schema.table2.col2|..." where the first entry is the source.
     /// </summary>
     public static List<CustomDependencyGroup> ParseCustomDependencies(string[] raw)
     {
@@ -46,7 +46,7 @@ public class ScopeConfig
                 continue;
 
             var refs = new List<CustomColumnRef>();
-            foreach (var part in entry.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            foreach (var part in entry.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 var lastDot = part.LastIndexOf('.');
                 if (lastDot <= 0)
