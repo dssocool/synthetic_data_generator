@@ -8,7 +8,10 @@ A .NET console application that connects to a Microsoft SQL Server database, rea
 - **Automatic dependency ordering** — uses topological sort (Kahn's algorithm) to determine safe insertion order. Self-referencing foreign keys are detected and handled separately.
 - **Smart value generation** — column names are matched against heuristic rules (e.g. `email` → realistic email, `first_name` → realistic first name). When no name rule matches, values are generated based on the SQL data type.
 - **YAML plan workflow** — generate a YAML plan file describing every table and column, review or edit it, then execute it. This gives full control over what data gets inserted.
-- **Table filtering** — optionally restrict generation to a specific schema or an explicit include/exclude list of tables.
+- **Bootstrap and update modes** — insert new synthetic rows (bootstrap) or regenerate values for existing rows in place (update).
+- **External dependency detection** — warns when foreign keys reference tables outside the current scope (outbound) or when external tables reference scoped tables (inbound).
+- **Custom dependency ordering** — define non-FK column relationships so tables are inserted in the right order even without formal foreign keys.
+- **Table and column filtering** — optionally restrict generation to a specific schema, an explicit list of tables, and per-table column lists.
 - **Locale support** — generated data can target different locales (defaults to `en`).
 - **Seeded generation** — supply a seed for reproducible output.
 
@@ -23,22 +26,36 @@ A .NET console application that connects to a Microsoft SQL Server database, rea
 synthetic_data_generator/
 ├── SyntheticDataGenerator.sln
 ├── src/
-│   └── SyntheticDataGenerator/          # Main console application
-│       ├── Program.cs                   # Entry point and CLI argument parsing
+│   └── SyntheticDataGenerator/              # Main console application
+│       ├── Program.cs                       # Entry point and CLI argument parsing
+│       ├── SyntheticDataGenerator.csproj
 │       ├── Models/
-│       │   ├── TableMetadata.cs         # ColumnInfo, ForeignKeyInfo, TableInfo
-│       │   ├── GenerationPlan.cs        # YAML plan DTOs
-│       │   └── TableScope.cs           # Scope configuration (tables + columns)
+│       │   ├── Commands.cs                  # Request/result records for planner and executor
+│       │   ├── DataGenerationException.cs   # Rich error with column-level failure detail
+│       │   ├── GenerationPlan.cs            # YAML plan DTOs (plan, table, column, constraints)
+│       │   ├── TableMetadata.cs             # ColumnInfo, ForeignKeyInfo, TableInfo
+│       │   └── TableScope.cs               # Scope configuration and TablesToInclude parsing
 │       └── Services/
-│           ├── SchemaReader.cs          # Reads DB metadata from sys views
-│           ├── DependencyGraph.cs       # FK graph + topological sort
-│           ├── PlanGenerator.cs         # Builds/writes/reads YAML plans
-│           ├── ColumnValueGenerator.cs  # Executes Bogus generators
-│           └── DataInserter.cs          # INSERT statement generation/execution
+│           ├── ColumnValueGenerator.cs      # Executes Bogus generators per column plan
+│           ├── DataGenerationExecutor.cs    # Orchestrates plan execution (per-table try/catch)
+│           ├── DataGenerationPlanner.cs     # Validates scope and generates plans
+│           ├── DataInserter.cs              # INSERT/UPDATE via temp tables and FK handling
+│           ├── DependencyGraph.cs           # FK + custom dependency graph and topological sort
+│           ├── GeneratorOrchestrator.cs     # Top-level CLI workflows (direct, plan, execute)
+│           ├── Helpers.cs                   # Argument parsing helpers for generator args
+│           ├── IDataGenerationExecutor.cs   # Executor interface
+│           ├── IDataGenerationPlanner.cs    # Planner interface
+│           ├── NameHeuristics.cs            # Column name → generator mapping rules
+│           ├── PlanGenerator.cs             # Builds, writes, and reads YAML plans
+│           └── SchemaReader.cs              # Reads DB metadata from system views
 └── tests/
-    └── SyntheticDataGenerator.Tests/    # xUnit integration tests
-        ├── DatabaseFixture.cs           # Creates/drops a LocalDB test database
-        └── IntegrationTests.cs          # Integration tests
+    └── SyntheticDataGenerator.Tests/        # xUnit test suite
+        ├── SyntheticDataGenerator.Tests.csproj
+        ├── CustomDependencyTests.cs         # Custom dependency parsing and plan tests
+        ├── DatabaseFixture.cs               # Creates/drops a LocalDB test database
+        ├── ExternalDependencyTests.cs       # Outbound/inbound FK dependency tests
+        ├── IntegrationTests.cs              # End-to-end integration tests
+        └── xunit.runner.json
 ```
 
 ## Configuration
@@ -55,6 +72,8 @@ TablesToInclude:
 RowsPerTable: 100
 Seed: 12345
 Locale: en
+CustomDependencies:
+  - dbo.Orders.CustomerId,dbo.Customers.Id
 ```
 
 | Key | Required | Default | Description |
@@ -66,6 +85,7 @@ Locale: en
 | `RowsPerTable` | No | `100` | Number of rows to insert per table (bootstrap mode) |
 | `Seed` | No | random | Integer seed for reproducible data |
 | `Locale` | No | `en` | Bogus locale for generated data |
+| `CustomDependencies` | No | — | Non-FK column relationships for ordering — see below |
 
 ### TablesToInclude
 
@@ -95,6 +115,18 @@ When `Columns` is omitted (or empty), all columns on that table are in scope. Wh
 
 - **Bootstrap mode**: columns not listed get `generator: skip` in the plan. All columns still appear in the schema.
 - **Update mode**: only the listed columns are regenerated. Primary key columns are always included automatically (with `generator: skip`) so the tool can identify which rows to update.
+
+### CustomDependencies
+
+`CustomDependencies` defines ordering relationships between columns that are not expressed through formal foreign keys. Each entry is a comma-separated list of `schema.table.column` references. The first entry is the source (must be inserted first); subsequent entries depend on it.
+
+```yaml
+CustomDependencies:
+  - dbo.Lookup.Code,dbo.Orders.LookupCode
+  - dbo.Categories.Id,dbo.Products.CategoryId,dbo.Inventory.CategoryId
+```
+
+This adds edges to the dependency graph so that topological sort produces a valid insertion order even without FK constraints. At plan generation time, dependent columns are assigned `generator: customDependency` with `sourceTable`/`sourceColumn` arguments.
 
 ## Usage
 
@@ -184,16 +216,18 @@ When you run `--generate-plan` (with either `bootstrap` or `update`), the tool p
 | `seed` | `int?` | Random seed for reproducible output. Remove or set to `null` for random data each run. |
 | `locale` | `string` | Bogus locale code (e.g. `en`, `fr`, `de`, `ja`). Affects names, addresses, etc. |
 | `tables` | `list` | Ordered list of table definitions to generate data for. |
+| `externalDependencies` | `list?` | Foreign keys that cross the scope boundary — outbound (FK references a table outside scope) or inbound (external table references a scoped table). Included for visibility; does not block execution. |
+| `customDependencies` | `list?` | Custom column dependency groups from the configuration. Recorded in the plan for reference. |
 
 ### Table properties
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `schema` | `string` | SQL schema name (e.g. `dbo`). |
-| `table` | `string` | Table name. |
+| `table` | `string` | Schema-qualified table name (e.g. `dbo.Users`). |
 | `order` | `int` | Insertion order. Lower values are inserted first. Tables referenced by foreign keys must have a lower order than the tables that reference them. |
 | `rowCount` | `int` | Number of rows to generate for this table. |
 | `columns` | `list` | Column definitions (see below). |
+| `uniqueConstraints` | `list?` | Unique indexes on this table. Each entry has `name`, `columns` (list of column names), and optional `filterDefinition`. Used during staging to avoid duplicate violations. |
 
 ### Column properties
 
@@ -209,8 +243,11 @@ When you run `--generate-plan` (with either `bootstrap` or `update`), the tool p
 | `isPrimaryKey` | `bool` | Whether the column is part of the primary key. |
 | `isComputed` | `bool` | Whether the column is computed. |
 | `isRowVersion` | `bool` | Whether the column is a `rowversion`/`timestamp` column. |
+| `hasDefault` | `bool` | Whether the column has a default constraint. |
+| `isSequenceDefault` | `bool` | Whether the column's default is a `NEXT VALUE FOR` sequence. |
+| `isUnique` | `bool` | Whether the column participates in a unique index. |
 | `generator` | `string` | The generator to use (see table below). |
-| `generatorArgs` | `map` | Key-value arguments passed to the generator. |
+| `generatorArgs` | `map` | Key-value arguments passed to the generator. Only serialized when non-empty. |
 | `valuesFile` | `string` | Path to a text file (one value per line) to randomly pick values from instead of using a generator. Can be absolute or relative to the plan file. |
 
 ### Generators
@@ -219,8 +256,9 @@ These are the values you can assign to the `generator` field on any column.
 
 | Generator | Description | `generatorArgs` |
 |-----------|-------------|-----------------|
-| `skip` | Do not generate a value (used for identity, computed, and rowversion columns). | — |
+| `skip` | Do not generate a value (used for identity, computed, sequence-default, and rowversion columns). | — |
 | `foreignKey` | Pick a value from the referenced table's primary key. Automatically set for FK columns. | `referencedSchema`, `referencedTable`, `referencedColumn`, `isSelfReferencing`, `compositeFkGroup` |
+| `customDependency` | Marks a column that participates in a custom (non-FK) dependency. | `sourceTable`, `sourceColumn` |
 | `null` | Always inserts NULL. | — |
 | **Name** | | |
 | `Name.FirstName` | Realistic first name. | — |
@@ -258,6 +296,7 @@ These are the values you can assign to the `generator` field on any column.
 | `Random.Float` | Random float. | `min` (default `0`), `max` (default `99999`) |
 | `Random.AlphaNumeric` | Random alphanumeric string. | `length` (default `8`) |
 | `Random.Bytes` | Random byte array. | `count` (default `16`) |
+| `Random.SqlVariant` | Random value of a mixed type (int, string, datetime, double, or decimal). Used for `sql_variant` columns. | — |
 | **Date/Time** | | |
 | `Date.Past` | Random past datetime. | `yearsToGoBack` (default `5`) |
 | `Date.PastDateOnly` | Random past date (no time component). | `yearsToGoBack` (default `5`) |
