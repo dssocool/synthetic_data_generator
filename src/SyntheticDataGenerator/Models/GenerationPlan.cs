@@ -149,6 +149,8 @@ public class ColumnPlan : IColumnMetadata
     [YamlMember(Alias = "generatorArgs")]
     public Dictionary<string, object?> GeneratorArgs { get; set; } = new();
 
+    public bool ShouldSerializeGeneratorArgs() => GeneratorArgs is { Count: > 0 };
+
     [YamlMember(Alias = "valuesFile")]
     public string? ValuesFile { get; set; }
 }

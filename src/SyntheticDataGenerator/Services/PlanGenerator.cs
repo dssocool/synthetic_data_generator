@@ -218,7 +218,7 @@ public class PlanGenerator
     {
         var serializer = new SerializerBuilder()
             .WithNamingConvention(CamelCaseNamingConvention.Instance)
-            .ConfigureDefaultValuesHandling(DefaultValuesHandling.Preserve)
+            .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitDefaults | DefaultValuesHandling.OmitNull)
             .Build();
 
         var yaml = serializer.Serialize(plan);
