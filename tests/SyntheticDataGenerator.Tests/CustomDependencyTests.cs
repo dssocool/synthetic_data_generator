@@ -434,6 +434,137 @@ public class CustomDependencyTests
 
     #endregion
 
+    #region Runtime linking tests
+
+    [Fact]
+    public void ColumnValueGenerator_CustomDependency_ReturnsNull()
+    {
+        var gen = new ColumnValueGenerator(seed: 42);
+        var plan = new ColumnPlan
+        {
+            Name = "RegionCode",
+            SqlType = "int",
+            Generator = "customDependency",
+            GeneratorArgs = new Dictionary<string, object?>
+            {
+                ["sourceTable"] = "dbo.Regions",
+                ["sourceColumn"] = "Code"
+            }
+        };
+
+        var result = gen.GenerateFromPlan(plan);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void BuildCustomDepGroupsFromPlan_ExtractsGroups()
+    {
+        var columns = new List<ColumnPlan>
+        {
+            new()
+            {
+                Name = "Id", SqlType = "int", IsPrimaryKey = true,
+                Generator = "Random.Int"
+            },
+            new()
+            {
+                Name = "RegionCode", SqlType = "int",
+                Generator = "customDependency",
+                GeneratorArgs = new Dictionary<string, object?>
+                {
+                    ["sourceTable"] = "dbo.Regions",
+                    ["sourceColumn"] = "Code"
+                }
+            },
+            new()
+            {
+                Name = "Name", SqlType = "nvarchar", MaxLength = 100,
+                Generator = "Lorem.Word"
+            }
+        };
+
+        var groups = DataInserter.BuildCustomDepGroupsFromPlan(columns);
+
+        Assert.Single(groups);
+        Assert.Equal("dbo.Regions", groups[0].SourceTable);
+        Assert.Equal("Code", groups[0].SourceColumn);
+        Assert.Equal("RegionCode", groups[0].DependentColumn);
+    }
+
+    [Fact]
+    public void BuildCustomDepGroupsFromPlan_EmptyWhenNoCustomDeps()
+    {
+        var columns = new List<ColumnPlan>
+        {
+            new() { Name = "Id", SqlType = "int", Generator = "Random.Int" },
+            new() { Name = "Name", SqlType = "nvarchar", MaxLength = 100, Generator = "Lorem.Word" }
+        };
+
+        var groups = DataInserter.BuildCustomDepGroupsFromPlan(columns);
+
+        Assert.Empty(groups);
+    }
+
+    [Fact]
+    public void BuildCustomDepGroupsFromPlan_MultipleCustomDeps()
+    {
+        var columns = new List<ColumnPlan>
+        {
+            new()
+            {
+                Name = "RegionCode", SqlType = "int",
+                Generator = "customDependency",
+                GeneratorArgs = new Dictionary<string, object?>
+                {
+                    ["sourceTable"] = "dbo.Regions",
+                    ["sourceColumn"] = "Code"
+                }
+            },
+            new()
+            {
+                Name = "CategoryId", SqlType = "int",
+                Generator = "customDependency",
+                GeneratorArgs = new Dictionary<string, object?>
+                {
+                    ["sourceTable"] = "dbo.Categories",
+                    ["sourceColumn"] = "Id"
+                }
+            }
+        };
+
+        var groups = DataInserter.BuildCustomDepGroupsFromPlan(columns);
+
+        Assert.Equal(2, groups.Count);
+        Assert.Equal("dbo.Regions", groups[0].SourceTable);
+        Assert.Equal("dbo.Categories", groups[1].SourceTable);
+    }
+
+    [Fact]
+    public void BuildCustomDepGroupsFromPlan_PreservesNullability()
+    {
+        var columns = new List<ColumnPlan>
+        {
+            new()
+            {
+                Name = "RegionCode", SqlType = "int", IsNullable = true,
+                Generator = "customDependency",
+                GeneratorArgs = new Dictionary<string, object?>
+                {
+                    ["sourceTable"] = "dbo.Regions",
+                    ["sourceColumn"] = "Code"
+                }
+            }
+        };
+
+        var groups = DataInserter.BuildCustomDepGroupsFromPlan(columns);
+
+        Assert.Single(groups);
+        Assert.True(groups[0].IsNullable);
+    }
+
+    #endregion
+
     #region YAML round-trip tests
 
     [Fact]

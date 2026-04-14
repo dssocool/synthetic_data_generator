@@ -65,6 +65,7 @@ public class DataInserter
 
         var uniqueConstraints = BuildUniqueConstraintsFromPlan(tablePlan);
         var fkGroups = BuildFkGroupsFromPlan(firstPassColumns);
+        var customDepGroups = BuildCustomDepGroupsFromPlan(firstPassColumns);
 
         _generatedKeys.TryAdd(fullName, []);
         _generatedPkSets.TryAdd(fullName, []);
@@ -93,7 +94,8 @@ public class DataInserter
                     {
                         row = BuildRowFromFkGroups(firstPassColumns, fkGroups,
                             col => _valueGen.GenerateFromPlan((ColumnPlan)col) ?? DBNull.Value,
-                            tablePlan.RowCount);
+                            tablePlan.RowCount,
+                            customDepGroups);
                         pkKey = BuildPkKeyFromRow(table, row);
                         uniqueOk = TryAddUniqueKeys(fullName, uniqueConstraints, row, attempt > 0);
                         attempt++;
@@ -789,6 +791,12 @@ public class DataInserter
         List<(string ParentColumn, string ReferencedColumn, bool IsNullable)> Columns,
         bool IsExternal = false);
 
+    internal record CustomDepGroup(
+        string SourceTable,
+        string SourceColumn,
+        string DependentColumn,
+        bool IsNullable);
+
     private static List<FkGroup> BuildFkGroupsFromPlan<T>(List<T> columns) where T : IColumnMetadata
     {
         var fkColumns = columns
@@ -812,14 +820,29 @@ public class DataInserter
             .ToList();
     }
 
+    internal static List<CustomDepGroup> BuildCustomDepGroupsFromPlan<T>(List<T> columns) where T : IColumnMetadata
+    {
+        return columns
+            .OfType<ColumnPlan>()
+            .Where(c => c.Generator.Equals("customDependency", StringComparison.OrdinalIgnoreCase))
+            .Select(c => new CustomDepGroup(
+                Helpers.GetArgString(c.GeneratorArgs, "sourceTable"),
+                Helpers.GetArgString(c.GeneratorArgs, "sourceColumn"),
+                c.Name,
+                c.IsNullable))
+            .ToList();
+    }
+
     private Dictionary<string, object?> BuildRowFromFkGroups<T>(
         List<T> columns,
         List<FkGroup> fkGroups,
         Func<IColumnMetadata, object> generateValue,
-        int sampleSize) where T : IColumnMetadata
+        int sampleSize,
+        List<CustomDepGroup>? customDepGroups = null) where T : IColumnMetadata
     {
         var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
         var resolvedFkValues = ResolveFkValues(fkGroups, columns, generateValue, sampleSize);
+        var resolvedCustomDepValues = ResolveCustomDepValues(customDepGroups, generateValue);
 
         foreach (var col in columns)
         {
@@ -829,7 +852,19 @@ public class DataInserter
                 continue;
             }
 
+            if (resolvedCustomDepValues.TryGetValue(col.Name, out var cdValue))
+            {
+                row[col.Name] = cdValue;
+                continue;
+            }
+
             if (col is ColumnPlan cp && cp.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase))
+            {
+                row[col.Name] = col.IsNullable ? DBNull.Value : generateValue(col);
+                continue;
+            }
+
+            if (col is ColumnPlan cp2 && cp2.Generator.Equals("customDependency", StringComparison.OrdinalIgnoreCase))
             {
                 row[col.Name] = col.IsNullable ? DBNull.Value : generateValue(col);
                 continue;
@@ -845,6 +880,28 @@ public class DataInserter
         }
 
         return row;
+    }
+
+    private Dictionary<string, object?> ResolveCustomDepValues(
+        List<CustomDepGroup>? customDepGroups,
+        Func<IColumnMetadata, object> generateValue)
+    {
+        var resolved = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+
+        if (customDepGroups is null or { Count: 0 })
+            return resolved;
+
+        foreach (var dep in customDepGroups)
+        {
+            if (_generatedKeys.TryGetValue(dep.SourceTable, out var sourceRows) && sourceRows.Count > 0)
+            {
+                var sourceRow = sourceRows[_random.Next(sourceRows.Count)];
+                if (sourceRow.TryGetValue(dep.SourceColumn, out var value))
+                    resolved[dep.DependentColumn] = value;
+            }
+        }
+
+        return resolved;
     }
 
     private Dictionary<string, object?> ResolveFkValues<T>(
