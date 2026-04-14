@@ -51,6 +51,40 @@ public class DependencyGraph
     }
 
     /// <summary>
+    /// Adds directed edges for custom (business-logic) column dependencies.
+    /// The first column reference in each group is the source; subsequent tables depend on it.
+    /// Only adds edges for tables that are already in the graph (in scope).
+    /// </summary>
+    public void AddCustomDependencies(List<CustomDependencyGroup>? groups)
+    {
+        if (groups is null or { Count: 0 })
+            return;
+
+        foreach (var group in groups)
+        {
+            if (group.Columns.Count < 2)
+                continue;
+
+            var sourceTable = group.Columns[0].Table;
+            if (!_adjacency.ContainsKey(sourceTable))
+                continue;
+
+            for (var i = 1; i < group.Columns.Count; i++)
+            {
+                var depTable = group.Columns[i].Table;
+                if (!_adjacency.ContainsKey(depTable))
+                    continue;
+
+                if (string.Equals(sourceTable, depTable, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (_adjacency[sourceTable].Add(depTable))
+                    _inDegree[depTable]++;
+            }
+        }
+    }
+
+    /// <summary>
     /// Returns tables in topological order using Kahn's algorithm.
     /// Tables with no FK dependencies come first.
     /// </summary>

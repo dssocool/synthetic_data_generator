@@ -18,6 +18,9 @@ public class GenerationPlan
 
     [YamlMember(Alias = "externalDependencies")]
     public List<ExternalDependency>? ExternalDependencies { get; set; }
+
+    [YamlMember(Alias = "customDependencies")]
+    public List<CustomDependencyGroup>? CustomDependencies { get; set; }
 }
 
 public class TablePlan
@@ -82,6 +85,21 @@ public class ExternalDependency
 
     [YamlMember(Alias = "externalColumn")]
     public string ExternalColumn { get; set; } = string.Empty;
+}
+
+public class CustomDependencyGroup
+{
+    [YamlMember(Alias = "columns")]
+    public List<CustomColumnRef> Columns { get; set; } = [];
+}
+
+public class CustomColumnRef
+{
+    [YamlMember(Alias = "table")]
+    public string Table { get; set; } = string.Empty;
+
+    [YamlMember(Alias = "column")]
+    public string Column { get; set; } = string.Empty;
 }
 
 public class ColumnPlan : IColumnMetadata

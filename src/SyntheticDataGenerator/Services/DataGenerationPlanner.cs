@@ -37,8 +37,15 @@ public class DataGenerationPlanner : IDataGenerationPlanner
             return ValidateScopeResult.Failure(errors);
         }
 
+        var customDepGroups = ScopeConfig.ParseCustomDependencies(scope.CustomDependencies);
+
+        var customDepErrors = CollectCustomDependencyErrors(customDepGroups, tables);
+        if (customDepErrors.Count > 0)
+            return ValidateScopeResult.Failure(customDepErrors);
+
         var graph = new DependencyGraph();
         graph.Build(tables, columnScope);
+        graph.AddCustomDependencies(customDepGroups);
 
         List<TableInfo> sortedTables;
         try
@@ -63,7 +70,8 @@ public class DataGenerationPlanner : IDataGenerationPlanner
         var externalDeps = CollectExternalDependencies(sortedTables, allTables);
 
         return new ValidateScopeResult(true, [], sortedTables, graph, columnScope,
-            externalDeps.Count > 0 ? externalDeps : null);
+            externalDeps.Count > 0 ? externalDeps : null,
+            customDepGroups.Count > 0 ? customDepGroups : null);
     }
 
     public async Task<GeneratePlanResult> GeneratePlanAsync(
@@ -83,7 +91,8 @@ public class DataGenerationPlanner : IDataGenerationPlanner
             scope.Locale,
             mode,
             validation.ColumnScope,
-            validation.ExternalDependencies);
+            validation.ExternalDependencies,
+            validation.CustomDependencies);
 
         if (command.OutputPath != null)
             await planGen.WritePlanAsync(plan, command.OutputPath);
@@ -227,6 +236,35 @@ public class DataGenerationPlanner : IDataGenerationPlanner
                         $"FK validation failed: [{fk.FullReferencedTableName}].[{fk.ReferencedColumn}] is referenced by " +
                         $"[{fk.FullParentTableName}].[{fk.ParentColumn}] which is not in the update list.");
                 }
+            }
+        }
+
+        return errors;
+    }
+
+    internal static List<string> CollectCustomDependencyErrors(
+        List<CustomDependencyGroup> groups,
+        List<TableInfo> scopedTables)
+    {
+        var errors = new List<string>();
+        var tableByFullName = new Dictionary<string, TableInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in scopedTables)
+            tableByFullName.TryAdd(t.FullName, t);
+
+        foreach (var group in groups)
+        {
+            foreach (var colRef in group.Columns)
+            {
+                if (!tableByFullName.TryGetValue(colRef.Table, out var table))
+                {
+                    errors.Add($"Custom dependency references table [{colRef.Table}] which is not in scope.");
+                    continue;
+                }
+
+                var hasColumn = table.Columns.Any(c =>
+                    c.Name.Equals(colRef.Column, StringComparison.OrdinalIgnoreCase));
+                if (!hasColumn)
+                    errors.Add($"Custom dependency references column [{colRef.Column}] which does not exist in table [{colRef.Table}].");
             }
         }
 

@@ -15,19 +15,51 @@ public class ScopeConfig
     public int RowsPerTable { get; }
     public int? Seed { get; }
     public string Locale { get; }
+    public string[] CustomDependencies { get; }
 
     public ScopeConfig(
         string? schemaFilter,
         TableScope[] tablesToInclude,
         int rowsPerTable,
         int? seed,
-        string locale)
+        string locale,
+        string[]? customDependencies = null)
     {
         SchemaFilter = schemaFilter;
         TablesToInclude = tablesToInclude;
         RowsPerTable = rowsPerTable;
         Seed = seed;
         Locale = locale;
+        CustomDependencies = customDependencies ?? [];
+    }
+
+    /// <summary>
+    /// Parses CustomDependencies strings into structured groups.
+    /// Each string is "schema.table.col,schema.table2.col2,..." where the first entry is the source.
+    /// </summary>
+    public static List<CustomDependencyGroup> ParseCustomDependencies(string[] raw)
+    {
+        var groups = new List<CustomDependencyGroup>();
+        foreach (var entry in raw)
+        {
+            if (string.IsNullOrWhiteSpace(entry))
+                continue;
+
+            var refs = new List<CustomColumnRef>();
+            foreach (var part in entry.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var lastDot = part.LastIndexOf('.');
+                if (lastDot <= 0)
+                    continue;
+                var table = part[..lastDot];
+                var column = part[(lastDot + 1)..];
+                refs.Add(new CustomColumnRef { Table = table, Column = column });
+            }
+
+            if (refs.Count >= 2)
+                groups.Add(new CustomDependencyGroup { Columns = refs });
+        }
+        return groups;
     }
 
     /// <summary>

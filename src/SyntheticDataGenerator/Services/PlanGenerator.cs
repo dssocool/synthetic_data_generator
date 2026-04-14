@@ -57,7 +57,8 @@ public class PlanGenerator
         string locale = "en",
         string mode = "bootstrap",
         Dictionary<string, HashSet<string>>? columnsInScope = null,
-        List<ExternalDependency>? externalDependencies = null)
+        List<ExternalDependency>? externalDependencies = null,
+        List<CustomDependencyGroup>? customDependencies = null)
     {
         var outboundFkKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (externalDependencies is not null)
@@ -67,13 +68,16 @@ public class PlanGenerator
                 outboundFkKeys.Add($"{dep.ScopedTable}.{dep.ScopedColumn}");
         }
 
+        var customDepLookup = BuildCustomDependencyLookup(customDependencies);
+
         var plan = new GenerationPlan
         {
             Mode = mode,
             Seed = seed,
             Locale = locale,
             Tables = [],
-            ExternalDependencies = externalDependencies is { Count: > 0 } ? externalDependencies : null
+            ExternalDependencies = externalDependencies is { Count: > 0 } ? externalDependencies : null,
+            CustomDependencies = customDependencies is { Count: > 0 } ? customDependencies : null
         };
 
         for (var i = 0; i < sortedTables.Count; i++)
@@ -141,6 +145,15 @@ public class PlanGenerator
                         ["isExternal"] = isExternal
                     };
                 }
+                else if (customDepLookup.TryGetValue($"{table.FullName}.{col.Name}", out var source))
+                {
+                    colPlan.Generator = "customDependency";
+                    colPlan.GeneratorArgs = new Dictionary<string, object?>
+                    {
+                        ["sourceTable"] = source.Table,
+                        ["sourceColumn"] = source.Column
+                    };
+                }
                 else
                 {
                     ResolveGenerator(col, colPlan);
@@ -171,6 +184,34 @@ public class PlanGenerator
         }
 
         return plan;
+    }
+
+    /// <summary>
+    /// Builds a lookup from "schema.table.column" -> source CustomColumnRef for all
+    /// non-source columns in custom dependency groups. The first column in each group is the source.
+    /// </summary>
+    private static Dictionary<string, CustomColumnRef> BuildCustomDependencyLookup(
+        List<CustomDependencyGroup>? groups)
+    {
+        var lookup = new Dictionary<string, CustomColumnRef>(StringComparer.OrdinalIgnoreCase);
+        if (groups is null)
+            return lookup;
+
+        foreach (var group in groups)
+        {
+            if (group.Columns.Count < 2)
+                continue;
+
+            var source = group.Columns[0];
+            for (var i = 1; i < group.Columns.Count; i++)
+            {
+                var dep = group.Columns[i];
+                var key = $"{dep.Table}.{dep.Column}";
+                lookup.TryAdd(key, source);
+            }
+        }
+
+        return lookup;
     }
 
     public async Task WritePlanAsync(GenerationPlan plan, string outputPath)

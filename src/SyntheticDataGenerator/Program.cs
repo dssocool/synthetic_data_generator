@@ -21,7 +21,8 @@ var scope = new ScopeConfig(
     tablesToInclude: ScopeConfig.ParseTablesToInclude(config.GetSection("TablesToInclude")),
     rowsPerTable: int.TryParse(config["RowsPerTable"], out var r) ? r : 100,
     seed: int.TryParse(config["Seed"], out var s) ? s : null,
-    locale: config["Locale"] ?? "en");
+    locale: config["Locale"] ?? "en",
+    customDependencies: config.GetSection("CustomDependencies").Get<string[]>());
 
 var planner = new DataGenerationPlanner();
 var executor = new DataGenerationExecutor();

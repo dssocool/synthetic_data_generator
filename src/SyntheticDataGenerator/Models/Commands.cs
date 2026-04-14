@@ -13,7 +13,8 @@ public record ValidateScopeResult(
     List<TableInfo> ScopedTables,
     DependencyGraph? Graph,
     Dictionary<string, HashSet<string>>? ColumnScope,
-    List<ExternalDependency>? ExternalDependencies = null)
+    List<ExternalDependency>? ExternalDependencies = null,
+    List<CustomDependencyGroup>? CustomDependencies = null)
 {
     public static ValidateScopeResult Failure(List<string> errors) =>
         new(false, errors, [], null, null);
