@@ -139,15 +139,20 @@ public class DataInserter
     /// Bootstrap mode: insert generated rows into the target table.
     /// For non-identity, non-self-ref tables, SqlBulkCopy goes directly to the target.
     /// For identity/sequence PK or self-ref tables, stages via a temp table first.
+    /// When <paramref name="sharedConnection"/> is provided, it is reused and NOT disposed
+    /// by this method; the caller owns its lifetime.
     /// </summary>
-    public async Task<int> InsertGeneratedRowsAsync(GenerationResult gen)
+    public async Task<int> InsertGeneratedRowsAsync(
+        GenerationResult gen, SqlConnection? sharedConnection = null)
     {
         var table = gen.Table;
         var fullName = table.FullName;
         var needsTempTable = table.HasIdentityPk || table.HasSequencePk || gen.IsSelfRef;
 
-        var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync();
+        var ownsConnection = sharedConnection is null;
+        var connection = sharedConnection ?? new SqlConnection(_connectionString);
+        if (connection.State != System.Data.ConnectionState.Open)
+            await connection.OpenAsync();
         var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
 
         try
@@ -231,22 +236,27 @@ public class DataInserter
         }
         finally
         {
-            await connection.DisposeAsync();
+            if (ownsConnection)
+                await connection.DisposeAsync();
         }
     }
 
     /// <summary>
     /// Stage generated data into a temp table. Returns (tempTableName, connection, transaction, table, stagedCount).
     /// The caller must call InsertFromTempTableAsync or UpdateFromTempTableAsync, then commit/rollback.
-    /// Used by update mode.
+    /// When <paramref name="sharedConnection"/> is provided, it is reused and the returned
+    /// <see cref="StagingResult"/> will NOT own (dispose) the connection.
     /// </summary>
-    public async Task<StagingResult> StageToTempTableAsync(TablePlan tablePlan)
+    public async Task<StagingResult> StageToTempTableAsync(
+        TablePlan tablePlan, SqlConnection? sharedConnection = null)
     {
         var gen = GenerateRows(tablePlan);
         var tempTableName = $"#{gen.Table.TableName}";
 
-        var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync();
+        var ownsConnection = sharedConnection is null;
+        var connection = sharedConnection ?? new SqlConnection(_connectionString);
+        if (connection.State != System.Data.ConnectionState.Open)
+            await connection.OpenAsync();
         var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
 
         try
@@ -265,12 +275,13 @@ public class DataInserter
             }
 
             return new StagingResult(tempTableName, connection, transaction, gen.Table,
-                gen.DataTable.Rows.Count, gen.IsSelfRef);
+                gen.DataTable.Rows.Count, gen.IsSelfRef, ownsConnection);
         }
         catch
         {
             await transaction.RollbackAsync();
-            await connection.DisposeAsync();
+            if (ownsConnection)
+                await connection.DisposeAsync();
             throw;
         }
     }
@@ -341,7 +352,8 @@ public class DataInserter
         }
         finally
         {
-            await connection.DisposeAsync();
+            if (staging.OwnsConnection)
+                await connection.DisposeAsync();
         }
     }
 
@@ -388,7 +400,8 @@ public class DataInserter
                 await using (var cmd = new SqlCommand($"DROP TABLE {tempTableName}", connection, transaction))
                     await cmd.ExecuteNonQueryAsync();
                 await transaction.RollbackAsync();
-                await connection.DisposeAsync();
+                if (staging.OwnsConnection)
+                    await connection.DisposeAsync();
                 return 0;
             }
 
@@ -429,7 +442,8 @@ public class DataInserter
         }
         finally
         {
-            await connection.DisposeAsync();
+            if (staging.OwnsConnection)
+                await connection.DisposeAsync();
         }
     }
 
@@ -449,12 +463,14 @@ public class DataInserter
         SqlTransaction Transaction,
         TableInfo Table,
         int StagedCount,
-        bool IsSelfRef) : IAsyncDisposable
+        bool IsSelfRef,
+        bool OwnsConnection = true) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
         {
             await Transaction.DisposeAsync();
-            await Connection.DisposeAsync();
+            if (OwnsConnection)
+                await Connection.DisposeAsync();
         }
     }
 

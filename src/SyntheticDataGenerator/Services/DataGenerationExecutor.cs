@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Data.SqlClient;
 using SyntheticDataGenerator.Models;
 
 namespace SyntheticDataGenerator.Services;
@@ -34,6 +35,9 @@ public class DataGenerationExecutor : IDataGenerationExecutor
         var details = new List<TableExecutionDetail>();
         var totalRows = 0;
 
+        await using var connection = new SqlConnection(command.ConnectionString);
+        await connection.OpenAsync(ct);
+
         foreach (var tp in sortedTables)
         {
             ct.ThrowIfCancellationRequested();
@@ -42,13 +46,13 @@ public class DataGenerationExecutor : IDataGenerationExecutor
                 int affected;
                 if (isUpdate)
                 {
-                    var staging = await inserter.StageToTempTableAsync(tp);
+                    var staging = await inserter.StageToTempTableAsync(tp, connection);
                     affected = await inserter.UpdateFromTempTableAsync(staging);
                 }
                 else
                 {
                     var gen = inserter.GenerateRows(tp);
-                    affected = await inserter.InsertGeneratedRowsAsync(gen);
+                    affected = await inserter.InsertGeneratedRowsAsync(gen, connection);
                 }
 
                 totalRows += affected;
