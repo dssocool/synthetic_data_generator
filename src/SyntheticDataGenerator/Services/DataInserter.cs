@@ -17,6 +17,11 @@ public class DataInserter
     private readonly Dictionary<string, HashSet<string>> _generatedPkSets = new();
     private readonly Dictionary<string, Dictionary<string, HashSet<string>>> _generatedUniqueSets = new();
 
+    // Maps (table, column) -> (referencedTable, referencedColumn) for FK columns
+    // of tables that have already been generated. Populated during staging.
+    private readonly Dictionary<(string Table, string Column), (string RefTable, string RefColumn)>
+        _fkColumnMap = new(FullNameColumnComparer.Instance);
+
     private const int MaxPkRetries = 100;
 
     public DataInserter(
@@ -66,6 +71,10 @@ public class DataInserter
         var uniqueConstraints = BuildUniqueConstraintsFromPlan(tablePlan);
         var fkGroups = BuildFkGroupsFromPlan(firstPassColumns);
         var customDepGroups = BuildCustomDepGroupsFromPlan(firstPassColumns);
+
+        foreach (var group in fkGroups)
+            foreach (var (parentCol, refCol, _) in group.Columns)
+                _fkColumnMap[(fullName, parentCol)] = (group.RefFullName, refCol);
 
         _generatedKeys.TryAdd(fullName, []);
         _generatedPkSets.TryAdd(fullName, []);
@@ -878,11 +887,25 @@ public class DataInserter
     {
         var resolved = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
+        if (fkGroups.Count <= 1)
+        {
+            foreach (var group in fkGroups)
+                ResolveGroupSimple(group, columns, generateValue, sampleSize, resolved);
+            return resolved;
+        }
+
         var sortedGroups = SortFkGroupsByTopoDepth(fkGroups);
 
-        // Track all column values from previously picked parent rows so we can
-        // constrain later groups. Keyed by the parent row's own column names.
-        var pickedColumnValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        // Pre-compute shared ancestor constraints: find ancestor (table, column)
+        // pairs that multiple groups reference (directly or transitively via
+        // _fkColumnMap). Intersect the valid values to pick a common ancestor value.
+        var sharedAncestorValues = ComputeSharedAncestorValues(sortedGroups, sampleSize);
+
+        var resolvedRefs = new Dictionary<(string Table, string Column), object>(
+            FullNameColumnComparer.Instance);
+
+        foreach (var (key, val) in sharedAncestorValues)
+            resolvedRefs[key] = val;
 
         foreach (var group in sortedGroups)
         {
@@ -890,18 +913,20 @@ public class DataInserter
 
             if (parentRows is { Count: > 0 })
             {
-                var filtered = FilterByResolvedValues(parentRows, pickedColumnValues);
+                var filtered = FilterByResolvedRefs(parentRows, group, resolvedRefs, _fkColumnMap);
                 var candidates = filtered.Count > 0 ? filtered : parentRows;
                 var parentRow = candidates[_random.Next(candidates.Count)];
 
                 foreach (var (parentColumn, referencedColumn, _) in group.Columns)
                 {
                     if (parentRow.TryGetValue(referencedColumn, out var value))
+                    {
                         resolved[parentColumn] = value;
+                        resolvedRefs.TryAdd((group.RefFullName, referencedColumn), value);
+                    }
                 }
 
-                foreach (var kvp in parentRow)
-                    pickedColumnValues[kvp.Key] = kvp.Value;
+                ExpandAncestorRefs(parentRow, group.RefFullName, resolvedRefs);
             }
             else
             {
@@ -917,6 +942,141 @@ public class DataInserter
         }
 
         return resolved;
+    }
+
+    private void ResolveGroupSimple<T>(
+        FkGroup group,
+        List<T> columns,
+        Func<IColumnMetadata, object> generateValue,
+        int sampleSize,
+        Dictionary<string, object?> resolved) where T : IColumnMetadata
+    {
+        var parentRows = GetParentRows(group, sampleSize);
+        if (parentRows is { Count: > 0 })
+        {
+            var parentRow = parentRows[_random.Next(parentRows.Count)];
+            foreach (var (parentColumn, referencedColumn, _) in group.Columns)
+            {
+                if (parentRow.TryGetValue(referencedColumn, out var value))
+                    resolved[parentColumn] = value;
+            }
+        }
+        else
+        {
+            foreach (var (parentColumn, _, isNullable) in group.Columns)
+            {
+                var col = columns.FirstOrDefault(c =>
+                    c.Name.Equals(parentColumn, StringComparison.OrdinalIgnoreCase));
+                resolved[parentColumn] = (col is { IsNullable: true } || isNullable)
+                    ? DBNull.Value
+                    : (col != null ? generateValue(col) : DBNull.Value);
+            }
+        }
+    }
+
+    /// <summary>
+    /// For groups that share a common ancestor (via FK chains), find ancestor
+    /// (table, column) values that are valid across ALL groups referencing that
+    /// ancestor. Picks one random value from the intersection.
+    /// </summary>
+    private Dictionary<(string Table, string Column), object> ComputeSharedAncestorValues(
+        List<FkGroup> groups, int sampleSize)
+    {
+        var result = new Dictionary<(string Table, string Column), object>(
+            FullNameColumnComparer.Instance);
+
+        // Map each group to the set of ancestor (table, column) pairs it can reach
+        var groupAncestors = new List<Dictionary<(string, string), HashSet<object>>>();
+
+        foreach (var group in groups)
+        {
+            var ancestors = new Dictionary<(string, string), HashSet<object>>(
+                FullNameColumnComparer.Instance);
+            var parentRows = GetParentRows(group, sampleSize);
+            if (parentRows is not { Count: > 0 })
+            {
+                groupAncestors.Add(ancestors);
+                continue;
+            }
+
+            // Direct: the group references (RefFullName, referencedColumn)
+            foreach (var (_, refCol, _) in group.Columns)
+            {
+                var key = (group.RefFullName, refCol);
+                if (!ancestors.TryGetValue(key, out var set))
+                {
+                    set = new HashSet<object>();
+                    ancestors[key] = set;
+                }
+                foreach (var row in parentRows)
+                {
+                    if (row.TryGetValue(refCol, out var v) && v is not DBNull)
+                        set.Add(v);
+                }
+            }
+
+            // Transitive: follow FK chains from the referenced table upward
+            foreach (var row in parentRows)
+            {
+                foreach (var (colName, val) in row)
+                {
+                    if (val is DBNull) continue;
+                    if (!_fkColumnMap.TryGetValue((group.RefFullName, colName), out var target))
+                        continue;
+
+                    var key = (target.RefTable, target.RefColumn);
+                    if (!ancestors.TryGetValue(key, out var set))
+                    {
+                        set = new HashSet<object>();
+                        ancestors[key] = set;
+                    }
+                    set.Add(val);
+                }
+            }
+
+            groupAncestors.Add(ancestors);
+        }
+
+        // Find ancestor keys shared by 2+ groups, intersect their value sets
+        var allKeys = new Dictionary<(string, string), List<int>>(
+            FullNameColumnComparer.Instance);
+
+        for (var i = 0; i < groupAncestors.Count; i++)
+        {
+            foreach (var key in groupAncestors[i].Keys)
+            {
+                if (!allKeys.TryGetValue(key, out var indices))
+                {
+                    indices = [];
+                    allKeys[key] = indices;
+                }
+                indices.Add(i);
+            }
+        }
+
+        foreach (var (key, indices) in allKeys)
+        {
+            if (indices.Count < 2)
+                continue;
+
+            HashSet<object>? intersection = null;
+            foreach (var idx in indices)
+            {
+                var set = groupAncestors[idx][key];
+                if (intersection == null)
+                    intersection = new HashSet<object>(set);
+                else
+                    intersection.IntersectWith(set);
+            }
+
+            if (intersection is { Count: > 0 })
+            {
+                var pick = intersection.ElementAt(_random.Next(intersection.Count));
+                result[key] = pick;
+            }
+        }
+
+        return result;
     }
 
     private List<Dictionary<string, object>>? GetParentRows(FkGroup group, int sampleSize)
@@ -937,8 +1097,7 @@ public class DataInserter
     /// Sort FK groups so that groups referencing tables LATER in the generation
     /// order (deeper/more-constrained tables) are resolved first. These rows
     /// contain FK values to ancestor tables, so resolving them first lets us
-    /// filter ancestor groups to stay consistent. E.g. resolve the Mid group
-    /// first (its rows carry RootId), then filter the Root group to match.
+    /// filter ancestor groups to stay consistent.
     /// </summary>
     private List<FkGroup> SortFkGroupsByTopoDepth(List<FkGroup> fkGroups)
     {
@@ -956,23 +1115,96 @@ public class DataInserter
     }
 
     /// <summary>
-    /// Filter candidate parent rows to those consistent with values from
-    /// previously picked parent rows. Uses column-name overlap: if a previously
-    /// picked row had column "RootId" = 5, and the current candidate rows also
-    /// have a "RootId" column, only keep rows where RootId == 5.
+    /// After picking a row from a referenced table, trace its FK column values
+    /// upward through the ancestor chain using _fkColumnMap and record every
+    /// (table, column) -> value we can resolve. Handles renamed columns and
+    /// transitive diamonds (e.g. Leaf -> Mid2 -> Mid1 -> Root).
     /// </summary>
-    private static List<Dictionary<string, object>> FilterByResolvedValues(
-        List<Dictionary<string, object>> parentRows,
-        Dictionary<string, object> pickedColumnValues)
+    private void ExpandAncestorRefs(
+        Dictionary<string, object> pickedRow,
+        string pickedTableFullName,
+        Dictionary<(string Table, string Column), object> resolvedRefs)
     {
-        if (pickedColumnValues.Count == 0)
+        var queue = new Queue<(string TableName, Dictionary<string, object> Row)>();
+        queue.Enqueue((pickedTableFullName, pickedRow));
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { pickedTableFullName };
+
+        while (queue.Count > 0)
+        {
+            var (tableName, row) = queue.Dequeue();
+
+            foreach (var (colName, val) in row)
+            {
+                if (val is DBNull)
+                    continue;
+
+                if (!_fkColumnMap.TryGetValue((tableName, colName), out var fkTarget))
+                    continue;
+
+                resolvedRefs.TryAdd((fkTarget.RefTable, fkTarget.RefColumn), val);
+
+                if (visited.Contains(fkTarget.RefTable))
+                    continue;
+
+                if (!_generatedKeys.TryGetValue(fkTarget.RefTable, out var ancestorRows)
+                    || ancestorRows.Count == 0)
+                    continue;
+
+                var matchedAncestor = ancestorRows.FirstOrDefault(ar =>
+                    ar.TryGetValue(fkTarget.RefColumn, out var v) && Equals(v, val));
+
+                if (matchedAncestor == null)
+                    continue;
+
+                foreach (var (ancCol, ancVal) in matchedAncestor)
+                {
+                    if (ancVal is not DBNull)
+                        resolvedRefs.TryAdd((fkTarget.RefTable, ancCol), ancVal);
+                }
+
+                visited.Add(fkTarget.RefTable);
+                queue.Enqueue((fkTarget.RefTable, matchedAncestor));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Filter candidate parent rows to those consistent with previously resolved
+    /// reference values. Two matching strategies:
+    /// 1. Direct: if resolvedRefs has (group.RefFullName, column), filter by that column.
+    /// 2. Transitive: if a candidate row column is a FK to some (refTable, refColumn)
+    ///    that's already resolved, filter by matching that FK value.
+    /// </summary>
+    private static List<Dictionary<string, object>> FilterByResolvedRefs(
+        List<Dictionary<string, object>> parentRows,
+        FkGroup group,
+        Dictionary<(string Table, string Column), object> resolvedRefs,
+        Dictionary<(string Table, string Column), (string RefTable, string RefColumn)> fkColumnMap)
+    {
+        if (resolvedRefs.Count == 0)
             return parentRows;
 
         var constraints = new List<(string ColumnName, object Value)>();
-        foreach (var (colName, val) in pickedColumnValues)
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var ((table, column), val) in resolvedRefs)
         {
-            if (parentRows[0].ContainsKey(colName))
-                constraints.Add((colName, val));
+            if (!table.Equals(group.RefFullName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (parentRows[0].ContainsKey(column) && seen.Add(column))
+                constraints.Add((column, val));
+        }
+
+        foreach (var colName in parentRows[0].Keys)
+        {
+            if (seen.Contains(colName))
+                continue;
+            if (!fkColumnMap.TryGetValue((group.RefFullName, colName), out var fkTarget))
+                continue;
+            if (!resolvedRefs.TryGetValue((fkTarget.RefTable, fkTarget.RefColumn), out var val))
+                continue;
+            seen.Add(colName);
+            constraints.Add((colName, val));
         }
 
         if (constraints.Count == 0)
@@ -982,6 +1214,21 @@ public class DataInserter
             constraints.All(c =>
                 row.TryGetValue(c.ColumnName, out var v) && Equals(v, c.Value)))
             .ToList();
+    }
+
+    private sealed class FullNameColumnComparer
+        : IEqualityComparer<(string Table, string Column)>
+    {
+        public static readonly FullNameColumnComparer Instance = new();
+
+        public bool Equals((string Table, string Column) x, (string Table, string Column) y) =>
+            StringComparer.OrdinalIgnoreCase.Equals(x.Table, y.Table) &&
+            StringComparer.OrdinalIgnoreCase.Equals(x.Column, y.Column);
+
+        public int GetHashCode((string Table, string Column) obj) =>
+            HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Table),
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Column));
     }
 
     private List<Dictionary<string, object>> LoadExternalFkRows(FkGroup group, int sampleSize)

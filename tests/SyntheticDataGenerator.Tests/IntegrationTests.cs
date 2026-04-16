@@ -2957,4 +2957,302 @@ public class IntegrationTests
             """))!;
         Assert.Equal(0, mismatch);
     }
+
+    // ══════════════════════════════════════════════
+    // 68. Diamond FK — Non-Identity PK Root
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test68_DiamondFK_NonIdentityPkRoot()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaNiRoot (
+                Code NVARCHAR(10) NOT NULL PRIMARY KEY,
+                Label NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaNiMid (
+                MidId INT IDENTITY(1,1) PRIMARY KEY,
+                Code  NVARCHAR(10) NOT NULL,
+                Name  NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DiaNiMid_Root FOREIGN KEY (Code) REFERENCES dbo.TestDiaNiRoot(Code)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaNiLeaf (
+                LeafId INT IDENTITY(1,1) PRIMARY KEY,
+                Code   NVARCHAR(10) NOT NULL,
+                MidId  INT NOT NULL,
+                Info   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DiaNiLeaf_Root FOREIGN KEY (Code)  REFERENCES dbo.TestDiaNiRoot(Code),
+                CONSTRAINT FK_DiaNiLeaf_Mid  FOREIGN KEY (MidId) REFERENCES dbo.TestDiaNiMid(MidId)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestDiaNiRoot", "TestDiaNiMid", "TestDiaNiLeaf");
+
+        await AssertNoOrphansAsync("dbo.TestDiaNiMid",  "dbo.TestDiaNiRoot", "Code",  "Code");
+        await AssertNoOrphansAsync("dbo.TestDiaNiLeaf", "dbo.TestDiaNiRoot", "Code",  "Code");
+        await AssertNoOrphansAsync("dbo.TestDiaNiLeaf", "dbo.TestDiaNiMid",  "MidId", "MidId");
+
+        var mismatch = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDiaNiLeaf l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.TestDiaNiMid m
+                WHERE m.MidId = l.MidId AND m.Code = l.Code
+            )
+            """))!;
+        Assert.Equal(0, mismatch);
+    }
+
+    // ══════════════════════════════════════════════
+    // 69. Diamond FK — Nullable FK to Root
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test69_DiamondFK_NullableRootFk()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaNullRoot (
+                RootId INT IDENTITY(1,1) PRIMARY KEY,
+                Label  NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaNullMid (
+                MidId  INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                Name   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DiaNullMid_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDiaNullRoot(RootId)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaNullLeaf (
+                LeafId INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NULL,
+                MidId  INT NOT NULL,
+                Info   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DiaNullLeaf_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDiaNullRoot(RootId),
+                CONSTRAINT FK_DiaNullLeaf_Mid  FOREIGN KEY (MidId)  REFERENCES dbo.TestDiaNullMid(MidId)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestDiaNullRoot", "TestDiaNullMid", "TestDiaNullLeaf");
+
+        await AssertNoOrphansAsync("dbo.TestDiaNullMid",  "dbo.TestDiaNullRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDiaNullLeaf", "dbo.TestDiaNullMid",  "MidId",  "MidId");
+
+        // Rows where RootId IS NOT NULL must have a consistent (RootId, MidId) pair
+        var mismatch = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDiaNullLeaf l
+            WHERE l.RootId IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM dbo.TestDiaNullMid m
+                WHERE m.MidId = l.MidId AND m.RootId = l.RootId
+            )
+            """))!;
+        Assert.Equal(0, mismatch);
+
+        // Non-null FK to root must be valid
+        var orphanRoot = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDiaNullLeaf l
+            WHERE l.RootId IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM dbo.TestDiaNullRoot r WHERE r.RootId = l.RootId)
+            """))!;
+        Assert.Equal(0, orphanRoot);
+    }
+
+    // ══════════════════════════════════════════════
+    // 70. Diamond FK — Renamed FK Columns
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test70_DiamondFK_RenamedColumns()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaRenRoot (
+                RootId INT IDENTITY(1,1) PRIMARY KEY,
+                Label  NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaRenMid (
+                MidId      INT IDENTITY(1,1) PRIMARY KEY,
+                ParentRef  INT NOT NULL,
+                Name       NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DiaRenMid_Root FOREIGN KEY (ParentRef) REFERENCES dbo.TestDiaRenRoot(RootId)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaRenLeaf (
+                LeafId    INT IDENTITY(1,1) PRIMARY KEY,
+                OriginRef INT NOT NULL,
+                MidId     INT NOT NULL,
+                Info      NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DiaRenLeaf_Root FOREIGN KEY (OriginRef) REFERENCES dbo.TestDiaRenRoot(RootId),
+                CONSTRAINT FK_DiaRenLeaf_Mid  FOREIGN KEY (MidId)     REFERENCES dbo.TestDiaRenMid(MidId)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestDiaRenRoot", "TestDiaRenMid", "TestDiaRenLeaf");
+
+        await AssertNoOrphansAsync("dbo.TestDiaRenMid",  "dbo.TestDiaRenRoot", "ParentRef", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDiaRenLeaf", "dbo.TestDiaRenRoot", "OriginRef", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDiaRenLeaf", "dbo.TestDiaRenMid",  "MidId",     "MidId");
+
+        // Every leaf row's (OriginRef, MidId) must match the mid row's (ParentRef, MidId)
+        var mismatch = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDiaRenLeaf l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.TestDiaRenMid m
+                WHERE m.MidId = l.MidId AND m.ParentRef = l.OriginRef
+            )
+            """))!;
+        Assert.Equal(0, mismatch);
+    }
+
+    // ══════════════════════════════════════════════
+    // 71. Double Diamond — Two Intermediates, One Root
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test71_DoubleDiamond_TwoIntermediates()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDblDiaRoot (
+                RootId INT IDENTITY(1,1) PRIMARY KEY,
+                Label  NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDblDiaMidA (
+                MidAId INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                Name   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DblDiaMidA_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDblDiaRoot(RootId)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDblDiaMidB (
+                MidBId INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                Tag    NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DblDiaMidB_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDblDiaRoot(RootId)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDblDiaLeaf (
+                LeafId INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                MidAId INT NOT NULL,
+                MidBId INT NOT NULL,
+                Info   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DblDiaLeaf_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDblDiaRoot(RootId),
+                CONSTRAINT FK_DblDiaLeaf_MidA FOREIGN KEY (MidAId) REFERENCES dbo.TestDblDiaMidA(MidAId),
+                CONSTRAINT FK_DblDiaLeaf_MidB FOREIGN KEY (MidBId) REFERENCES dbo.TestDblDiaMidB(MidBId)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync(
+            "TestDblDiaRoot", "TestDblDiaMidA", "TestDblDiaMidB", "TestDblDiaLeaf");
+
+        await AssertNoOrphansAsync("dbo.TestDblDiaMidA", "dbo.TestDblDiaRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDblDiaMidB", "dbo.TestDblDiaRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDblDiaLeaf", "dbo.TestDblDiaRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDblDiaLeaf", "dbo.TestDblDiaMidA", "MidAId", "MidAId");
+        await AssertNoOrphansAsync("dbo.TestDblDiaLeaf", "dbo.TestDblDiaMidB", "MidBId", "MidBId");
+
+        // Leaf's (RootId, MidAId) must match MidA
+        var mismatchA = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDblDiaLeaf l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.TestDblDiaMidA m
+                WHERE m.MidAId = l.MidAId AND m.RootId = l.RootId
+            )
+            """))!;
+        Assert.Equal(0, mismatchA);
+
+        // Leaf's (RootId, MidBId) must match MidB
+        var mismatchB = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDblDiaLeaf l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.TestDblDiaMidB m
+                WHERE m.MidBId = l.MidBId AND m.RootId = l.RootId
+            )
+            """))!;
+        Assert.Equal(0, mismatchB);
+    }
+
+    // ══════════════════════════════════════════════
+    // 72. Deep Chain with Diamond (4 levels)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test72_DeepChainDiamond()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDeepDiaRoot (
+                RootId INT IDENTITY(1,1) PRIMARY KEY,
+                Label  NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDeepDiaMid1 (
+                Mid1Id INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                Name   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DeepDiaMid1_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDeepDiaRoot(RootId)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDeepDiaMid2 (
+                Mid2Id INT IDENTITY(1,1) PRIMARY KEY,
+                Mid1Id INT NOT NULL,
+                Tag    NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DeepDiaMid2_Mid1 FOREIGN KEY (Mid1Id) REFERENCES dbo.TestDeepDiaMid1(Mid1Id)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDeepDiaLeaf (
+                LeafId INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                Mid2Id INT NOT NULL,
+                Info   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DeepDiaLeaf_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDeepDiaRoot(RootId),
+                CONSTRAINT FK_DeepDiaLeaf_Mid2 FOREIGN KEY (Mid2Id) REFERENCES dbo.TestDeepDiaMid2(Mid2Id)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync(
+            "TestDeepDiaRoot", "TestDeepDiaMid1", "TestDeepDiaMid2", "TestDeepDiaLeaf");
+
+        await AssertNoOrphansAsync("dbo.TestDeepDiaMid1", "dbo.TestDeepDiaRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDeepDiaMid2", "dbo.TestDeepDiaMid1", "Mid1Id", "Mid1Id");
+        await AssertNoOrphansAsync("dbo.TestDeepDiaLeaf", "dbo.TestDeepDiaRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDeepDiaLeaf", "dbo.TestDeepDiaMid2", "Mid2Id", "Mid2Id");
+
+        // Leaf's RootId must be consistent through the chain:
+        // Leaf -> Mid2 -> Mid1 -> Root, so Leaf.RootId must equal Mid1.RootId
+        // where Mid1 is the parent of Mid2 referenced by the leaf.
+        var mismatch = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDeepDiaLeaf l
+            INNER JOIN dbo.TestDeepDiaMid2 m2 ON m2.Mid2Id = l.Mid2Id
+            INNER JOIN dbo.TestDeepDiaMid1 m1 ON m1.Mid1Id = m2.Mid1Id
+            WHERE m1.RootId <> l.RootId
+            """))!;
+        Assert.Equal(0, mismatch);
+    }
 }
