@@ -7,7 +7,8 @@ public class DataGenerationExecutor : IDataGenerationExecutor
 {
     public async Task<ExecutePlanResult> ExecutePlanAsync(
         ExecutePlanCommand command,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action<TableExecutionDetail>? onTableComplete = null)
     {
         var plan = command.Plan;
         var planMode = string.IsNullOrWhiteSpace(plan.Mode) ? "bootstrap" : plan.Mode;
@@ -51,16 +52,22 @@ public class DataGenerationExecutor : IDataGenerationExecutor
                 }
 
                 totalRows += affected;
-                details.Add(new TableExecutionDetail(tp.FullName, affected, true, null));
+                var detail = new TableExecutionDetail(tp.FullName, affected, true, null);
+                details.Add(detail);
+                onTableComplete?.Invoke(detail);
             }
             catch (DataGenerationException ex)
             {
-                details.Add(new TableExecutionDetail(
-                    ex.TableName, 0, false, ex.InnerException?.Message ?? ex.Message));
+                var detail = new TableExecutionDetail(
+                    ex.TableName, 0, false, ex.InnerException?.Message ?? ex.Message);
+                details.Add(detail);
+                onTableComplete?.Invoke(detail);
             }
             catch (Exception ex)
             {
-                details.Add(new TableExecutionDetail(tp.FullName, 0, false, ex.Message));
+                var detail = new TableExecutionDetail(tp.FullName, 0, false, ex.Message);
+                details.Add(detail);
+                onTableComplete?.Invoke(detail);
             }
         }
 

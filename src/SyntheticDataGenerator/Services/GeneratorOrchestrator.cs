@@ -91,14 +91,20 @@ public class GeneratorOrchestrator
 
         WarnExternalDependencies(plan.ExternalDependencies);
 
+        var tableCount = sortedTables.Count;
+        var completed = 0;
+
         var stopwatch = Stopwatch.StartNew();
+        Console.WriteLine(isUpdate ? "Generating data and updating..." : "Generating and inserting data...");
+
         var result = await _executor.ExecutePlanAsync(
             new ExecutePlanCommand(plan, _connectionString,
                 Path.GetDirectoryName(Path.GetFullPath(planPath))),
-            CancellationToken.None);
+            CancellationToken.None,
+            detail => PrintTableProgress(detail, ++completed, tableCount));
         stopwatch.Stop();
 
-        PrintExecutionResult(result, isUpdate, stopwatch.Elapsed);
+        PrintExecutionSummary(result, isUpdate, stopwatch.Elapsed);
     }
 
     public async Task RunDirectAsync(string mode = "bootstrap")
@@ -144,34 +150,39 @@ public class GeneratorOrchestrator
         var planResult = await _planner.GeneratePlanAsync(
             new GeneratePlanCommand(validateResult, _scope, planOutputPath, mode), CancellationToken.None);
 
+        var sortedTables = planResult.Plan.Tables.OrderBy(t => t.Order).ToList();
+        var tableCount = sortedTables.Count;
+        var completed = 0;
+
         var stopwatch = Stopwatch.StartNew();
         Console.WriteLine(isUpdate ? "Generating data and updating..." : "Generating and inserting data...");
 
         var execResult = await _executor.ExecutePlanAsync(
             new ExecutePlanCommand(planResult.Plan, _connectionString, null),
-            CancellationToken.None);
+            CancellationToken.None,
+            detail => PrintTableProgress(detail, ++completed, tableCount));
         stopwatch.Stop();
 
-        PrintExecutionResult(execResult, isUpdate, stopwatch.Elapsed);
+        PrintExecutionSummary(execResult, isUpdate, stopwatch.Elapsed);
         Console.WriteLine($"Plan saved to: {Path.GetFullPath(planOutputPath)}");
     }
 
-    private static void PrintExecutionResult(ExecutePlanResult result, bool isUpdate, TimeSpan elapsed)
+    private static void PrintTableProgress(TableExecutionDetail detail, int completed, int total)
     {
-        foreach (var detail in result.Tables)
+        if (detail.Success)
         {
-            if (detail.Success)
-            {
-                Console.WriteLine($"  {detail.TableName,-40} {detail.RowsAffected,6} rows");
-            }
-            else
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"  {detail.TableName,-40} FAILED: {detail.ErrorMessage}");
-                Console.ResetColor();
-            }
+            Console.WriteLine($"  [{completed}/{total}] {detail.TableName,-40} {detail.RowsAffected,6} rows");
         }
+        else
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"  [{completed}/{total}] {detail.TableName,-40} FAILED: {detail.ErrorMessage}");
+            Console.ResetColor();
+        }
+    }
 
+    private static void PrintExecutionSummary(ExecutePlanResult result, bool isUpdate, TimeSpan elapsed)
+    {
         Console.WriteLine();
         var verb = isUpdate ? "updated" : "inserted";
         Console.WriteLine($"Done. {result.TotalRowsAffected} total rows {verb} in {elapsed.TotalSeconds:F1}s.");
