@@ -878,41 +878,30 @@ public class DataInserter
     {
         var resolved = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var group in fkGroups)
+        var sortedGroups = SortFkGroupsByTopoDepth(fkGroups);
+
+        // Track all column values from previously picked parent rows so we can
+        // constrain later groups. Keyed by the parent row's own column names.
+        var pickedColumnValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in sortedGroups)
         {
-            if (_generatedKeys.TryGetValue(group.RefFullName, out var parentRows) && parentRows.Count > 0)
+            var parentRows = GetParentRows(group, sampleSize);
+
+            if (parentRows is { Count: > 0 })
             {
-                var parentRow = parentRows[_random.Next(parentRows.Count)];
+                var filtered = FilterByResolvedValues(parentRows, pickedColumnValues);
+                var candidates = filtered.Count > 0 ? filtered : parentRows;
+                var parentRow = candidates[_random.Next(candidates.Count)];
 
                 foreach (var (parentColumn, referencedColumn, _) in group.Columns)
                 {
                     if (parentRow.TryGetValue(referencedColumn, out var value))
                         resolved[parentColumn] = value;
                 }
-            }
-            else if (group.IsExternal)
-            {
-                var loaded = LoadExternalFkRows(group, sampleSize);
-                if (loaded.Count > 0)
-                {
-                    var parentRow = loaded[_random.Next(loaded.Count)];
-                    foreach (var (parentColumn, referencedColumn, _) in group.Columns)
-                    {
-                        if (parentRow.TryGetValue(referencedColumn, out var value))
-                            resolved[parentColumn] = value;
-                    }
-                }
-                else
-                {
-                    foreach (var (parentColumn, _, isNullable) in group.Columns)
-                    {
-                        var col = columns.FirstOrDefault(c =>
-                            c.Name.Equals(parentColumn, StringComparison.OrdinalIgnoreCase));
-                        resolved[parentColumn] = (col is { IsNullable: true } || isNullable)
-                            ? DBNull.Value
-                            : (col != null ? generateValue(col) : DBNull.Value);
-                    }
-                }
+
+                foreach (var kvp in parentRow)
+                    pickedColumnValues[kvp.Key] = kvp.Value;
             }
             else
             {
@@ -928,6 +917,71 @@ public class DataInserter
         }
 
         return resolved;
+    }
+
+    private List<Dictionary<string, object>>? GetParentRows(FkGroup group, int sampleSize)
+    {
+        if (_generatedKeys.TryGetValue(group.RefFullName, out var rows) && rows.Count > 0)
+            return rows;
+
+        if (group.IsExternal)
+        {
+            var loaded = LoadExternalFkRows(group, sampleSize);
+            return loaded.Count > 0 ? loaded : null;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Sort FK groups so that groups referencing tables LATER in the generation
+    /// order (deeper/more-constrained tables) are resolved first. These rows
+    /// contain FK values to ancestor tables, so resolving them first lets us
+    /// filter ancestor groups to stay consistent. E.g. resolve the Mid group
+    /// first (its rows carry RootId), then filter the Root group to match.
+    /// </summary>
+    private List<FkGroup> SortFkGroupsByTopoDepth(List<FkGroup> fkGroups)
+    {
+        if (fkGroups.Count <= 1)
+            return fkGroups;
+
+        var keyOrder = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var idx = 0;
+        foreach (var key in _generatedKeys.Keys)
+            keyOrder[key] = idx++;
+
+        return fkGroups
+            .OrderByDescending(g => keyOrder.TryGetValue(g.RefFullName, out var order) ? order : int.MinValue)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Filter candidate parent rows to those consistent with values from
+    /// previously picked parent rows. Uses column-name overlap: if a previously
+    /// picked row had column "RootId" = 5, and the current candidate rows also
+    /// have a "RootId" column, only keep rows where RootId == 5.
+    /// </summary>
+    private static List<Dictionary<string, object>> FilterByResolvedValues(
+        List<Dictionary<string, object>> parentRows,
+        Dictionary<string, object> pickedColumnValues)
+    {
+        if (pickedColumnValues.Count == 0)
+            return parentRows;
+
+        var constraints = new List<(string ColumnName, object Value)>();
+        foreach (var (colName, val) in pickedColumnValues)
+        {
+            if (parentRows[0].ContainsKey(colName))
+                constraints.Add((colName, val));
+        }
+
+        if (constraints.Count == 0)
+            return parentRows;
+
+        return parentRows.Where(row =>
+            constraints.All(c =>
+                row.TryGetValue(c.ColumnName, out var v) && Equals(v, c.Value)))
+            .ToList();
     }
 
     private List<Dictionary<string, object>> LoadExternalFkRows(FkGroup group, int sampleSize)

@@ -2902,4 +2902,59 @@ public class IntegrationTests
             Assert.Contains(srcRef, sourceIdSet);
         }
     }
+
+    // ══════════════════════════════════════════════
+    // 67. Diamond FK — Cross-FK Correlated Row Sampling
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test67_DiamondForeignKey_CrossFkCorrelation()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiamondRoot (
+                RootId INT IDENTITY(1,1) PRIMARY KEY,
+                Label  NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiamondMid (
+                MidId  INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                Name   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_Mid_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDiamondRoot(RootId)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiamondLeaf (
+                LeafId INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                MidId  INT NOT NULL,
+                Info   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_Leaf_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDiamondRoot(RootId),
+                CONSTRAINT FK_Leaf_Mid  FOREIGN KEY (MidId)  REFERENCES dbo.TestDiamondMid(MidId)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestDiamondRoot", "TestDiamondMid", "TestDiamondLeaf");
+
+        await AssertNoOrphansAsync(
+            "dbo.TestDiamondMid", "dbo.TestDiamondRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync(
+            "dbo.TestDiamondLeaf", "dbo.TestDiamondRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync(
+            "dbo.TestDiamondLeaf", "dbo.TestDiamondMid", "MidId", "MidId");
+
+        // The key assertion: every (RootId, MidId) pair in the leaf table
+        // must correspond to a valid row in the mid table.
+        var mismatch = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDiamondLeaf l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.TestDiamondMid m
+                WHERE m.MidId = l.MidId AND m.RootId = l.RootId
+            )
+            """))!;
+        Assert.Equal(0, mismatch);
+    }
 }
