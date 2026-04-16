@@ -38,13 +38,17 @@ public class DataGenerationExecutor : IDataGenerationExecutor
             ct.ThrowIfCancellationRequested();
             try
             {
-                var staging = await inserter.StageToTempTableAsync(tp);
-
                 int affected;
                 if (isUpdate)
+                {
+                    var staging = await inserter.StageToTempTableAsync(tp);
                     affected = await inserter.UpdateFromTempTableAsync(staging);
+                }
                 else
-                    affected = await inserter.InsertFromTempTableAsync(staging);
+                {
+                    var gen = inserter.GenerateRows(tp);
+                    affected = await inserter.InsertGeneratedRowsAsync(gen);
+                }
 
                 totalRows += affected;
                 details.Add(new TableExecutionDetail(tp.FullName, affected, true, null));

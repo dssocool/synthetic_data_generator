@@ -35,14 +35,13 @@ public class DataInserter
     }
 
     /// <summary>
-    /// Stage generated data into a temp table. Returns (tempTableName, connection, transaction, table, stagedCount).
-    /// The caller must call InsertFromTempTableAsync or UpdateFromTempTableAsync, then commit/rollback.
+    /// Generate rows in memory and return a preparation result.
+    /// No database connection is opened; the caller decides the insert strategy.
     /// </summary>
-    public async Task<StagingResult> StageToTempTableAsync(TablePlan tablePlan)
+    public GenerationResult GenerateRows(TablePlan tablePlan)
     {
         var table = TablePlanToTableInfo(tablePlan);
         var fullName = tablePlan.FullName;
-        var tempTableName = $"#{tablePlan.TableName}";
 
         var isSelfRef = tablePlan.Columns.Any(c =>
             c.Generator.Equals("foreignKey", StringComparison.OrdinalIgnoreCase)
@@ -80,80 +79,193 @@ public class DataInserter
         _generatedPkSets.TryAdd(fullName, []);
         InitUniqueConstraintSets(fullName, uniqueConstraints);
 
+        var dataTable = new DataTable();
+        dataTable.Columns.Add("Id", typeof(int));
+        foreach (var col in allDataColumnInfos)
+            dataTable.Columns.Add(col.Name, typeof(object));
+
+        for (var i = 0; i < tablePlan.RowCount; i++)
+        {
+            Dictionary<string, object?> row;
+            try
+            {
+                var attempt = 0;
+                string? pkKey;
+                bool uniqueOk;
+                do
+                {
+                    row = BuildRowFromFkGroups(firstPassColumns, fkGroups,
+                        col => _valueGen.GenerateFromPlan((ColumnPlan)col) ?? DBNull.Value,
+                        tablePlan.RowCount,
+                        customDepGroups);
+                    pkKey = BuildPkKeyFromRow(table, row);
+                    uniqueOk = TryAddUniqueKeys(fullName, uniqueConstraints, row, attempt > 0);
+                    attempt++;
+                } while ((!uniqueOk || (pkKey != null
+                                        && !_generatedPkSets[fullName].Add(pkKey)))
+                         && attempt < MaxPkRetries);
+
+                if (attempt >= MaxPkRetries)
+                    throw new InvalidOperationException(
+                        $"Could not generate unique values for [{fullName}] " +
+                        $"after {MaxPkRetries} attempts. Consider reducing RowsPerTable or " +
+                        $"using a wider value range.");
+            }
+            catch (DataGenerationException) { throw; }
+            catch (Exception ex)
+            {
+                throw new DataGenerationException(fullName, i, null, ex);
+            }
+
+            var dtRow = dataTable.NewRow();
+            dtRow["Id"] = i + 1;
+            foreach (var col in allDataColumnInfos)
+                dtRow[col.Name] = row.TryGetValue(col.Name, out var v) ? v ?? DBNull.Value : DBNull.Value;
+            dataTable.Rows.Add(dtRow);
+
+            var keyEntry = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            foreach (var col in allDataColumnInfos)
+            {
+                if (row.TryGetValue(col.Name, out var v) && v is not null and not DBNull)
+                    keyEntry[col.Name] = v;
+            }
+            _generatedKeys[fullName].Add(keyEntry);
+        }
+
+        return new GenerationResult(table, dataTable, allDataColumnInfos, tablePlan, isSelfRef, selfRefColumnNames);
+    }
+
+    /// <summary>
+    /// Bootstrap mode: insert generated rows into the target table.
+    /// For non-identity, non-self-ref tables, SqlBulkCopy goes directly to the target.
+    /// For identity/sequence PK or self-ref tables, stages via a temp table first.
+    /// </summary>
+    public async Task<int> InsertGeneratedRowsAsync(GenerationResult gen)
+    {
+        var table = gen.Table;
+        var fullName = table.FullName;
+        var needsTempTable = table.HasIdentityPk || table.HasSequencePk || gen.IsSelfRef;
+
         var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync();
         var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
 
         try
         {
-            var createSql = BuildCreateTempTableSql(tempTableName, allDataColumnInfos);
+            if (needsTempTable)
+            {
+                var tempTableName = $"#{table.TableName}";
+                var createSql = BuildCreateTempTableSql(tempTableName, gen.DataColumnInfos);
+                await using (var cmd = new SqlCommand(createSql, connection, transaction))
+                    await cmd.ExecuteNonQueryAsync();
+
+                await BulkCopyAsync(connection, transaction, tempTableName, gen.DataTable);
+
+                if (gen.IsSelfRef && _generatedKeys[fullName].Count > 1)
+                {
+                    await UpdateSelfReferencesInTempAsync(
+                        connection, transaction, tempTableName, table,
+                        gen.TablePlan, gen.SelfRefColumnNames);
+                }
+
+                var insertColumns = gen.DataColumnInfos
+                    .Where(c => !c.IsAutoGenerated)
+                    .Where(c => !PlanGenerator.IsUnsupportedType(c))
+                    .ToList();
+
+                if (table.HasIdentityPk || table.HasSequencePk)
+                {
+                    await InsertFromTempWithMergeOutputAsync(
+                        connection, transaction, table, tempTableName, insertColumns);
+                }
+                else
+                {
+                    await InsertFromTempBulkAsync(
+                        connection, transaction, table, tempTableName, insertColumns);
+
+                    if (table.PrimaryKeyColumns.Count > 0)
+                        BackfillNonIdentityPks(table);
+                }
+
+                if (gen.IsSelfRef)
+                {
+                    await ApplySelfReferencesFromTempAsync(
+                        connection, transaction, table, tempTableName);
+                }
+
+                await using (var cmd = new SqlCommand($"DROP TABLE {tempTableName}", connection, transaction))
+                    await cmd.ExecuteNonQueryAsync();
+            }
+            else
+            {
+                var insertColumns = gen.DataColumnInfos
+                    .Where(c => !c.IsAutoGenerated)
+                    .Where(c => !PlanGenerator.IsUnsupportedType(c))
+                    .ToList();
+
+                if (insertColumns.Count == 0)
+                {
+                    for (var i = 0; i < gen.DataTable.Rows.Count; i++)
+                    {
+                        var sql = $"INSERT INTO [{table.Schema}].[{table.TableName}] DEFAULT VALUES";
+                        await using var cmd = new SqlCommand(sql, connection, transaction);
+                        await cmd.ExecuteNonQueryAsync();
+                    }
+                }
+                else
+                {
+                    await DirectBulkCopyAsync(connection, transaction, table, gen.DataTable, insertColumns);
+                }
+
+                if (table.PrimaryKeyColumns.Count > 0)
+                    BackfillNonIdentityPks(table);
+            }
+
+            await transaction.CommitAsync();
+            return gen.DataTable.Rows.Count;
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+        finally
+        {
+            await connection.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// Stage generated data into a temp table. Returns (tempTableName, connection, transaction, table, stagedCount).
+    /// The caller must call InsertFromTempTableAsync or UpdateFromTempTableAsync, then commit/rollback.
+    /// Used by update mode.
+    /// </summary>
+    public async Task<StagingResult> StageToTempTableAsync(TablePlan tablePlan)
+    {
+        var gen = GenerateRows(tablePlan);
+        var tempTableName = $"#{gen.Table.TableName}";
+
+        var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync();
+        var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+
+        try
+        {
+            var createSql = BuildCreateTempTableSql(tempTableName, gen.DataColumnInfos);
             await using (var cmd = new SqlCommand(createSql, connection, transaction))
                 await cmd.ExecuteNonQueryAsync();
 
-            var stagedCount = 0;
-            for (var i = 0; i < tablePlan.RowCount; i++)
-            {
-                Dictionary<string, object?> row;
-                try
-                {
-                    var attempt = 0;
-                    string? pkKey;
-                    bool uniqueOk;
-                    do
-                    {
-                        row = BuildRowFromFkGroups(firstPassColumns, fkGroups,
-                            col => _valueGen.GenerateFromPlan((ColumnPlan)col) ?? DBNull.Value,
-                            tablePlan.RowCount,
-                            customDepGroups);
-                        pkKey = BuildPkKeyFromRow(table, row);
-                        uniqueOk = TryAddUniqueKeys(fullName, uniqueConstraints, row, attempt > 0);
-                        attempt++;
-                    } while ((!uniqueOk || (pkKey != null
-                                            && !_generatedPkSets[fullName].Add(pkKey)))
-                             && attempt < MaxPkRetries);
+            await BulkCopyAsync(connection, transaction, tempTableName, gen.DataTable);
 
-                    if (attempt >= MaxPkRetries)
-                        throw new InvalidOperationException(
-                            $"Could not generate unique values for [{fullName}] " +
-                            $"after {MaxPkRetries} attempts. Consider reducing RowsPerTable or " +
-                            $"using a wider value range.");
-                }
-                catch (DataGenerationException) { throw; }
-                catch (Exception ex)
-                {
-                    throw new DataGenerationException(fullName, i, null, ex);
-                }
-
-                try
-                {
-                    await InsertRowIntoTempAsync(connection, transaction, tempTableName, allDataColumnInfos, row);
-                }
-                catch (DataGenerationException) { throw; }
-                catch (Exception ex)
-                {
-                    var failedCol = DetectFailedColumn(ex, firstPassColumns, row);
-                    throw new DataGenerationException(fullName, i, failedCol, ex);
-                }
-
-                var keyEntry = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-                foreach (var col in allDataColumnInfos)
-                {
-                    if (row.TryGetValue(col.Name, out var v) && v is not null and not DBNull)
-                        keyEntry[col.Name] = v;
-                }
-                _generatedKeys[fullName].Add(keyEntry);
-
-                stagedCount++;
-            }
-
-            if (isSelfRef && _generatedKeys[fullName].Count > 1)
+            if (gen.IsSelfRef && _generatedKeys[gen.Table.FullName].Count > 1)
             {
                 await UpdateSelfReferencesInTempAsync(
-                    connection, transaction, tempTableName, table,
-                    tablePlan, selfRefColumnNames);
+                    connection, transaction, tempTableName, gen.Table,
+                    gen.TablePlan, gen.SelfRefColumnNames);
             }
 
-            return new StagingResult(tempTableName, connection, transaction, table, stagedCount, isSelfRef);
+            return new StagingResult(tempTableName, connection, transaction, gen.Table,
+                gen.DataTable.Rows.Count, gen.IsSelfRef);
         }
         catch
         {
@@ -166,6 +278,7 @@ public class DataInserter
     /// <summary>
     /// Bootstrap mode: INSERT rows from the temp table into the real table.
     /// Captures identity PK values for FK resolution.
+    /// Used only by update mode's staging flow now.
     /// </summary>
     public async Task<int> InsertFromTempTableAsync(StagingResult staging)
     {
@@ -173,7 +286,6 @@ public class DataInserter
         var tempTableName = staging.TempTableName;
         var connection = staging.Connection;
         var transaction = staging.Transaction;
-        var fullName = table.FullName;
 
         try
         {
@@ -198,7 +310,7 @@ public class DataInserter
 
             if (table.HasIdentityPk || table.HasSequencePk)
             {
-                await InsertFromTempWithOutputAsync(
+                await InsertFromTempWithMergeOutputAsync(
                     connection, transaction, table, tempTableName, insertColumns);
             }
             else
@@ -323,6 +435,14 @@ public class DataInserter
 
     public record UpdateFkGroup(string RefFullName, string ParentColumn, string ReferencedColumn);
 
+    public record GenerationResult(
+        TableInfo Table,
+        DataTable DataTable,
+        List<ColumnInfo> DataColumnInfos,
+        TablePlan TablePlan,
+        bool IsSelfRef,
+        HashSet<string> SelfRefColumnNames);
+
     public record StagingResult(
         string TempTableName,
         SqlConnection Connection,
@@ -340,42 +460,37 @@ public class DataInserter
 
     #region Staging internals
 
-    private static async Task InsertRowIntoTempAsync(
+    private static async Task BulkCopyAsync(
         SqlConnection connection,
         SqlTransaction transaction,
-        string tempTableName,
-        List<ColumnInfo> dataColumns,
-        Dictionary<string, object?> row)
+        string destinationTable,
+        DataTable dataTable)
     {
-        if (dataColumns.Count == 0)
+        using var bulkCopy = new SqlBulkCopy(connection, SqlBulkCopyOptions.Default, transaction)
         {
-            var sql = $"INSERT INTO {tempTableName} DEFAULT VALUES";
-            await using var defaultCmd = new SqlCommand(sql, connection, transaction);
-            await defaultCmd.ExecuteNonQueryAsync();
-            return;
-        }
+            DestinationTableName = destinationTable,
+            BulkCopyTimeout = 0
+        };
+        foreach (DataColumn col in dataTable.Columns)
+            bulkCopy.ColumnMappings.Add(col.ColumnName, col.ColumnName);
+        await bulkCopy.WriteToServerAsync(dataTable);
+    }
 
-        var cols = dataColumns.Select(c => $"[{c.Name}]");
-        var parms = dataColumns.Select(c => $"@{c.Name}");
-
-        var insertSql = $"INSERT INTO {tempTableName} ({string.Join(", ", cols)}) " +
-                        $"VALUES ({string.Join(", ", parms)})";
-
-        await using var cmd = new SqlCommand(insertSql, connection, transaction);
-
-        foreach (var col in dataColumns)
+    private static async Task DirectBulkCopyAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        TableInfo table,
+        DataTable dataTable,
+        List<ColumnInfo> insertColumns)
+    {
+        using var bulkCopy = new SqlBulkCopy(connection, SqlBulkCopyOptions.Default, transaction)
         {
-            var paramValue = row.TryGetValue(col.Name, out var v) ? v ?? DBNull.Value : DBNull.Value;
-            var param = new SqlParameter($"@{col.Name}", SqlTypeInfo.MapSqlType(col.SqlType)) { Value = paramValue };
-            if (param.SqlDbType is SqlDbType.Decimal or SqlDbType.Money or SqlDbType.SmallMoney)
-            {
-                param.Precision = col.Precision;
-                param.Scale = col.Scale;
-            }
-            cmd.Parameters.Add(param);
-        }
-
-        await cmd.ExecuteNonQueryAsync();
+            DestinationTableName = $"[{table.Schema}].[{table.TableName}]",
+            BulkCopyTimeout = 0
+        };
+        foreach (var col in insertColumns)
+            bulkCopy.ColumnMappings.Add(col.Name, col.Name);
+        await bulkCopy.WriteToServerAsync(dataTable);
     }
 
     private async Task UpdateSelfReferencesInTempAsync(
@@ -409,7 +524,11 @@ public class DataInserter
 
     #region Insert from temp (bootstrap)
 
-    private async Task InsertFromTempWithOutputAsync(
+    /// <summary>
+    /// Uses MERGE...OUTPUT to insert all rows from the temp table into the target
+    /// in a single statement, capturing (tempId, identityPk) pairs for FK resolution.
+    /// </summary>
+    private async Task InsertFromTempWithMergeOutputAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         TableInfo table,
@@ -419,98 +538,89 @@ public class DataInserter
         var fullName = table.FullName;
         var pkColNames = table.PrimaryKeyColumns;
 
-        var colSelectList = insertColumns.Count > 0
-            ? $"[Id], {string.Join(", ", insertColumns.Select(c => $"[{c.Name}]"))}"
-            : "[Id]";
-        var tempRowsSql = $"SELECT {colSelectList} FROM {tempTableName} ORDER BY [Id]";
-
-        var tempRows = new List<(int Id, Dictionary<string, object?> Row)>();
-        await using (var cmd = new SqlCommand(tempRowsSql, connection, transaction))
-        await using (var reader = await cmd.ExecuteReaderAsync())
+        if (insertColumns.Count == 0)
         {
-            while (await reader.ReadAsync())
+            var newKeys = new List<Dictionary<string, object>>();
+            var countSql = $"SELECT COUNT(*) FROM {tempTableName}";
+            int rowCount;
+            await using (var cmd = new SqlCommand(countSql, connection, transaction))
+                rowCount = (int)(await cmd.ExecuteScalarAsync() ?? 0);
+
+            for (var i = 0; i < rowCount; i++)
             {
-                var id = reader.GetInt32(0);
-                var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-                for (var i = 0; i < insertColumns.Count; i++)
-                {
-                    var val = reader.GetValue(i + 1);
-                    row[insertColumns[i].Name] = val == DBNull.Value ? DBNull.Value : val;
-                }
-                tempRows.Add((id, row));
-            }
-        }
-
-        var newKeys = new List<Dictionary<string, object>>();
-
-        foreach (var (tempId, row) in tempRows)
-        {
-            var sb = new StringBuilder();
-            sb.Append($"INSERT INTO [{table.Schema}].[{table.TableName}]");
-
-            if (insertColumns.Count > 0)
-            {
-                sb.Append(" (");
-                sb.Append(string.Join(", ", insertColumns.Select(c => $"[{c.Name}]")));
-                sb.Append(')');
-            }
-
-            sb.Append(" OUTPUT ");
-            sb.Append(string.Join(", ", pkColNames.Select(pk => $"INSERTED.[{pk}]")));
-
-            if (insertColumns.Count > 0)
-            {
-                sb.Append(" VALUES (");
-                sb.Append(string.Join(", ", insertColumns.Select(c => $"@{c.Name}")));
-                sb.Append(')');
-            }
-            else
-            {
+                var sb = new StringBuilder();
+                sb.Append($"INSERT INTO [{table.Schema}].[{table.TableName}]");
+                sb.Append(" OUTPUT ");
+                sb.Append(string.Join(", ", pkColNames.Select(pk => $"INSERTED.[{pk}]")));
                 sb.Append(" DEFAULT VALUES");
-            }
 
-            await using var insertCmd = new SqlCommand(sb.ToString(), connection, transaction);
-            foreach (var col in insertColumns)
-            {
-                var paramValue = row.TryGetValue(col.Name, out var v) ? v ?? DBNull.Value : DBNull.Value;
-                var param = new SqlParameter($"@{col.Name}", SqlTypeInfo.MapSqlType(col.SqlType)) { Value = paramValue };
-                if (param.SqlDbType is SqlDbType.Decimal or SqlDbType.Money or SqlDbType.SmallMoney)
-                {
-                    param.Precision = col.Precision;
-                    param.Scale = col.Scale;
-                }
-                insertCmd.Parameters.Add(param);
-            }
-
-            try
-            {
+                await using var insertCmd = new SqlCommand(sb.ToString(), connection, transaction);
                 await using var outputReader = await insertCmd.ExecuteReaderAsync();
                 if (await outputReader.ReadAsync())
                 {
                     var pkValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
                     for (var idx = 0; idx < pkColNames.Count; idx++)
                         pkValues[pkColNames[idx]] = outputReader.GetValue(idx);
-
-                    foreach (var col in insertColumns)
-                    {
-                        if (!pkValues.ContainsKey(col.Name)
-                            && row.TryGetValue(col.Name, out var rv)
-                            && rv is not null and not DBNull)
-                        {
-                            pkValues[col.Name] = rv;
-                        }
-                    }
-
                     newKeys.Add(pkValues);
                 }
             }
-            catch (Exception ex) when (IsCheckConstraintViolation(ex))
-            {
-                throw new DataGenerationException(fullName, tempId - 1, null, ex);
-            }
+            _generatedKeys[fullName] = newKeys;
+            return;
         }
 
-        _generatedKeys[fullName] = newKeys;
+        var srcColList = string.Join(", ", insertColumns.Select(c => $"src.[{c.Name}]"));
+        var insertColList = string.Join(", ", insertColumns.Select(c => $"[{c.Name}]"));
+
+        var outputCols = new List<string> { "src.[Id]" };
+        outputCols.AddRange(pkColNames.Select(pk => $"INSERTED.[{pk}]"));
+        outputCols.AddRange(insertColumns
+            .Where(c => !pkColNames.Contains(c.Name, StringComparer.OrdinalIgnoreCase))
+            .Select(c => $"INSERTED.[{c.Name}]"));
+
+        var mergeSql = $"""
+            MERGE INTO [{table.Schema}].[{table.TableName}] AS tgt
+            USING (SELECT * FROM {tempTableName}) AS src
+            ON 1 = 0
+            WHEN NOT MATCHED THEN
+              INSERT ({insertColList}) VALUES ({srcColList})
+            OUTPUT {string.Join(", ", outputCols)};
+            """;
+
+        var newMergeKeys = new List<(int TempId, Dictionary<string, object> Row)>();
+        try
+        {
+            await using var mergeCmd = new SqlCommand(mergeSql, connection, transaction);
+            await using var reader = await mergeCmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var tempId = reader.GetInt32(0);
+                var pkValues = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                for (var idx = 0; idx < pkColNames.Count; idx++)
+                    pkValues[pkColNames[idx]] = reader.GetValue(idx + 1);
+
+                var colOffset = 1 + pkColNames.Count;
+                var nonPkInsertCols = insertColumns
+                    .Where(c => !pkColNames.Contains(c.Name, StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+                for (var idx = 0; idx < nonPkInsertCols.Count; idx++)
+                {
+                    var val = reader.GetValue(colOffset + idx);
+                    if (val is not DBNull)
+                        pkValues[nonPkInsertCols[idx].Name] = val;
+                }
+
+                newMergeKeys.Add((tempId, pkValues));
+            }
+        }
+        catch (Exception ex) when (IsCheckConstraintViolation(ex))
+        {
+            throw new DataGenerationException(fullName, 0, null, ex);
+        }
+
+        _generatedKeys[fullName] = newMergeKeys
+            .OrderBy(x => x.TempId)
+            .Select(x => x.Row)
+            .ToList();
     }
 
     private async Task InsertFromTempBulkAsync(
@@ -1281,7 +1391,7 @@ public class DataInserter
     {
         var sb = new StringBuilder();
         sb.AppendLine($"CREATE TABLE {tempTableName} (");
-        sb.Append("    [Id] INT IDENTITY(1,1) PRIMARY KEY");
+        sb.Append("    [Id] INT NOT NULL PRIMARY KEY");
 
         foreach (var col in dataColumns)
         {
