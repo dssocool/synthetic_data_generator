@@ -22,7 +22,7 @@ public record GeneratePlanCommand(
     ValidateScopeResult ValidationResult,
     ScopeConfig Scope,
     string? OutputPath,
-    string Mode = "bootstrap");
+    string Mode = "insert");
 
 public record GeneratePlanResult(
     GenerationPlan Plan,

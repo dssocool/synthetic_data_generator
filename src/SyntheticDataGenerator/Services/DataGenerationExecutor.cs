@@ -12,7 +12,7 @@ public class DataGenerationExecutor : IDataGenerationExecutor
         Action<TableExecutionDetail>? onTableComplete = null)
     {
         var plan = command.Plan;
-        var planMode = string.IsNullOrWhiteSpace(plan.Mode) ? "bootstrap" : plan.Mode;
+        var planMode = string.IsNullOrWhiteSpace(plan.Mode) ? "insert" : plan.Mode;
         var isUpdate = planMode.Equals("update", StringComparison.OrdinalIgnoreCase);
 
         var sortedTables = plan.Tables.OrderBy(t => t.Order).ToList();

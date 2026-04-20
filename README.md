@@ -8,7 +8,7 @@ A .NET console application that connects to a Microsoft SQL Server database, rea
 - **Automatic dependency ordering** — uses topological sort (Kahn's algorithm) to determine safe insertion order. Self-referencing foreign keys are detected and handled separately.
 - **Smart value generation** — column names are matched against heuristic rules (e.g. `email` → realistic email, `first_name` → realistic first name). When no name rule matches, values are generated based on the SQL data type.
 - **YAML plan workflow** — generate a YAML plan file describing every table and column, review or edit it, then execute it. This gives full control over what data gets inserted.
-- **Bootstrap and update modes** — insert new synthetic rows (bootstrap) or regenerate values for existing rows in place (update).
+- **Insert and update modes** — insert new synthetic rows (insert) or regenerate values for existing rows in place (update).
 - **External dependency detection** — warns when foreign keys reference tables outside the current scope (outbound) or when external tables reference scoped tables (inbound).
 - **Custom dependency ordering** — define non-FK column relationships so tables are inserted in the right order even without formal foreign keys.
 - **Table and column filtering** — optionally restrict generation to a specific schema, an explicit list of tables, and per-table column lists.
@@ -82,7 +82,7 @@ CustomDependencies:
 | `DatabaseName` | No | — | Database name; overrides `Initial Catalog` / `Database` in the connection string |
 | `Schema` | No | all schemas | Restrict to a single schema name |
 | `TablesToInclude` | No | all tables | Tables (and optionally columns) in scope — see below |
-| `RowsPerTable` | No | `100` | Number of rows to insert per table (bootstrap mode) |
+| `RowsPerTable` | No | `100` | Number of rows to insert per table (insert mode) |
 | `Seed` | No | random | Integer seed for reproducible data |
 | `Locale` | No | `en` | Bogus locale for generated data |
 | `CustomDependencies` | No | — | Non-FK column relationships for ordering — see below |
@@ -111,9 +111,9 @@ TablesToInclude:
   - Table: dbo.Orders
 ```
 
-When `Columns` is omitted (or empty), all columns on that table are in scope. When `Columns` is provided, only those columns are targeted. This is used by both `bootstrap` and `update` modes:
+When `Columns` is omitted (or empty), all columns on that table are in scope. When `Columns` is provided, only those columns are targeted. This is used by both `insert` and `update` modes:
 
-- **Bootstrap mode**: columns not listed get `generator: skip` in the plan. All columns still appear in the schema.
+- **Insert mode**: columns not listed get `generator: skip` in the plan. All columns still appear in the schema.
 - **Update mode**: only the listed columns are regenerated. Primary key columns are always included automatically (with `generator: skip`) so the tool can identify which rows to update.
 
 ### CustomDependencies
@@ -136,33 +136,33 @@ This adds edges to the dependency graph so that topological sort produces a vali
 dotnet build
 ```
 
-The tool requires a subcommand (`bootstrap` or `update`). Running without one prints usage and exits:
+The tool requires a subcommand (`insert` or `update`). Running without one prints usage and exits:
 
 ```
 Usage:
-  dotnet run -- bootstrap                          Insert synthetic data directly
-  dotnet run -- bootstrap --generate-plan [path]   Generate a plan file without inserting
+  dotnet run -- insert                             Insert synthetic data directly
+  dotnet run -- insert --generate-plan [path]      Generate a plan file without inserting
   dotnet run -- update                             Update existing data directly
   dotnet run -- update --generate-plan [path]      Generate an update plan file
   dotnet run -- --execute-plan <path>              Execute a previously generated plan
 ```
 
-Both `bootstrap` and `update` read their scope (which tables and columns) from `appsettings.yaml` via `TablesToInclude`.
+Both `insert` and `update` read their scope (which tables and columns) from `appsettings.yaml` via `TablesToInclude`.
 
-### Bootstrap — Direct Mode
+### Insert — Direct Mode
 
 Reads the database schema and inserts synthetic rows immediately. A `plan.yaml` file is also saved in the current directory so you can inspect or re-run what was generated:
 
 ```bash
-dotnet run --project src/SyntheticDataGenerator -- bootstrap
+dotnet run --project src/SyntheticDataGenerator -- insert
 ```
 
-### Bootstrap — Generate Plan
+### Insert — Generate Plan
 
-Creates a YAML plan file (with `mode: bootstrap`) that you can review and edit before inserting any data:
+Creates a YAML plan file (with `mode: insert`) that you can review and edit before inserting any data:
 
 ```bash
-dotnet run --project src/SyntheticDataGenerator -- bootstrap --generate-plan plan.yaml
+dotnet run --project src/SyntheticDataGenerator -- insert --generate-plan plan.yaml
 ```
 
 If the output path is omitted it defaults to `plan.yaml`.
@@ -197,7 +197,7 @@ The generated plan includes only the PK columns (with `generator: skip`) and the
 
 Executes a previously generated (and optionally edited) plan file. The plan's `mode` field determines the operation:
 
-- `mode: bootstrap` — inserts new rows into each table.
+- `mode: insert` — inserts new rows into each table.
 - `mode: update` — updates existing rows using the temp-table strategy described above. The plan must include PK columns (generator `skip`) so the tool can identify which rows to update.
 
 ```bash
@@ -206,13 +206,13 @@ dotnet run --project src/SyntheticDataGenerator -- --execute-plan plan.yaml
 
 ## Plan File Reference
 
-When you run `--generate-plan` (with either `bootstrap` or `update`), the tool produces a YAML file (`plan.yaml` by default) that fully describes what data will be generated or updated. You can review and edit this file before running `--execute-plan`.
+When you run `--generate-plan` (with either `insert` or `update`), the tool produces a YAML file (`plan.yaml` by default) that fully describes what data will be generated or updated. You can review and edit this file before running `--execute-plan`.
 
 ### Top-level properties
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `mode` | `string` | Operation mode: `bootstrap` (insert new data) or `update` (update existing data). Defaults to `bootstrap`. Used by `--execute-plan` to determine behavior. |
+| `mode` | `string` | Operation mode: `insert` (insert new data) or `update` (update existing data). Defaults to `insert`. Used by `--execute-plan` to determine behavior. |
 | `seed` | `int?` | Random seed for reproducible output. Remove or set to `null` for random data each run. |
 | `locale` | `string` | Bogus locale code (e.g. `en`, `fr`, `de`, `ja`). Affects names, addresses, etc. |
 | `tables` | `list` | Ordered list of table definitions to generate data for. |

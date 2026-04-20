@@ -704,7 +704,7 @@ public class CustomDependencyTests
     {
         var plan = new GenerationPlan
         {
-            Mode = "bootstrap",
+            Mode = "insert",
             Seed = 42,
             Locale = "en",
             Tables = [],
@@ -750,7 +750,7 @@ public class CustomDependencyTests
     {
         var plan = new GenerationPlan
         {
-            Mode = "bootstrap",
+            Mode = "insert",
             Tables = [],
             CustomDependencies = null
         };

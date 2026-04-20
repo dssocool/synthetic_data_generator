@@ -5,7 +5,7 @@ namespace SyntheticDataGenerator.Models;
 public class GenerationPlan
 {
     [YamlMember(Alias = "mode")]
-    public string Mode { get; set; } = "bootstrap";
+    public string Mode { get; set; } = "insert";
 
     [YamlMember(Alias = "seed")]
     public int? Seed { get; set; }

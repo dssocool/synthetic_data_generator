@@ -22,7 +22,7 @@ public class GeneratorOrchestrator
         _executor = executor;
     }
 
-    public async Task RunGeneratePlanAsync(string outputPath, string mode = "bootstrap")
+    public async Task RunGeneratePlanAsync(string outputPath, string mode = "insert")
     {
         Console.WriteLine($"=== Synthetic Data Generator - Generate Plan ({mode}) ===");
         Console.WriteLine($"Target: {MaskConnectionString(_connectionString)}");
@@ -72,7 +72,7 @@ public class GeneratorOrchestrator
         }
 
         var plan = await PlanGenerator.ReadPlanAsync(planPath);
-        var planMode = string.IsNullOrWhiteSpace(plan.Mode) ? "bootstrap" : plan.Mode;
+        var planMode = string.IsNullOrWhiteSpace(plan.Mode) ? "insert" : plan.Mode;
         var isUpdate = planMode.Equals("update", StringComparison.OrdinalIgnoreCase);
 
         Console.WriteLine($"Plan mode: {planMode}");
@@ -107,7 +107,7 @@ public class GeneratorOrchestrator
         PrintExecutionSummary(result, isUpdate, stopwatch.Elapsed);
     }
 
-    public async Task RunDirectAsync(string mode = "bootstrap")
+    public async Task RunDirectAsync(string mode = "insert")
     {
         Console.WriteLine($"=== Synthetic Data Generator - Direct ({mode}) ===");
         Console.WriteLine($"Target: {MaskConnectionString(_connectionString)}");

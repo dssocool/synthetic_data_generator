@@ -144,7 +144,7 @@ public class ExternalDependencyTests
         var externalDeps = DataGenerationPlanner.CollectExternalDependencies(scopedTables, allTables);
         var planGen = new PlanGenerator();
         var plan = planGen.Generate(
-            scopedTables, new HashSet<string>(), 10, 42, "en", "bootstrap",
+            scopedTables, new HashSet<string>(), 10, 42, "en", "insert",
             columnsInScope: null, externalDependencies: externalDeps);
 
         var fkCol = plan.Tables[0].Columns.First(c =>
@@ -162,7 +162,7 @@ public class ExternalDependencyTests
 
         var planGen = new PlanGenerator();
         var plan = planGen.Generate(
-            scopedTables, new HashSet<string>(), 10, 42, "en", "bootstrap",
+            scopedTables, new HashSet<string>(), 10, 42, "en", "insert",
             columnsInScope: null, externalDependencies: null);
 
         var fkCol = plan.Tables[1].Columns.First(c =>
@@ -188,7 +188,7 @@ public class ExternalDependencyTests
 
         var planGen = new PlanGenerator();
         var plan = planGen.Generate(
-            scopedTables, new HashSet<string>(), 10, 42, "en", "bootstrap",
+            scopedTables, new HashSet<string>(), 10, 42, "en", "insert",
             columnsInScope: null, externalDependencies: externalDeps);
 
         var fkCols = plan.Tables[0].Columns
@@ -226,7 +226,7 @@ public class ExternalDependencyTests
 
         var planGen = new PlanGenerator();
         var plan = planGen.Generate(
-            scopedTables, new HashSet<string>(), 10, 42, "en", "bootstrap",
+            scopedTables, new HashSet<string>(), 10, 42, "en", "insert",
             columnsInScope: null, externalDependencies: externalDeps);
 
         var orderPlan = plan.Tables.First(t => t.Table == "dbo.Orders");
@@ -269,7 +269,7 @@ public class ExternalDependencyTests
         var externalDeps = DataGenerationPlanner.CollectExternalDependencies(scopedTables, allTables);
         var planGen = new PlanGenerator();
         var plan = planGen.Generate(
-            scopedTables, new HashSet<string>(), 10, 42, "en", "bootstrap",
+            scopedTables, new HashSet<string>(), 10, 42, "en", "insert",
             columnsInScope: null, externalDependencies: externalDeps);
 
         var fkCol = plan.Tables[0].Columns.First(c => c.Name == "CustomerId");
@@ -289,7 +289,7 @@ public class ExternalDependencyTests
         var externalDeps = DataGenerationPlanner.CollectExternalDependencies(scopedTables, allTables);
         var planGen = new PlanGenerator();
         var plan = planGen.Generate(
-            scopedTables, new HashSet<string>(), 5, 42, "en", "bootstrap",
+            scopedTables, new HashSet<string>(), 5, 42, "en", "insert",
             columnsInScope: null, externalDependencies: externalDeps);
 
         var serializer = new SerializerBuilder()
@@ -330,7 +330,7 @@ public class ExternalDependencyTests
         var externalDeps = DataGenerationPlanner.CollectExternalDependencies(scopedTables, allTables);
         var planGen = new PlanGenerator();
         var plan = planGen.Generate(
-            scopedTables, new HashSet<string>(), 10, 42, "en", "bootstrap",
+            scopedTables, new HashSet<string>(), 10, 42, "en", "insert",
             columnsInScope: null, externalDependencies: externalDeps);
 
         Assert.NotNull(plan.ExternalDependencies);
@@ -352,7 +352,7 @@ public class ExternalDependencyTests
     {
         var plan = new GenerationPlan
         {
-            Mode = "bootstrap",
+            Mode = "insert",
             Seed = 42,
             Locale = "en",
             Tables = [],
@@ -413,7 +413,7 @@ public class ExternalDependencyTests
     {
         var plan = new GenerationPlan
         {
-            Mode = "bootstrap",
+            Mode = "insert",
             Tables = [],
             ExternalDependencies = null
         };

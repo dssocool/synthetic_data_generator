@@ -136,7 +136,7 @@ public class DataInserter
     }
 
     /// <summary>
-    /// Bootstrap mode: insert generated rows into the target table.
+    /// Insert mode: insert generated rows into the target table.
     /// For non-identity, non-self-ref tables, SqlBulkCopy goes directly to the target.
     /// For identity/sequence PK or self-ref tables, stages via a temp table first.
     /// When <paramref name="sharedConnection"/> is provided, it is reused and NOT disposed
@@ -287,7 +287,7 @@ public class DataInserter
     }
 
     /// <summary>
-    /// Bootstrap mode: INSERT rows from the temp table into the real table.
+    /// Insert mode: INSERT rows from the temp table into the real table.
     /// Captures identity PK values for FK resolution.
     /// Used only by update mode's staging flow now.
     /// </summary>
@@ -538,7 +538,7 @@ public class DataInserter
 
     #endregion
 
-    #region Insert from temp (bootstrap)
+    #region Insert from temp (insert)
 
     /// <summary>
     /// Uses MERGE...OUTPUT to insert all rows from the temp table into the target

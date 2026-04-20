@@ -46,7 +46,7 @@ public class PlanGenerator
         int defaultRowCount,
         int? seed,
         string locale = "en",
-        string mode = "bootstrap",
+        string mode = "insert",
         Dictionary<string, HashSet<string>>? columnsInScope = null,
         List<ExternalDependency>? externalDependencies = null,
         List<CustomDependencyGroup>? customDependencies = null)
