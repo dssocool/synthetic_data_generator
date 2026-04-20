@@ -22,7 +22,7 @@ public class GeneratorOrchestrator
         _executor = executor;
     }
 
-    public async Task RunGeneratePlanAsync(string outputPath, string mode = "bootstrap")
+    public async Task RunGeneratePlanAsync(string outputPath, string mode = "insert")
     {
         Console.WriteLine($"=== Synthetic Data Generator - Generate Plan ({mode}) ===");
         Console.WriteLine($"Target: {MaskConnectionString(_connectionString)}");
@@ -72,7 +72,7 @@ public class GeneratorOrchestrator
         }
 
         var plan = await PlanGenerator.ReadPlanAsync(planPath);
-        var planMode = string.IsNullOrWhiteSpace(plan.Mode) ? "bootstrap" : plan.Mode;
+        var planMode = string.IsNullOrWhiteSpace(plan.Mode) ? "insert" : plan.Mode;
         var isUpdate = planMode.Equals("update", StringComparison.OrdinalIgnoreCase);
 
         Console.WriteLine($"Plan mode: {planMode}");
@@ -91,17 +91,23 @@ public class GeneratorOrchestrator
 
         WarnExternalDependencies(plan.ExternalDependencies);
 
+        var tableCount = sortedTables.Count;
+        var completed = 0;
+
         var stopwatch = Stopwatch.StartNew();
+        Console.WriteLine(isUpdate ? "Generating data and updating..." : "Generating and inserting data...");
+
         var result = await _executor.ExecutePlanAsync(
             new ExecutePlanCommand(plan, _connectionString,
                 Path.GetDirectoryName(Path.GetFullPath(planPath))),
-            CancellationToken.None);
+            CancellationToken.None,
+            detail => PrintTableProgress(detail, ++completed, tableCount));
         stopwatch.Stop();
 
-        PrintExecutionResult(result, isUpdate, stopwatch.Elapsed);
+        PrintExecutionSummary(result, isUpdate, stopwatch.Elapsed);
     }
 
-    public async Task RunDirectAsync(string mode = "bootstrap")
+    public async Task RunDirectAsync(string mode = "insert")
     {
         Console.WriteLine($"=== Synthetic Data Generator - Direct ({mode}) ===");
         Console.WriteLine($"Target: {MaskConnectionString(_connectionString)}");
@@ -125,11 +131,11 @@ public class GeneratorOrchestrator
         if (!isUpdate)
         {
             Console.WriteLine("Insertion order:");
-            var graph = validateResult.Graph!;
+            var selfRefTables = validateResult.SelfReferencingTables ?? (IReadOnlySet<string>)new HashSet<string>();
             for (var i = 0; i < validateResult.ScopedTables.Count; i++)
             {
                 var t = validateResult.ScopedTables[i];
-                var selfRef = graph.SelfReferencingTables.Contains(t.FullName) ? " (self-referencing)" : "";
+                var selfRef = selfRefTables.Contains(t.FullName) ? " (self-referencing)" : "";
                 var fkCount = t.ForeignKeys.Count;
                 Console.WriteLine($"  {i + 1,3}. {t.FullName,-40} " +
                                   $"[{t.Columns.Count} cols, {fkCount} FKs{selfRef}]");
@@ -144,34 +150,39 @@ public class GeneratorOrchestrator
         var planResult = await _planner.GeneratePlanAsync(
             new GeneratePlanCommand(validateResult, _scope, planOutputPath, mode), CancellationToken.None);
 
+        var sortedTables = planResult.Plan.Tables.OrderBy(t => t.Order).ToList();
+        var tableCount = sortedTables.Count;
+        var completed = 0;
+
         var stopwatch = Stopwatch.StartNew();
         Console.WriteLine(isUpdate ? "Generating data and updating..." : "Generating and inserting data...");
 
         var execResult = await _executor.ExecutePlanAsync(
             new ExecutePlanCommand(planResult.Plan, _connectionString, null),
-            CancellationToken.None);
+            CancellationToken.None,
+            detail => PrintTableProgress(detail, ++completed, tableCount));
         stopwatch.Stop();
 
-        PrintExecutionResult(execResult, isUpdate, stopwatch.Elapsed);
+        PrintExecutionSummary(execResult, isUpdate, stopwatch.Elapsed);
         Console.WriteLine($"Plan saved to: {Path.GetFullPath(planOutputPath)}");
     }
 
-    private static void PrintExecutionResult(ExecutePlanResult result, bool isUpdate, TimeSpan elapsed)
+    private static void PrintTableProgress(TableExecutionDetail detail, int completed, int total)
     {
-        foreach (var detail in result.Tables)
+        if (detail.Success)
         {
-            if (detail.Success)
-            {
-                Console.WriteLine($"  {detail.TableName,-40} {detail.RowsAffected,6} rows");
-            }
-            else
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"  {detail.TableName,-40} FAILED: {detail.ErrorMessage}");
-                Console.ResetColor();
-            }
+            Console.WriteLine($"  [{completed}/{total}] {detail.TableName,-40} {detail.RowsAffected,6} rows");
         }
+        else
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"  [{completed}/{total}] {detail.TableName,-40} FAILED: {detail.ErrorMessage}");
+            Console.ResetColor();
+        }
+    }
 
+    private static void PrintExecutionSummary(ExecutePlanResult result, bool isUpdate, TimeSpan elapsed)
+    {
         Console.WriteLine();
         var verb = isUpdate ? "updated" : "inserted";
         Console.WriteLine($"Done. {result.TotalRowsAffected} total rows {verb} in {elapsed.TotalSeconds:F1}s.");
@@ -218,7 +229,7 @@ public class GeneratorOrchestrator
         foreach (var table in tables)
         {
             var skipped = table.Columns
-                .Where(c => !c.IsIdentity && !c.IsComputed && !c.IsRowVersion && !c.IsSequenceDefault && PlanGenerator.IsUnsupportedType(c))
+                .Where(c => !c.IsAutoGenerated && PlanGenerator.IsUnsupportedType(c))
                 .ToList();
 
             foreach (var col in skipped)
@@ -243,19 +254,6 @@ public class GeneratorOrchestrator
         return string.Join("; ", masked);
     }
 
-    internal static string FormatSqlType(ColumnFailureDetail col)
-    {
-        var type = col.SqlType;
-        if (col.MaxLength > 0 &&
-            type.Contains("char", StringComparison.OrdinalIgnoreCase) ||
-            type.Contains("binary", StringComparison.OrdinalIgnoreCase))
-            return $"{type}({(col.MaxLength == -1 ? "MAX" : col.MaxLength.ToString())})";
-        if (col.Precision > 0 &&
-            (type.Equals("decimal", StringComparison.OrdinalIgnoreCase) ||
-             type.Equals("numeric", StringComparison.OrdinalIgnoreCase)))
-            return $"{type}({col.Precision},{col.Scale})";
-        return type;
-    }
 
     internal static void PrintDataGenerationError(string tableName, DataGenerationException ex)
     {
@@ -267,7 +265,7 @@ public class GeneratorOrchestrator
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine($"    Likely failed column: [{col.ColumnName}]");
-            Console.WriteLine($"      SQL type:        {FormatSqlType(col)}");
+            Console.WriteLine($"      SQL type:        {SqlTypeInfo.FormatSqlColumnType(col)}");
             Console.WriteLine($"      Generator:       {col.Generator}");
             Console.WriteLine($"      Generated .NET:  {col.GeneratedValueType ?? "null"}");
             Console.WriteLine($"      Generated value: {col.GeneratedValuePreview ?? "NULL"}");

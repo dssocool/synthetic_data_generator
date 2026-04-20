@@ -2183,24 +2183,10 @@ public class IntegrationTests
             ["dbo.TestUpdPKReject"] = new(["Id"], StringComparer.OrdinalIgnoreCase)
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables));
-            Assert.Contains("primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("Id", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("primary key", output, StringComparison.OrdinalIgnoreCase);
+        var errors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("primary key", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(errors, e => e.Contains("Id"));
     }
 
     // ══════════════════════════════════════════════
@@ -2237,27 +2223,12 @@ public class IntegrationTests
             ["dbo.TestUpdFKChild"] = new(["ParentId"], StringComparer.OrdinalIgnoreCase)
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables));
-            Assert.Contains("FK validation failed", ex.Message);
-            Assert.Contains("TestUpdFKChild", ex.Message);
-            Assert.Contains("ParentId", ex.Message);
-            Assert.Contains("TestUpdFKParent", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("TestUpdFKChild", output);
-        Assert.Contains("ParentId", output);
+        var errors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("FK validation failed"));
+        Assert.Contains(errors, e => e.Contains("TestUpdFKChild"));
+        Assert.Contains(errors, e => e.Contains("ParentId"));
+        Assert.Contains(errors, e => e.Contains("TestUpdFKParent"));
     }
 
     // ══════════════════════════════════════════════
@@ -2295,27 +2266,12 @@ public class IntegrationTests
             ["dbo.TestUpdRevParent"] = new(["Code"], StringComparer.OrdinalIgnoreCase)
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables));
-            Assert.Contains("FK validation failed", ex.Message);
-            Assert.Contains("Code", ex.Message);
-            Assert.Contains("TestUpdRevChild", ex.Message);
-            Assert.Contains("RefCode", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("TestUpdRevChild", output);
-        Assert.Contains("RefCode", output);
+        var errors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("FK validation failed"));
+        Assert.Contains(errors, e => e.Contains("Code"));
+        Assert.Contains(errors, e => e.Contains("TestUpdRevChild"));
+        Assert.Contains(errors, e => e.Contains("RefCode"));
     }
 
     // ══════════════════════════════════════════════
@@ -2354,7 +2310,8 @@ public class IntegrationTests
             ["dbo.TestUpdRefChild"] = new(["RefCode"], StringComparer.OrdinalIgnoreCase)
         };
 
-        DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
+        var validationErrors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.Empty(validationErrors);
 
         var graph = new DependencyGraph();
         graph.Build(specTables, columnScope);
@@ -2421,7 +2378,8 @@ public class IntegrationTests
             ["dbo.TestUpdBasic"] = new(["Name"], StringComparer.OrdinalIgnoreCase)
         };
 
-        DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
+        var validationErrors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.Empty(validationErrors);
 
         var graph = new DependencyGraph();
         graph.Build(specTables, columnScope);
@@ -2483,7 +2441,8 @@ public class IntegrationTests
             ["dbo.TestUpdPlan"] = new(["Label"], StringComparer.OrdinalIgnoreCase)
         };
 
-        DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
+        var validationErrors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.Empty(validationErrors);
 
         var graph = new DependencyGraph();
         graph.Build(specTables, columnScope);
@@ -2555,7 +2514,8 @@ public class IntegrationTests
             ["dbo.TestUpdUnique"] = new(["Email"], StringComparer.OrdinalIgnoreCase)
         };
 
-        DataGenerationPlanner.ValidateUpdateScope(columnScope, specTables, allTables);
+        var validationErrors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
+        Assert.Empty(validationErrors);
 
         var graph = new DependencyGraph();
         graph.Build(specTables, columnScope);
@@ -2594,24 +2554,10 @@ public class IntegrationTests
             new TableScope { Table = "dbo.CompletelyFakeTable" }
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateScope(allTables, scope));
-            Assert.Contains("CompletelyFakeTable", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("CompletelyFakeTable", output);
-        Assert.Contains("does not exist", output);
+        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("CompletelyFakeTable"));
+        Assert.Contains(errors, e => e.Contains("does not exist"));
     }
 
     // ══════════════════════════════════════════════
@@ -2639,25 +2585,10 @@ public class IntegrationTests
             }
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateScope(allTables, scope));
-            Assert.Contains("NonExistentColumn", ex.Message);
-            Assert.Contains("TestScopeCol", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("NonExistentColumn", output);
-        Assert.Contains("TestScopeCol", output);
+        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("NonExistentColumn"));
+        Assert.Contains(errors, e => e.Contains("TestScopeCol"));
     }
 
     // ══════════════════════════════════════════════
@@ -2682,23 +2613,9 @@ public class IntegrationTests
             new TableScope { Table = "dbo.TotallyBogusTable" }
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateScope(allTables, scope));
-            Assert.Contains("TotallyBogusTable", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("TotallyBogusTable", output);
+        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("TotallyBogusTable"));
     }
 
     // ══════════════════════════════════════════════
@@ -2727,24 +2644,10 @@ public class IntegrationTests
             }
         };
 
-        var captured = new StringWriter();
-        var originalOut = Console.Out;
-        Console.SetOut(captured);
-        try
-        {
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => DataGenerationPlanner.ValidateScope(allTables, scope));
-            Assert.Contains("FakeColumn", ex.Message);
-            Assert.Contains("TestScopeMixCol", ex.Message);
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-
-        var output = captured.ToString();
-        Assert.Contains("FATAL", output);
-        Assert.Contains("FakeColumn", output);
+        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope);
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Contains("FakeColumn"));
+        Assert.Contains(errors, e => e.Contains("TestScopeMixCol"));
     }
 
     // ══════════════════════════════════════════════
@@ -2768,7 +2671,7 @@ public class IntegrationTests
         {
             new TableScope { Table = "dbo.TestScopeValid" }
         };
-        DataGenerationPlanner.ValidateScope(allTables, scopeTableOnly);
+        Assert.Empty(DataGenerationPlanner.CollectScopeErrors(allTables, scopeTableOnly));
 
         var scopeWithColumns = new[]
         {
@@ -2778,12 +2681,578 @@ public class IntegrationTests
                 Columns = ["Name", "Email"]
             }
         };
-        DataGenerationPlanner.ValidateScope(allTables, scopeWithColumns);
+        Assert.Empty(DataGenerationPlanner.CollectScopeErrors(allTables, scopeWithColumns));
 
         var scopeShortName = new[]
         {
             new TableScope { Table = "TestScopeValid" }
         };
-        DataGenerationPlanner.ValidateScope(allTables, scopeShortName);
+        Assert.Empty(DataGenerationPlanner.CollectScopeErrors(allTables, scopeShortName));
+    }
+
+    // ══════════════════════════════════════════════
+    // 64. Custom Dependency — Linked Values (Identity PK)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test64_CustomDependency_LinkedValues_IdentityPk()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCDSource (
+                SourceId INT IDENTITY(1,1) PRIMARY KEY,
+                Code     NVARCHAR(20) NOT NULL
+            );
+            CREATE TABLE dbo.TestCDDependent (
+                Id       INT IDENTITY(1,1) PRIMARY KEY,
+                CodeRef  NVARCHAR(20) NOT NULL,
+                Name     NVARCHAR(50) NOT NULL
+            );
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables
+            .Where(t => t.TableName is "TestCDSource" or "TestCDDependent")
+            .ToList();
+
+        var customDepGroups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.TestCDSource.Code|dbo.TestCDDependent.CodeRef"]);
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        graph.AddCustomDependencies(customDepGroups);
+        var sorted = graph.GetTopologicalOrder();
+
+        var sourceIdx = sorted.FindIndex(t => t.TableName == "TestCDSource");
+        var depIdx = sorted.FindIndex(t => t.TableName == "TestCDDependent");
+        Assert.True(sourceIdx < depIdx, "Source table must come before dependent");
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en",
+            customDependencies: customDepGroups);
+
+        var depPlan = plan.Tables.First(t => t.TableName == "TestCDDependent");
+        var codeRefCol = depPlan.Columns.First(c => c.Name == "CodeRef");
+        Assert.Equal("customDependency", codeRefCol.Generator);
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        foreach (var tp in plan.Tables.OrderBy(t => t.Order))
+        {
+            var staging = await inserter.StageToTempTableAsync(tp);
+            await inserter.InsertFromTempTableAsync(staging);
+        }
+
+        var sourceCodes = await _fixture.ExecuteQueryAsync(
+            "SELECT DISTINCT Code FROM dbo.TestCDSource");
+        var sourceCodeSet = sourceCodes
+            .Select(r => (string)r["Code"]!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var depRows = await _fixture.ExecuteQueryAsync(
+            "SELECT CodeRef FROM dbo.TestCDDependent");
+
+        Assert.Equal(RowCount, depRows.Count);
+        foreach (var row in depRows)
+        {
+            var codeRef = (string)row["CodeRef"]!;
+            Assert.Contains(codeRef, sourceCodeSet);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 65. Custom Dependency — Linked Values (Non-Identity PK)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test65_CustomDependency_LinkedValues_NonIdentityPk()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCDSource2 (
+                Code INT NOT NULL PRIMARY KEY
+            );
+            CREATE TABLE dbo.TestCDDependent2 (
+                Id      INT IDENTITY(1,1) PRIMARY KEY,
+                CodeRef INT NOT NULL
+            );
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables
+            .Where(t => t.TableName is "TestCDSource2" or "TestCDDependent2")
+            .ToList();
+
+        var customDepGroups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.TestCDSource2.Code|dbo.TestCDDependent2.CodeRef"]);
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        graph.AddCustomDependencies(customDepGroups);
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en",
+            customDependencies: customDepGroups);
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        foreach (var tp in plan.Tables.OrderBy(t => t.Order))
+        {
+            var staging = await inserter.StageToTempTableAsync(tp);
+            await inserter.InsertFromTempTableAsync(staging);
+        }
+
+        var sourceCodes = await _fixture.ExecuteQueryAsync(
+            "SELECT DISTINCT Code FROM dbo.TestCDSource2");
+        var sourceCodeSet = sourceCodes
+            .Select(r => (int)r["Code"]!)
+            .ToHashSet();
+
+        var depRows = await _fixture.ExecuteQueryAsync(
+            "SELECT CodeRef FROM dbo.TestCDDependent2");
+
+        Assert.Equal(RowCount, depRows.Count);
+        foreach (var row in depRows)
+        {
+            var codeRef = (int)row["CodeRef"]!;
+            Assert.Contains(codeRef, sourceCodeSet);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 66. Custom Dependency — Auto-Corrects Direction When Source Is Identity
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test66_CustomDependency_AutoCorrectsDirection_IdentitySource()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestCDAutoSrc (
+                SrcId INT IDENTITY(1,1) PRIMARY KEY,
+                Label NVARCHAR(20) NOT NULL
+            );
+            CREATE TABLE dbo.TestCDAutoDep (
+                Id      INT IDENTITY(1,1) PRIMARY KEY,
+                SrcRef  INT NOT NULL,
+                Name    NVARCHAR(50) NOT NULL
+            );
+            """);
+
+        var reader = new SchemaReader(_fixture.ConnectionString);
+        var allTables = await reader.ReadSchemaAsync();
+        var tables = allTables
+            .Where(t => t.TableName is "TestCDAutoSrc" or "TestCDAutoDep")
+            .ToList();
+
+        // Deliberately write the dependency "backwards": dependent column first, source PK second.
+        // The system should auto-detect that SrcId is identity and swap direction.
+        var customDepGroups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.TestCDAutoDep.SrcRef|dbo.TestCDAutoSrc.SrcId"]);
+
+        var graph = new DependencyGraph();
+        graph.Build(tables);
+        graph.AddCustomDependencies(customDepGroups);
+        var sorted = graph.GetTopologicalOrder();
+
+        var srcIdx = sorted.FindIndex(t => t.TableName == "TestCDAutoSrc");
+        var depIdx = sorted.FindIndex(t => t.TableName == "TestCDAutoDep");
+        Assert.True(srcIdx < depIdx,
+            "Auto-corrected: identity table (TestCDAutoSrc) must come before dependent");
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en",
+            customDependencies: customDepGroups);
+
+        // SrcRef on the dependent table should get customDependency, not SrcId on the source
+        var depPlan = plan.Tables.First(t => t.TableName == "TestCDAutoDep");
+        var srcRefCol = depPlan.Columns.First(c => c.Name == "SrcRef");
+        Assert.Equal("customDependency", srcRefCol.Generator);
+        Assert.Equal("dbo.TestCDAutoSrc", Helpers.GetArgString(srcRefCol.GeneratorArgs, "sourceTable"));
+        Assert.Equal("SrcId", Helpers.GetArgString(srcRefCol.GeneratorArgs, "sourceColumn"));
+
+        var srcPlan = plan.Tables.First(t => t.TableName == "TestCDAutoSrc");
+        var srcIdCol = srcPlan.Columns.First(c => c.Name == "SrcId");
+        Assert.Equal("skip", srcIdCol.Generator);
+
+        var valueGen = new ColumnValueGenerator(seed: Seed);
+        var inserter = new DataInserter(_fixture.ConnectionString, valueGen, graph.SelfReferencingTables);
+
+        foreach (var tp in plan.Tables.OrderBy(t => t.Order))
+        {
+            var staging = await inserter.StageToTempTableAsync(tp);
+            await inserter.InsertFromTempTableAsync(staging);
+        }
+
+        var sourceIds = await _fixture.ExecuteQueryAsync(
+            "SELECT SrcId FROM dbo.TestCDAutoSrc");
+        var sourceIdSet = sourceIds
+            .Select(r => (int)r["SrcId"]!)
+            .ToHashSet();
+
+        var depRows = await _fixture.ExecuteQueryAsync(
+            "SELECT SrcRef FROM dbo.TestCDAutoDep");
+
+        Assert.Equal(RowCount, depRows.Count);
+        foreach (var row in depRows)
+        {
+            var srcRef = (int)row["SrcRef"]!;
+            Assert.Contains(srcRef, sourceIdSet);
+        }
+    }
+
+    // ══════════════════════════════════════════════
+    // 67. Diamond FK — Cross-FK Correlated Row Sampling
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test67_DiamondForeignKey_CrossFkCorrelation()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiamondRoot (
+                RootId INT IDENTITY(1,1) PRIMARY KEY,
+                Label  NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiamondMid (
+                MidId  INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                Name   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_Mid_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDiamondRoot(RootId)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiamondLeaf (
+                LeafId INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                MidId  INT NOT NULL,
+                Info   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_Leaf_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDiamondRoot(RootId),
+                CONSTRAINT FK_Leaf_Mid  FOREIGN KEY (MidId)  REFERENCES dbo.TestDiamondMid(MidId)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestDiamondRoot", "TestDiamondMid", "TestDiamondLeaf");
+
+        await AssertNoOrphansAsync(
+            "dbo.TestDiamondMid", "dbo.TestDiamondRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync(
+            "dbo.TestDiamondLeaf", "dbo.TestDiamondRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync(
+            "dbo.TestDiamondLeaf", "dbo.TestDiamondMid", "MidId", "MidId");
+
+        // The key assertion: every (RootId, MidId) pair in the leaf table
+        // must correspond to a valid row in the mid table.
+        var mismatch = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDiamondLeaf l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.TestDiamondMid m
+                WHERE m.MidId = l.MidId AND m.RootId = l.RootId
+            )
+            """))!;
+        Assert.Equal(0, mismatch);
+    }
+
+    // ══════════════════════════════════════════════
+    // 68. Diamond FK — Non-Identity PK Root
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test68_DiamondFK_NonIdentityPkRoot()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaNiRoot (
+                Code NVARCHAR(10) NOT NULL PRIMARY KEY,
+                Label NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaNiMid (
+                MidId INT IDENTITY(1,1) PRIMARY KEY,
+                Code  NVARCHAR(10) NOT NULL,
+                Name  NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DiaNiMid_Root FOREIGN KEY (Code) REFERENCES dbo.TestDiaNiRoot(Code)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaNiLeaf (
+                LeafId INT IDENTITY(1,1) PRIMARY KEY,
+                Code   NVARCHAR(10) NOT NULL,
+                MidId  INT NOT NULL,
+                Info   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DiaNiLeaf_Root FOREIGN KEY (Code)  REFERENCES dbo.TestDiaNiRoot(Code),
+                CONSTRAINT FK_DiaNiLeaf_Mid  FOREIGN KEY (MidId) REFERENCES dbo.TestDiaNiMid(MidId)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestDiaNiRoot", "TestDiaNiMid", "TestDiaNiLeaf");
+
+        await AssertNoOrphansAsync("dbo.TestDiaNiMid",  "dbo.TestDiaNiRoot", "Code",  "Code");
+        await AssertNoOrphansAsync("dbo.TestDiaNiLeaf", "dbo.TestDiaNiRoot", "Code",  "Code");
+        await AssertNoOrphansAsync("dbo.TestDiaNiLeaf", "dbo.TestDiaNiMid",  "MidId", "MidId");
+
+        var mismatch = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDiaNiLeaf l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.TestDiaNiMid m
+                WHERE m.MidId = l.MidId AND m.Code = l.Code
+            )
+            """))!;
+        Assert.Equal(0, mismatch);
+    }
+
+    // ══════════════════════════════════════════════
+    // 69. Diamond FK — Nullable FK to Root
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test69_DiamondFK_NullableRootFk()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaNullRoot (
+                RootId INT IDENTITY(1,1) PRIMARY KEY,
+                Label  NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaNullMid (
+                MidId  INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                Name   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DiaNullMid_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDiaNullRoot(RootId)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaNullLeaf (
+                LeafId INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NULL,
+                MidId  INT NOT NULL,
+                Info   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DiaNullLeaf_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDiaNullRoot(RootId),
+                CONSTRAINT FK_DiaNullLeaf_Mid  FOREIGN KEY (MidId)  REFERENCES dbo.TestDiaNullMid(MidId)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestDiaNullRoot", "TestDiaNullMid", "TestDiaNullLeaf");
+
+        await AssertNoOrphansAsync("dbo.TestDiaNullMid",  "dbo.TestDiaNullRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDiaNullLeaf", "dbo.TestDiaNullMid",  "MidId",  "MidId");
+
+        // Rows where RootId IS NOT NULL must have a consistent (RootId, MidId) pair
+        var mismatch = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDiaNullLeaf l
+            WHERE l.RootId IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM dbo.TestDiaNullMid m
+                WHERE m.MidId = l.MidId AND m.RootId = l.RootId
+            )
+            """))!;
+        Assert.Equal(0, mismatch);
+
+        // Non-null FK to root must be valid
+        var orphanRoot = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDiaNullLeaf l
+            WHERE l.RootId IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM dbo.TestDiaNullRoot r WHERE r.RootId = l.RootId)
+            """))!;
+        Assert.Equal(0, orphanRoot);
+    }
+
+    // ══════════════════════════════════════════════
+    // 70. Diamond FK — Renamed FK Columns
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test70_DiamondFK_RenamedColumns()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaRenRoot (
+                RootId INT IDENTITY(1,1) PRIMARY KEY,
+                Label  NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaRenMid (
+                MidId      INT IDENTITY(1,1) PRIMARY KEY,
+                ParentRef  INT NOT NULL,
+                Name       NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DiaRenMid_Root FOREIGN KEY (ParentRef) REFERENCES dbo.TestDiaRenRoot(RootId)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDiaRenLeaf (
+                LeafId    INT IDENTITY(1,1) PRIMARY KEY,
+                OriginRef INT NOT NULL,
+                MidId     INT NOT NULL,
+                Info      NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DiaRenLeaf_Root FOREIGN KEY (OriginRef) REFERENCES dbo.TestDiaRenRoot(RootId),
+                CONSTRAINT FK_DiaRenLeaf_Mid  FOREIGN KEY (MidId)     REFERENCES dbo.TestDiaRenMid(MidId)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync("TestDiaRenRoot", "TestDiaRenMid", "TestDiaRenLeaf");
+
+        await AssertNoOrphansAsync("dbo.TestDiaRenMid",  "dbo.TestDiaRenRoot", "ParentRef", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDiaRenLeaf", "dbo.TestDiaRenRoot", "OriginRef", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDiaRenLeaf", "dbo.TestDiaRenMid",  "MidId",     "MidId");
+
+        // Every leaf row's (OriginRef, MidId) must match the mid row's (ParentRef, MidId)
+        var mismatch = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDiaRenLeaf l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.TestDiaRenMid m
+                WHERE m.MidId = l.MidId AND m.ParentRef = l.OriginRef
+            )
+            """))!;
+        Assert.Equal(0, mismatch);
+    }
+
+    // ══════════════════════════════════════════════
+    // 71. Double Diamond — Two Intermediates, One Root
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test71_DoubleDiamond_TwoIntermediates()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDblDiaRoot (
+                RootId INT IDENTITY(1,1) PRIMARY KEY,
+                Label  NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDblDiaMidA (
+                MidAId INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                Name   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DblDiaMidA_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDblDiaRoot(RootId)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDblDiaMidB (
+                MidBId INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                Tag    NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DblDiaMidB_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDblDiaRoot(RootId)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDblDiaLeaf (
+                LeafId INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                MidAId INT NOT NULL,
+                MidBId INT NOT NULL,
+                Info   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DblDiaLeaf_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDblDiaRoot(RootId),
+                CONSTRAINT FK_DblDiaLeaf_MidA FOREIGN KEY (MidAId) REFERENCES dbo.TestDblDiaMidA(MidAId),
+                CONSTRAINT FK_DblDiaLeaf_MidB FOREIGN KEY (MidBId) REFERENCES dbo.TestDblDiaMidB(MidBId)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync(
+            "TestDblDiaRoot", "TestDblDiaMidA", "TestDblDiaMidB", "TestDblDiaLeaf");
+
+        await AssertNoOrphansAsync("dbo.TestDblDiaMidA", "dbo.TestDblDiaRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDblDiaMidB", "dbo.TestDblDiaRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDblDiaLeaf", "dbo.TestDblDiaRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDblDiaLeaf", "dbo.TestDblDiaMidA", "MidAId", "MidAId");
+        await AssertNoOrphansAsync("dbo.TestDblDiaLeaf", "dbo.TestDblDiaMidB", "MidBId", "MidBId");
+
+        // Leaf's (RootId, MidAId) must match MidA
+        var mismatchA = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDblDiaLeaf l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.TestDblDiaMidA m
+                WHERE m.MidAId = l.MidAId AND m.RootId = l.RootId
+            )
+            """))!;
+        Assert.Equal(0, mismatchA);
+
+        // Leaf's (RootId, MidBId) must match MidB
+        var mismatchB = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDblDiaLeaf l
+            WHERE NOT EXISTS (
+                SELECT 1 FROM dbo.TestDblDiaMidB m
+                WHERE m.MidBId = l.MidBId AND m.RootId = l.RootId
+            )
+            """))!;
+        Assert.Equal(0, mismatchB);
+    }
+
+    // ══════════════════════════════════════════════
+    // 72. Deep Chain with Diamond (4 levels)
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task Test72_DeepChainDiamond()
+    {
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDeepDiaRoot (
+                RootId INT IDENTITY(1,1) PRIMARY KEY,
+                Label  NVARCHAR(50) NOT NULL
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDeepDiaMid1 (
+                Mid1Id INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                Name   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DeepDiaMid1_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDeepDiaRoot(RootId)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDeepDiaMid2 (
+                Mid2Id INT IDENTITY(1,1) PRIMARY KEY,
+                Mid1Id INT NOT NULL,
+                Tag    NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DeepDiaMid2_Mid1 FOREIGN KEY (Mid1Id) REFERENCES dbo.TestDeepDiaMid1(Mid1Id)
+            )
+            """);
+
+        await _fixture.ExecuteSqlAsync("""
+            CREATE TABLE dbo.TestDeepDiaLeaf (
+                LeafId INT IDENTITY(1,1) PRIMARY KEY,
+                RootId INT NOT NULL,
+                Mid2Id INT NOT NULL,
+                Info   NVARCHAR(50) NOT NULL,
+                CONSTRAINT FK_DeepDiaLeaf_Root FOREIGN KEY (RootId) REFERENCES dbo.TestDeepDiaRoot(RootId),
+                CONSTRAINT FK_DeepDiaLeaf_Mid2 FOREIGN KEY (Mid2Id) REFERENCES dbo.TestDeepDiaMid2(Mid2Id)
+            )
+            """);
+
+        await GenerateAndVerifyCountAsync(
+            "TestDeepDiaRoot", "TestDeepDiaMid1", "TestDeepDiaMid2", "TestDeepDiaLeaf");
+
+        await AssertNoOrphansAsync("dbo.TestDeepDiaMid1", "dbo.TestDeepDiaRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDeepDiaMid2", "dbo.TestDeepDiaMid1", "Mid1Id", "Mid1Id");
+        await AssertNoOrphansAsync("dbo.TestDeepDiaLeaf", "dbo.TestDeepDiaRoot", "RootId", "RootId");
+        await AssertNoOrphansAsync("dbo.TestDeepDiaLeaf", "dbo.TestDeepDiaMid2", "Mid2Id", "Mid2Id");
+
+        // Leaf's RootId must be consistent through the chain:
+        // Leaf -> Mid2 -> Mid1 -> Root, so Leaf.RootId must equal Mid1.RootId
+        // where Mid1 is the parent of Mid2 referenced by the leaf.
+        var mismatch = (int)(await _fixture.ExecuteScalarAsync("""
+            SELECT COUNT(*) FROM dbo.TestDeepDiaLeaf l
+            INNER JOIN dbo.TestDeepDiaMid2 m2 ON m2.Mid2Id = l.Mid2Id
+            INNER JOIN dbo.TestDeepDiaMid1 m1 ON m1.Mid1Id = m2.Mid1Id
+            WHERE m1.RootId <> l.RootId
+            """))!;
+        Assert.Equal(0, mismatch);
     }
 }

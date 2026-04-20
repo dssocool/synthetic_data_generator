@@ -32,11 +32,11 @@ var parsed = ParseArgs(args);
 
 switch (parsed.Subcommand)
 {
-    case "bootstrap" when parsed.GeneratePlan:
-        await orchestrator.RunGeneratePlanAsync(parsed.Arg ?? "plan.yaml", "bootstrap");
+    case "insert" when parsed.GeneratePlan:
+        await orchestrator.RunGeneratePlanAsync(parsed.Arg ?? "plan.yaml", "insert");
         break;
-    case "bootstrap":
-        await orchestrator.RunDirectAsync("bootstrap");
+    case "insert":
+        await orchestrator.RunDirectAsync("insert");
         break;
     case "update" when parsed.GeneratePlan:
         await orchestrator.RunGeneratePlanAsync(parsed.Arg ?? "plan.yaml", "update");
@@ -65,10 +65,10 @@ static ParsedArgs ParseArgs(string[] args)
     {
         switch (args[i])
         {
-            case "bootstrap" or "update" when subcommand is null:
+            case "insert" or "update" when subcommand is null:
                 subcommand = args[i];
                 break;
-            case "--generate-plan" when subcommand is "bootstrap" or "update":
+            case "--generate-plan" when subcommand is "insert" or "update":
                 generatePlan = true;
                 if (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
                     arg = args[++i];
@@ -87,8 +87,8 @@ static ParsedArgs ParseArgs(string[] args)
 static void PrintUsage()
 {
     Console.WriteLine("Usage:");
-    Console.WriteLine("  dotnet run -- bootstrap                          Insert synthetic data directly");
-    Console.WriteLine("  dotnet run -- bootstrap --generate-plan [path]   Generate a plan file without inserting");
+    Console.WriteLine("  dotnet run -- insert                             Insert synthetic data directly");
+    Console.WriteLine("  dotnet run -- insert --generate-plan [path]      Generate a plan file without inserting");
     Console.WriteLine("  dotnet run -- update                             Update existing data directly");
     Console.WriteLine("  dotnet run -- update --generate-plan [path]      Generate an update plan file");
     Console.WriteLine("  dotnet run -- --execute-plan <path>              Execute a previously generated plan");

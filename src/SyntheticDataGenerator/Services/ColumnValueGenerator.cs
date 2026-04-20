@@ -68,6 +68,9 @@ public class ColumnValueGenerator
         if (string.Equals(plan.Generator, "foreignKey", StringComparison.OrdinalIgnoreCase))
             return null;
 
+        if (string.Equals(plan.Generator, "customDependency", StringComparison.OrdinalIgnoreCase))
+            return null;
+
         if (!string.IsNullOrWhiteSpace(plan.ValuesFile))
         {
             var values = LoadValuesFile(plan.ValuesFile, plan.Name);

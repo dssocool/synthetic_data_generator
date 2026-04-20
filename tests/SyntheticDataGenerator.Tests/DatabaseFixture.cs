@@ -1,20 +1,37 @@
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Configuration;
 
 namespace SyntheticDataGenerator.Tests;
 
 public class DatabaseFixture : IAsyncLifetime
 {
-    private const string MasterConnectionString =
-        @"Data Source=(localdb)\MSSQLLocalDB;Initial Catalog=master;Integrated Security=True;Encrypt=True;TrustServerCertificate=True";
+    private readonly string _masterConnectionString;
 
     public string DatabaseName { get; } = $"SyntheticDataGenTest_{Guid.NewGuid():N}";
 
-    public string ConnectionString =>
-        $@"Data Source=(localdb)\MSSQLLocalDB;Initial Catalog={DatabaseName};Integrated Security=True;Encrypt=True;TrustServerCertificate=True";
+    public string ConnectionString { get; }
+
+    public DatabaseFixture()
+    {
+        var config = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddYamlFile("appsettings.yaml", optional: false)
+            .Build();
+
+        var baseConnStr = config["ConnectionString"]
+            ?? throw new InvalidOperationException("ConnectionString is required in appsettings.yaml");
+
+        var builder = new SqlConnectionStringBuilder(baseConnStr);
+        builder.InitialCatalog = "master";
+        _masterConnectionString = builder.ConnectionString;
+
+        builder.InitialCatalog = DatabaseName;
+        ConnectionString = builder.ConnectionString;
+    }
 
     public async Task InitializeAsync()
     {
-        await using var connection = new SqlConnection(MasterConnectionString);
+        await using var connection = new SqlConnection(_masterConnectionString);
         await connection.OpenAsync();
 
         await using var checkCmd = new SqlCommand(
@@ -35,7 +52,7 @@ public class DatabaseFixture : IAsyncLifetime
     {
         try
         {
-            await using var connection = new SqlConnection(MasterConnectionString);
+            await using var connection = new SqlConnection(_masterConnectionString);
             await connection.OpenAsync();
 
             await using var cmd = new SqlCommand($"""

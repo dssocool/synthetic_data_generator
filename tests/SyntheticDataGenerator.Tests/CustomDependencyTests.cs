@@ -28,7 +28,7 @@ public class CustomDependencyTests
     [Fact]
     public void ParseCustomDependencies_BasicGroup()
     {
-        var raw = new[] { "dbo.Orders.RegionCode,dbo.Regions.Code,dbo.RegionStats.RegionCode" };
+        var raw = new[] { "dbo.Orders.RegionCode|dbo.Regions.Code|dbo.RegionStats.RegionCode" };
         var groups = ScopeConfig.ParseCustomDependencies(raw);
 
         Assert.Single(groups);
@@ -46,8 +46,8 @@ public class CustomDependencyTests
     {
         var raw = new[]
         {
-            "dbo.Orders.RegionCode,dbo.Regions.Code",
-            "dbo.Products.CategoryName,dbo.Categories.Name"
+            "dbo.Orders.RegionCode|dbo.Regions.Code",
+            "dbo.Products.CategoryName|dbo.Categories.Name"
         };
         var groups = ScopeConfig.ParseCustomDependencies(raw);
 
@@ -61,7 +61,7 @@ public class CustomDependencyTests
     [Fact]
     public void ParseCustomDependencies_SkipsEmptyAndWhitespace()
     {
-        var raw = new[] { "", "  ", "dbo.A.Col1,dbo.B.Col2" };
+        var raw = new[] { "", "  ", "dbo.A.Col1|dbo.B.Col2" };
         var groups = ScopeConfig.ParseCustomDependencies(raw);
 
         Assert.Single(groups);
@@ -77,9 +77,9 @@ public class CustomDependencyTests
     }
 
     [Fact]
-    public void ParseCustomDependencies_HandlesSpacesAroundCommas()
+    public void ParseCustomDependencies_HandlesSpacesAroundPipes()
     {
-        var raw = new[] { "dbo.Orders.Col1 , dbo.Regions.Col2 , dbo.Stats.Col3" };
+        var raw = new[] { "dbo.Orders.Col1 | dbo.Regions.Col2 | dbo.Stats.Col3" };
         var groups = ScopeConfig.ParseCustomDependencies(raw);
 
         Assert.Single(groups);
@@ -108,7 +108,7 @@ public class CustomDependencyTests
             MakeTable("dbo", "Regions", "Code")
         };
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.RegionCode,dbo.Regions.Code"]);
+            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
 
         var errors = DataGenerationPlanner.CollectCustomDependencyErrors(groups, tables);
 
@@ -123,7 +123,7 @@ public class CustomDependencyTests
             MakeTable("dbo", "Orders", "RegionCode")
         };
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.RegionCode,dbo.Regions.Code"]);
+            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
 
         var errors = DataGenerationPlanner.CollectCustomDependencyErrors(groups, tables);
 
@@ -141,7 +141,7 @@ public class CustomDependencyTests
             MakeTable("dbo", "Regions")
         };
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.RegionCode,dbo.Regions.Code"]);
+            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
 
         var errors = DataGenerationPlanner.CollectCustomDependencyErrors(groups, tables);
 
@@ -158,7 +158,7 @@ public class CustomDependencyTests
             MakeTable("dbo", "Orders")
         };
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.RegionCode,dbo.Regions.Code"]);
+            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
 
         var errors = DataGenerationPlanner.CollectCustomDependencyErrors(groups, tables);
 
@@ -179,7 +179,7 @@ public class CustomDependencyTests
         graph.Build([regions, orders]);
 
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
         graph.AddCustomDependencies(groups);
 
         var sorted = graph.GetTopologicalOrder();
@@ -201,7 +201,7 @@ public class CustomDependencyTests
         graph.Build([regions, orders, stats]);
 
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode,dbo.RegionStats.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode|dbo.RegionStats.RegionCode"]);
         graph.AddCustomDependencies(groups);
 
         var sorted = graph.GetTopologicalOrder();
@@ -222,7 +222,7 @@ public class CustomDependencyTests
         graph.Build([orders]);
 
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
         graph.AddCustomDependencies(groups);
 
         var sorted = graph.GetTopologicalOrder();
@@ -239,7 +239,7 @@ public class CustomDependencyTests
         graph.Build([orders]);
 
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.Col1,dbo.Orders.Col2"]);
+            ["dbo.Orders.Col1|dbo.Orders.Col2"]);
         graph.AddCustomDependencies(groups);
 
         var sorted = graph.GetTopologicalOrder();
@@ -257,8 +257,8 @@ public class CustomDependencyTests
 
         var groups = ScopeConfig.ParseCustomDependencies(
         [
-            "dbo.TableA.Col1,dbo.TableB.Col1",
-            "dbo.TableB.Col1,dbo.TableA.Col1"
+            "dbo.TableA.Col1|dbo.TableB.Col1",
+            "dbo.TableB.Col1|dbo.TableA.Col1"
         ]);
         graph.AddCustomDependencies(groups);
 
@@ -291,7 +291,7 @@ public class CustomDependencyTests
         var graph = new DependencyGraph();
         graph.Build([regions, orders]);
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
         graph.AddCustomDependencies(groups);
         var sorted = graph.GetTopologicalOrder();
 
@@ -315,7 +315,7 @@ public class CustomDependencyTests
         var graph = new DependencyGraph();
         graph.Build([regions, orders]);
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
         graph.AddCustomDependencies(groups);
         var sorted = graph.GetTopologicalOrder();
 
@@ -339,7 +339,7 @@ public class CustomDependencyTests
         var graph = new DependencyGraph();
         graph.Build([regions, orders, stats]);
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode,dbo.RegionStats.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode|dbo.RegionStats.RegionCode"]);
         graph.AddCustomDependencies(groups);
         var sorted = graph.GetTopologicalOrder();
 
@@ -386,7 +386,7 @@ public class CustomDependencyTests
         var graph = new DependencyGraph();
         graph.Build([customers, table]);
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Customers.Id,dbo.Orders.CustomerId"]);
+            ["dbo.Customers.Id|dbo.Orders.CustomerId"]);
         graph.AddCustomDependencies(groups);
         var sorted = graph.GetTopologicalOrder();
 
@@ -405,7 +405,7 @@ public class CustomDependencyTests
         var a = MakeTable("dbo", "TableA", "Col1");
         var b = MakeTable("dbo", "TableB", "Col1");
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.TableA.Col1,dbo.TableB.Col1"]);
+            ["dbo.TableA.Col1|dbo.TableB.Col1"]);
 
         var graph = new DependencyGraph();
         graph.Build([a, b]);
@@ -434,6 +434,269 @@ public class CustomDependencyTests
 
     #endregion
 
+    #region Runtime linking tests
+
+    [Fact]
+    public void ColumnValueGenerator_CustomDependency_ReturnsNull()
+    {
+        var gen = new ColumnValueGenerator(seed: 42);
+        var plan = new ColumnPlan
+        {
+            Name = "RegionCode",
+            SqlType = "int",
+            Generator = "customDependency",
+            GeneratorArgs = new Dictionary<string, object?>
+            {
+                ["sourceTable"] = "dbo.Regions",
+                ["sourceColumn"] = "Code"
+            }
+        };
+
+        var result = gen.GenerateFromPlan(plan);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void BuildCustomDepGroupsFromPlan_ExtractsGroups()
+    {
+        var columns = new List<ColumnPlan>
+        {
+            new()
+            {
+                Name = "Id", SqlType = "int", IsPrimaryKey = true,
+                Generator = "Random.Int"
+            },
+            new()
+            {
+                Name = "RegionCode", SqlType = "int",
+                Generator = "customDependency",
+                GeneratorArgs = new Dictionary<string, object?>
+                {
+                    ["sourceTable"] = "dbo.Regions",
+                    ["sourceColumn"] = "Code"
+                }
+            },
+            new()
+            {
+                Name = "Name", SqlType = "nvarchar", MaxLength = 100,
+                Generator = "Lorem.Word"
+            }
+        };
+
+        var groups = DataInserter.BuildCustomDepGroupsFromPlan(columns);
+
+        Assert.Single(groups);
+        Assert.Equal("dbo.Regions", groups[0].SourceTable);
+        Assert.Equal("Code", groups[0].SourceColumn);
+        Assert.Equal("RegionCode", groups[0].DependentColumn);
+    }
+
+    [Fact]
+    public void BuildCustomDepGroupsFromPlan_EmptyWhenNoCustomDeps()
+    {
+        var columns = new List<ColumnPlan>
+        {
+            new() { Name = "Id", SqlType = "int", Generator = "Random.Int" },
+            new() { Name = "Name", SqlType = "nvarchar", MaxLength = 100, Generator = "Lorem.Word" }
+        };
+
+        var groups = DataInserter.BuildCustomDepGroupsFromPlan(columns);
+
+        Assert.Empty(groups);
+    }
+
+    [Fact]
+    public void BuildCustomDepGroupsFromPlan_MultipleCustomDeps()
+    {
+        var columns = new List<ColumnPlan>
+        {
+            new()
+            {
+                Name = "RegionCode", SqlType = "int",
+                Generator = "customDependency",
+                GeneratorArgs = new Dictionary<string, object?>
+                {
+                    ["sourceTable"] = "dbo.Regions",
+                    ["sourceColumn"] = "Code"
+                }
+            },
+            new()
+            {
+                Name = "CategoryId", SqlType = "int",
+                Generator = "customDependency",
+                GeneratorArgs = new Dictionary<string, object?>
+                {
+                    ["sourceTable"] = "dbo.Categories",
+                    ["sourceColumn"] = "Id"
+                }
+            }
+        };
+
+        var groups = DataInserter.BuildCustomDepGroupsFromPlan(columns);
+
+        Assert.Equal(2, groups.Count);
+        Assert.Equal("dbo.Regions", groups[0].SourceTable);
+        Assert.Equal("dbo.Categories", groups[1].SourceTable);
+    }
+
+    [Fact]
+    public void BuildCustomDepGroupsFromPlan_PreservesNullability()
+    {
+        var columns = new List<ColumnPlan>
+        {
+            new()
+            {
+                Name = "RegionCode", SqlType = "int", IsNullable = true,
+                Generator = "customDependency",
+                GeneratorArgs = new Dictionary<string, object?>
+                {
+                    ["sourceTable"] = "dbo.Regions",
+                    ["sourceColumn"] = "Code"
+                }
+            }
+        };
+
+        var groups = DataInserter.BuildCustomDepGroupsFromPlan(columns);
+
+        Assert.Single(groups);
+        Assert.True(groups[0].IsNullable);
+    }
+
+    [Fact]
+    public void ResolveCustomDepValues_CopiesValueFromSourceTable()
+    {
+        var valueGen = new ColumnValueGenerator(seed: 42);
+        var inserter = new DataInserter("unused", valueGen, new HashSet<string>());
+
+        inserter._generatedKeys["dbo.Regions"] =
+        [
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Code"] = 10 },
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Code"] = 20 },
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Code"] = 30 },
+        ];
+
+        var groups = new List<DataInserter.CustomDepGroup>
+        {
+            new("dbo.Regions", "Code", "RegionCode", false)
+        };
+
+        var resolved = inserter.ResolveCustomDepValues(groups);
+
+        Assert.Single(resolved);
+        Assert.True(resolved.ContainsKey("RegionCode"));
+        var value = (int)resolved["RegionCode"]!;
+        Assert.Contains(value, new[] { 10, 20, 30 });
+    }
+
+    [Fact]
+    public void ResolveCustomDepValues_ReturnsEmptyWhenNoSourceData()
+    {
+        var valueGen = new ColumnValueGenerator(seed: 42);
+        var inserter = new DataInserter("unused", valueGen, new HashSet<string>());
+
+        var groups = new List<DataInserter.CustomDepGroup>
+        {
+            new("dbo.Regions", "Code", "RegionCode", false)
+        };
+
+        var resolved = inserter.ResolveCustomDepValues(groups);
+
+        Assert.Empty(resolved);
+    }
+
+    [Fact]
+    public void ResolveCustomDepValues_ReturnsEmptyWhenNullGroups()
+    {
+        var valueGen = new ColumnValueGenerator(seed: 42);
+        var inserter = new DataInserter("unused", valueGen, new HashSet<string>());
+
+        var resolved = inserter.ResolveCustomDepValues(null);
+
+        Assert.Empty(resolved);
+    }
+
+    [Fact]
+    public void ResolveCustomDepValues_MultipleDepsSameSource()
+    {
+        var valueGen = new ColumnValueGenerator(seed: 42);
+        var inserter = new DataInserter("unused", valueGen, new HashSet<string>());
+
+        inserter._generatedKeys["dbo.Lookup"] =
+        [
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Id"] = 5,
+                ["Name"] = "Test"
+            },
+        ];
+
+        var groups = new List<DataInserter.CustomDepGroup>
+        {
+            new("dbo.Lookup", "Id", "LookupId", false),
+            new("dbo.Lookup", "Name", "LookupName", false),
+        };
+
+        var resolved = inserter.ResolveCustomDepValues(groups);
+
+        Assert.Equal(2, resolved.Count);
+        Assert.Equal(5, resolved["LookupId"]);
+        Assert.Equal("Test", resolved["LookupName"]);
+    }
+
+    [Fact]
+    public void ResolveCustomDepValues_AllRowsPickedOverManyIterations()
+    {
+        var valueGen = new ColumnValueGenerator(seed: 42);
+        var inserter = new DataInserter("unused", valueGen, new HashSet<string>());
+
+        inserter._generatedKeys["dbo.Regions"] =
+        [
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Code"] = 1 },
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Code"] = 2 },
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Code"] = 3 },
+        ];
+
+        var groups = new List<DataInserter.CustomDepGroup>
+        {
+            new("dbo.Regions", "Code", "RegionCode", false)
+        };
+
+        var seenValues = new HashSet<int>();
+        for (var i = 0; i < 200; i++)
+        {
+            var resolved = inserter.ResolveCustomDepValues(groups);
+            seenValues.Add((int)resolved["RegionCode"]!);
+        }
+
+        Assert.Contains(1, seenValues);
+        Assert.Contains(2, seenValues);
+        Assert.Contains(3, seenValues);
+    }
+
+    [Fact]
+    public void ResolveCustomDepValues_SkipsColumnNotInSourceRow()
+    {
+        var valueGen = new ColumnValueGenerator(seed: 42);
+        var inserter = new DataInserter("unused", valueGen, new HashSet<string>());
+
+        inserter._generatedKeys["dbo.Regions"] =
+        [
+            new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase) { ["Id"] = 1 },
+        ];
+
+        var groups = new List<DataInserter.CustomDepGroup>
+        {
+            new("dbo.Regions", "NonExistentColumn", "RegionCode", false)
+        };
+
+        var resolved = inserter.ResolveCustomDepValues(groups);
+
+        Assert.Empty(resolved);
+    }
+
+    #endregion
+
     #region YAML round-trip tests
 
     [Fact]
@@ -441,7 +704,7 @@ public class CustomDependencyTests
     {
         var plan = new GenerationPlan
         {
-            Mode = "bootstrap",
+            Mode = "insert",
             Seed = 42,
             Locale = "en",
             Tables = [],
@@ -487,7 +750,7 @@ public class CustomDependencyTests
     {
         var plan = new GenerationPlan
         {
-            Mode = "bootstrap",
+            Mode = "insert",
             Tables = [],
             CustomDependencies = null
         };
@@ -515,7 +778,7 @@ public class CustomDependencyTests
         var graph = new DependencyGraph();
         graph.Build([regions, orders]);
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Regions.Code,dbo.Orders.RegionCode"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
         graph.AddCustomDependencies(groups);
         var sorted = graph.GetTopologicalOrder();
 
