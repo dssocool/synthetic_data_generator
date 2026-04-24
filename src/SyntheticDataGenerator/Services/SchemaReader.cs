@@ -12,30 +12,56 @@ public class SchemaReader
         _connectionString = connectionString;
     }
 
-    public async Task<List<TableInfo>> ReadSchemaAsync(string? schemaFilter = null)
+    public async Task<List<TableInfo>> ReadSchemaAsync(string[]? schemaFilter = null)
     {
         var tables = new Dictionary<string, TableInfo>();
 
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync();
 
-        await ReadTablesAndColumns(connection, tables, schemaFilter);
-        await ReadPrimaryKeys(connection, tables, schemaFilter);
-        await ReadForeignKeys(connection, tables, schemaFilter);
-        await ReadDefaultConstraints(connection, tables, schemaFilter);
+        var filterClause = BuildSchemaFilterClause(schemaFilter);
+
+        await ReadTablesAndColumns(connection, tables, schemaFilter, filterClause);
+        await ReadPrimaryKeys(connection, tables, schemaFilter, filterClause);
+        await ReadForeignKeys(connection, tables, schemaFilter, filterClause);
+        await ReadDefaultConstraints(connection, tables, schemaFilter, filterClause);
         MarkSequenceDefaults(tables);
-        await ReadCheckConstraints(connection, tables, schemaFilter);
-        await ReadUniqueConstraints(connection, tables, schemaFilter);
+        await ReadCheckConstraints(connection, tables, schemaFilter, filterClause);
+        await ReadUniqueConstraints(connection, tables, schemaFilter, filterClause);
 
         return tables.Values.ToList();
+    }
+
+    /// <summary>
+    /// Builds a SQL WHERE fragment for filtering by schema names.
+    /// Returns "1=1" (no filter) when schemaFilter is null/empty,
+    /// or "s.name IN (@S0, @S1, ...)" for one or more schemas.
+    /// </summary>
+    private static string BuildSchemaFilterClause(string[]? schemaFilter)
+    {
+        if (schemaFilter is not { Length: > 0 })
+            return "1=1";
+
+        var paramNames = string.Join(", ", schemaFilter.Select((_, i) => $"@S{i}"));
+        return $"s.name IN ({paramNames})";
+    }
+
+    private static void AddSchemaFilterParameters(SqlCommand cmd, string[]? schemaFilter)
+    {
+        if (schemaFilter is not { Length: > 0 })
+            return;
+
+        for (var i = 0; i < schemaFilter.Length; i++)
+            cmd.Parameters.AddWithValue($"@S{i}", schemaFilter[i]);
     }
 
     private static async Task ReadTablesAndColumns(
         SqlConnection connection,
         Dictionary<string, TableInfo> tables,
-        string? schemaFilter)
+        string[]? schemaFilter,
+        string filterClause)
     {
-        const string sql = """
+        var sql = $"""
             SELECT
                 s.name       AS SchemaName,
                 t.name       AS TableName,
@@ -55,12 +81,12 @@ public class SchemaReader
             INNER JOIN sys.types tp  ON tp.user_type_id = c.user_type_id
             WHERE t.is_ms_shipped = 0
               AND t.name NOT IN ('__EFMigrationsHistory', '__MigrationHistory', 'sysdiagrams')
-              AND (@SchemaFilter IS NULL OR @SchemaFilter = '' OR s.name = @SchemaFilter)
+              AND ({filterClause})
             ORDER BY s.name, t.name, c.column_id
             """;
 
         await using var cmd = new SqlCommand(sql, connection);
-        cmd.Parameters.AddWithValue("@SchemaFilter", (object?)schemaFilter ?? DBNull.Value);
+        AddSchemaFilterParameters(cmd, schemaFilter);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -95,9 +121,10 @@ public class SchemaReader
     private static async Task ReadPrimaryKeys(
         SqlConnection connection,
         Dictionary<string, TableInfo> tables,
-        string? schemaFilter)
+        string[]? schemaFilter,
+        string filterClause)
     {
-        const string sql = """
+        var sql = $"""
             SELECT
                 s.name  AS SchemaName,
                 t.name  AS TableName,
@@ -111,12 +138,12 @@ public class SchemaReader
                                            AND c.column_id = ic.column_id
             WHERE kc.type = 'PK'
               AND t.is_ms_shipped = 0
-              AND (@SchemaFilter IS NULL OR @SchemaFilter = '' OR s.name = @SchemaFilter)
+              AND ({filterClause})
             ORDER BY s.name, t.name, ic.key_ordinal
             """;
 
         await using var cmd = new SqlCommand(sql, connection);
-        cmd.Parameters.AddWithValue("@SchemaFilter", (object?)schemaFilter ?? DBNull.Value);
+        AddSchemaFilterParameters(cmd, schemaFilter);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -140,9 +167,11 @@ public class SchemaReader
     private static async Task ReadForeignKeys(
         SqlConnection connection,
         Dictionary<string, TableInfo> tables,
-        string? schemaFilter)
+        string[]? schemaFilter,
+        string filterClause)
     {
-        const string sql = """
+        var parentFilterClause = filterClause.Replace("s.name", "s_parent.name");
+        var sql = $"""
             SELECT
                 fk.name            AS FkName,
                 s_parent.name      AS ParentSchema,
@@ -162,12 +191,12 @@ public class SchemaReader
             INNER JOIN sys.columns c_ref           ON c_ref.object_id = fkc.referenced_object_id
                                                    AND c_ref.column_id = fkc.referenced_column_id
             WHERE t_parent.is_ms_shipped = 0
-              AND (@SchemaFilter IS NULL OR @SchemaFilter = '' OR s_parent.name = @SchemaFilter)
+              AND ({parentFilterClause})
             ORDER BY fk.name, fkc.constraint_column_id
             """;
 
         await using var cmd = new SqlCommand(sql, connection);
-        cmd.Parameters.AddWithValue("@SchemaFilter", (object?)schemaFilter ?? DBNull.Value);
+        AddSchemaFilterParameters(cmd, schemaFilter);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -195,9 +224,10 @@ public class SchemaReader
     private static async Task ReadDefaultConstraints(
         SqlConnection connection,
         Dictionary<string, TableInfo> tables,
-        string? schemaFilter)
+        string[]? schemaFilter,
+        string filterClause)
     {
-        const string sql = """
+        var sql = $"""
             SELECT
                 s.name  AS SchemaName,
                 t.name  AS TableName,
@@ -209,12 +239,12 @@ public class SchemaReader
             INNER JOIN sys.tables t  ON t.object_id = dc.parent_object_id
             INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
             WHERE t.is_ms_shipped = 0
-              AND (@SchemaFilter IS NULL OR @SchemaFilter = '' OR s.name = @SchemaFilter)
+              AND ({filterClause})
             ORDER BY s.name, t.name, c.column_id
             """;
 
         await using var cmd = new SqlCommand(sql, connection);
-        cmd.Parameters.AddWithValue("@SchemaFilter", (object?)schemaFilter ?? DBNull.Value);
+        AddSchemaFilterParameters(cmd, schemaFilter);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -238,9 +268,10 @@ public class SchemaReader
     private static async Task ReadCheckConstraints(
         SqlConnection connection,
         Dictionary<string, TableInfo> tables,
-        string? schemaFilter)
+        string[]? schemaFilter,
+        string filterClause)
     {
-        const string sql = """
+        var sql = $"""
             SELECT
                 s.name  AS SchemaName,
                 t.name  AS TableName,
@@ -251,12 +282,12 @@ public class SchemaReader
             INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
             WHERE t.is_ms_shipped = 0
               AND cc.is_disabled = 0
-              AND (@SchemaFilter IS NULL OR @SchemaFilter = '' OR s.name = @SchemaFilter)
+              AND ({filterClause})
             ORDER BY s.name, t.name, cc.name
             """;
 
         await using var cmd = new SqlCommand(sql, connection);
-        cmd.Parameters.AddWithValue("@SchemaFilter", (object?)schemaFilter ?? DBNull.Value);
+        AddSchemaFilterParameters(cmd, schemaFilter);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -279,9 +310,10 @@ public class SchemaReader
     private static async Task ReadUniqueConstraints(
         SqlConnection connection,
         Dictionary<string, TableInfo> tables,
-        string? schemaFilter)
+        string[]? schemaFilter,
+        string filterClause)
     {
-        const string sql = """
+        var sql = $"""
             SELECT
                 s.name  AS SchemaName,
                 t.name  AS TableName,
@@ -300,12 +332,12 @@ public class SchemaReader
             WHERE i.is_unique = 1
               AND i.is_primary_key = 0
               AND t.is_ms_shipped = 0
-              AND (@SchemaFilter IS NULL OR @SchemaFilter = '' OR s.name = @SchemaFilter)
+              AND ({filterClause})
             ORDER BY s.name, t.name, i.name, ic.key_ordinal
             """;
 
         await using var cmd = new SqlCommand(sql, connection);
-        cmd.Parameters.AddWithValue("@SchemaFilter", (object?)schemaFilter ?? DBNull.Value);
+        AddSchemaFilterParameters(cmd, schemaFilter);
 
         var constraintData = new Dictionary<(string FullName, string IndexName), (List<string> Columns, string? Filter)>();
 

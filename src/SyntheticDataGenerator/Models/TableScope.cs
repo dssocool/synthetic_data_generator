@@ -10,7 +10,7 @@ public class TableScope
 
 public class ScopeConfig
 {
-    public string? SchemaFilter { get; }
+    public string[]? SchemaFilter { get; }
     public TableScope[] TablesToInclude { get; }
     public int RowsPerTable { get; }
     public int? Seed { get; }
@@ -18,19 +18,37 @@ public class ScopeConfig
     public string[] CustomDependencies { get; }
 
     public ScopeConfig(
-        string? schemaFilter,
+        string[]? schemaFilter,
         TableScope[] tablesToInclude,
         int rowsPerTable,
         int? seed,
         string locale,
         string[]? customDependencies = null)
     {
-        SchemaFilter = schemaFilter;
+        SchemaFilter = schemaFilter is { Length: > 0 } ? schemaFilter : null;
         TablesToInclude = tablesToInclude;
         RowsPerTable = rowsPerTable;
         Seed = seed;
         Locale = locale;
         CustomDependencies = customDependencies ?? [];
+    }
+
+    /// <summary>
+    /// Parses the Schema config section, supporting both a single string and a list of strings.
+    /// </summary>
+    public static string[]? ParseSchemaFilter(IConfigurationSection section)
+    {
+        var singleValue = section.Value;
+        if (!string.IsNullOrWhiteSpace(singleValue))
+            return [singleValue];
+
+        var list = section.GetChildren()
+            .Select(c => c.Value)
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Cast<string>()
+            .ToArray();
+
+        return list.Length > 0 ? list : null;
     }
 
     /// <summary>

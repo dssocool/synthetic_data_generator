@@ -14,8 +14,7 @@ public class DataGenerationPlanner : IDataGenerationPlanner
         var columnScope = scope.BuildColumnScope();
 
         var schemaReader = new SchemaReader(command.ConnectionString);
-        var allTables = await schemaReader.ReadSchemaAsync(
-            string.IsNullOrWhiteSpace(scope.SchemaFilter) ? null : scope.SchemaFilter);
+        var allTables = await schemaReader.ReadSchemaAsync(scope.SchemaFilter);
 
         var tables = allTables;
         var errors = new List<string>();

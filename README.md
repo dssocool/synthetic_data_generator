@@ -9,7 +9,7 @@ A .NET console application that connects to a Microsoft SQL Server database, rea
 - **Smart value generation** — column names are matched against heuristic rules (e.g. `email` → realistic email, `first_name` → realistic first name). When no name rule matches, values are generated based on the SQL data type.
 - **External dependency detection** — warns when foreign keys reference tables outside the current scope (outbound) or when external tables reference scoped tables (inbound).
 - **Custom dependency ordering** — define non-FK column relationships so tables are inserted in the right order even without formal foreign keys.
-- **Table and column filtering** — optionally restrict generation to a specific schema, an explicit list of tables, and per-table column lists.
+- **Table and column filtering** — optionally restrict generation to one or more schemas, an explicit list of tables, and per-table column lists.
 - **Locale support** — generated data can target different locales (defaults to `en`).
 - **Seeded generation** — supply a seed for reproducible output.
 
@@ -29,8 +29,12 @@ ConnectionString: Server=YOUR_SERVER;Trusted_Connection=True;TrustServerCertific
 # Optional: database name. Overrides Initial Catalog / Database in the connection string.
 DatabaseName: YOUR_DATABASE
 
-# Optional: restrict generation to a single schema. Defaults to all schemas.
+# Optional: restrict generation to specific schemas. Defaults to all schemas.
+# Supports a single value or a list:
 Schema: dbo
+# Schema:
+#   - dbo
+#   - sales
 
 # Optional: tables (and optionally columns) in scope. Defaults to all tables.
 # Two formats are supported and can be mixed:
