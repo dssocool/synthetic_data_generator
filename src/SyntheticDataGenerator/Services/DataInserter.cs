@@ -106,10 +106,21 @@ public class DataInserter
                          && attempt < MaxPkRetries);
 
                 if (attempt >= MaxPkRetries)
+                {
+                    var narrowCols = tablePlan.Columns
+                        .Where(c => (c.IsPrimaryKey || c.IsUnique)
+                                    && !c.Generator.Equals("skip", StringComparison.OrdinalIgnoreCase))
+                        .Select(c => $"{c.Name} ({c.SqlType}({c.MaxLength}))")
+                        .ToList();
+                    var colDetail = narrowCols.Count > 0
+                        ? $" Narrow unique/PK columns: {string.Join(", ", narrowCols)}."
+                        : "";
                     throw new InvalidOperationException(
-                        $"Could not generate unique values for [{fullName}] " +
-                        $"after {MaxPkRetries} attempts. Consider reducing RowsPerTable or " +
-                        $"using a wider value range.");
+                        $"Could not generate unique values for [{fullName}] row {i + 1}/{tablePlan.RowCount} " +
+                        $"after {MaxPkRetries} attempts.{colDetail} " +
+                        $"Consider reducing rowCount for this table in the plan file, " +
+                        $"or using a wider value range.");
+                }
             }
             catch (DataGenerationException) { throw; }
             catch (Exception ex)

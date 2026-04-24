@@ -171,6 +171,15 @@ public class PlanGenerator
                     .ToList();
             }
 
+            var maxRows = ComputeMaxDistinctRows(tablePlan, table);
+            if (maxRows.HasValue && tablePlan.RowCount > maxRows.Value)
+            {
+                Console.WriteLine(
+                    $"  WARNING: [{table.FullName}] rowCount capped from {tablePlan.RowCount} " +
+                    $"to {maxRows.Value} (limited by narrow PK/unique column cardinality).");
+                tablePlan.RowCount = maxRows.Value;
+            }
+
             plan.Tables.Add(tablePlan);
         }
 
@@ -265,6 +274,111 @@ public class PlanGenerator
 
         return deserializer.Deserialize<GenerationPlan>(yaml)
                ?? throw new InvalidOperationException("Failed to deserialize plan file.");
+    }
+
+    /// <summary>
+    /// Returns the maximum number of distinct rows this table can support, based on the
+    /// narrowest PK or unique column/constraint. Returns null if no constraint limits it.
+    /// </summary>
+    internal static int? ComputeMaxDistinctRows(TablePlan tablePlan, TableInfo table)
+    {
+        long? minCardinality = null;
+
+        var pkColumns = tablePlan.Columns
+            .Where(c => c.IsPrimaryKey && !c.Generator.Equals("skip", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (pkColumns.Count > 0)
+        {
+            long compositeCardinality = 1;
+            foreach (var col in pkColumns)
+            {
+                var card = MaxCardinalityForColumn(col);
+                if (card.HasValue)
+                    compositeCardinality = Math.Min(compositeCardinality * card.Value, long.MaxValue);
+                else
+                {
+                    compositeCardinality = long.MaxValue;
+                    break;
+                }
+            }
+
+            if (compositeCardinality < long.MaxValue)
+                minCardinality = compositeCardinality;
+        }
+
+        foreach (var col in tablePlan.Columns.Where(c =>
+                     c.IsUnique && !c.Generator.Equals("skip", StringComparison.OrdinalIgnoreCase)))
+        {
+            var card = MaxCardinalityForColumn(col);
+            if (card.HasValue)
+                minCardinality = minCardinality.HasValue
+                    ? Math.Min(minCardinality.Value, card.Value)
+                    : card.Value;
+        }
+
+        if (tablePlan.UniqueConstraints is { Count: > 0 })
+        {
+            foreach (var uc in tablePlan.UniqueConstraints)
+            {
+                long compositeCard = 1;
+                var allKnown = true;
+                foreach (var colName in uc.Columns)
+                {
+                    var col = tablePlan.Columns.FirstOrDefault(c =>
+                        c.Name.Equals(colName, StringComparison.OrdinalIgnoreCase));
+                    if (col is null || col.Generator.Equals("skip", StringComparison.OrdinalIgnoreCase))
+                    {
+                        allKnown = false;
+                        break;
+                    }
+
+                    var card = MaxCardinalityForColumn(col);
+                    if (card.HasValue)
+                        compositeCard = Math.Min(compositeCard * card.Value, long.MaxValue);
+                    else
+                    {
+                        allKnown = false;
+                        break;
+                    }
+                }
+
+                if (allKnown && compositeCard < long.MaxValue)
+                    minCardinality = minCardinality.HasValue
+                        ? Math.Min(minCardinality.Value, compositeCard)
+                        : compositeCard;
+            }
+        }
+
+        if (minCardinality is > 0 and <= int.MaxValue)
+            return (int)minCardinality.Value;
+
+        return null;
+    }
+
+    internal static long? MaxCardinalityForColumn(ColumnPlan col)
+    {
+        var sqlType = col.SqlType.ToLowerInvariant();
+        var effectiveLen = col.MaxLength;
+        if (sqlType.StartsWith('n') && effectiveLen > 0)
+            effectiveLen /= 2;
+        if (effectiveLen <= 0)
+            return null;
+
+        const int alphaNumericChars = 36; // 0-9, a-z
+
+        return sqlType switch
+        {
+            "char" or "nchar" when col.Generator == "Random.AlphaNumeric"
+                => (long)Math.Pow(alphaNumericChars, effectiveLen),
+
+            "bit" => 2,
+            "tinyint" => 256,
+
+            "char" or "nchar" => (long)Math.Pow(alphaNumericChars, effectiveLen),
+
+            _ => null
+        };
     }
 
     private static void ResolveGenerator(ColumnInfo col, ColumnPlan colPlan)
