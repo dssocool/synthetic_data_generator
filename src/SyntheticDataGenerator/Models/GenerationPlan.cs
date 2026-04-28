@@ -135,6 +135,19 @@ public class CustomColumnRef
     public string? ValuesFile { get; set; }
 
     public bool ShouldSerializeValuesFile() => !string.IsNullOrEmpty(ValuesFile);
+
+    /// <summary>
+    /// Inline list of values supplied via CustomValueLists. Carried by the
+    /// validator from <see cref="CustomValueList.Values"/> down to the plan
+    /// emitter, which embeds it in the dependent columns' generatorArgs as
+    /// <c>values: [...]</c>. Mutually exclusive with <see cref="ValuesFile"/>.
+    /// Not normally serialized on the CustomColumnRef itself — the
+    /// <c>ShouldSerialize</c> guard keeps it out of any incidental round-trip.
+    /// </summary>
+    [YamlMember(Alias = "values")]
+    public List<string>? Values { get; set; }
+
+    public bool ShouldSerializeValues() => Values is { Count: > 0 };
 }
 
 public class ColumnPlan : IColumnMetadata

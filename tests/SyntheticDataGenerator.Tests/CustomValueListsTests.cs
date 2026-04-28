@@ -231,6 +231,9 @@ public class CustomValueListsTests
     [Fact]
     public void Validation_MissingFileField_Errors()
     {
+        // Both File and Values omitted -> validator surfaces the "must specify
+        // either File or Values" rule (since Values is the new alternative
+        // source).
         var orders = MakeTable("dbo", "Orders", "LookupCode");
         var lookup = MakeTable("dbo", "Lookup", "Code");
         var allTables = new List<TableInfo> { orders, lookup };
@@ -246,7 +249,7 @@ public class CustomValueListsTests
         var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
             groups, scopedTables, allTables, columnScope: null, customValueLists);
 
-        Assert.Contains(errors, e => e.Contains("missing the File field"));
+        Assert.Contains(errors, e => e.Contains("must specify either File or Values"));
     }
 
     [Fact]
@@ -602,6 +605,447 @@ public class CustomValueListsTests
         }
     }
 
+    [Fact]
+    public void ValueListSource_InMemoryCtor_PicksOnlyFromSuppliedValues()
+    {
+        var src = new ValueListSource(["RED", "GREEN", "BLUE"], new Random(42));
+        var expected = new HashSet<string> { "RED", "GREEN", "BLUE" };
+
+        for (var i = 0; i < 200; i++)
+            Assert.Contains((string)src.Pick(), expected);
+
+        Assert.Null(src.FilePath);
+    }
+
+    [Fact]
+    public void ValueListSource_InMemoryCtor_ReachesEveryValue()
+    {
+        var src = new ValueListSource(["a", "b", "c", "d", "e"], new Random(123));
+        var seen = new HashSet<string>();
+        for (var i = 0; i < 500; i++)
+            seen.Add((string)src.Pick());
+
+        Assert.Equal(new[] { "a", "b", "c", "d", "e" }.OrderBy(x => x),
+                     seen.OrderBy(x => x));
+    }
+
+    [Fact]
+    public void ValueListSource_InMemoryCtor_StripsBlanks()
+    {
+        // Blank/whitespace entries are ignored, same as for file-loaded values.
+        var src = new ValueListSource(["", "X", "  ", "Y", "\t"], new Random(7));
+        var seen = new HashSet<string>();
+        for (var i = 0; i < 100; i++)
+            seen.Add((string)src.Pick());
+
+        Assert.Equal(new[] { "X", "Y" }.OrderBy(x => x), seen.OrderBy(x => x));
+    }
+
+    [Fact]
+    public void ValueListSource_InMemoryCtor_AllBlankList_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => new ValueListSource(["", "  ", "\t"]));
+        Assert.Contains("inline values list is empty", ex.Message);
+    }
+
+    [Fact]
+    public void ValueListSource_InMemoryCtor_EmptyList_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => new ValueListSource(Array.Empty<string>()));
+        Assert.Contains("inline values list is empty", ex.Message);
+    }
+
+    #endregion
+
+    #region Inline Values: parsing tests
+
+    [Fact]
+    public void ParseCustomValueLists_InlineValuesEntry()
+    {
+        var dict = new Dictionary<string, string?>
+        {
+            ["CustomValueLists:0:Column"] = "dbo.Lookup.Region",
+            ["CustomValueLists:0:Values:0"] = "APAC",
+            ["CustomValueLists:0:Values:1"] = "EMEA",
+            ["CustomValueLists:0:Values:2"] = "AMER"
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(dict).Build();
+
+        var parsed = ScopeConfig.ParseCustomValueLists(config.GetSection("CustomValueLists"));
+
+        Assert.Single(parsed);
+        Assert.Equal("dbo.Lookup.Region", parsed[0].Column);
+        Assert.Equal(string.Empty, parsed[0].File);
+        Assert.NotNull(parsed[0].Values);
+        Assert.Equal(new[] { "APAC", "EMEA", "AMER" }, parsed[0].Values);
+    }
+
+    [Fact]
+    public void ParseCustomValueLists_BothFileAndValuesPresent_ParsesBoth()
+    {
+        // Parser does not enforce the exclusivity rule — that is the
+        // validator's job. We just confirm both fields make it through so the
+        // validator can produce a friendly error.
+        var dict = new Dictionary<string, string?>
+        {
+            ["CustomValueLists:0:Column"] = "dbo.Lookup.Code",
+            ["CustomValueLists:0:File"] = "/tmp/codes.txt",
+            ["CustomValueLists:0:Values:0"] = "X"
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(dict).Build();
+
+        var parsed = ScopeConfig.ParseCustomValueLists(config.GetSection("CustomValueLists"));
+
+        Assert.Single(parsed);
+        Assert.Equal("/tmp/codes.txt", parsed[0].File);
+        Assert.Equal(new[] { "X" }, parsed[0].Values);
+    }
+
+    [Fact]
+    public void ParseCustomValueLists_MixedFileAndInlineEntries()
+    {
+        var dict = new Dictionary<string, string?>
+        {
+            ["CustomValueLists:0:Column"] = "dbo.Lookup.Code",
+            ["CustomValueLists:0:File"] = "/tmp/codes.txt",
+            ["CustomValueLists:1:Column"] = "dbo.Lookup.Region",
+            ["CustomValueLists:1:Values:0"] = "APAC",
+            ["CustomValueLists:1:Values:1"] = "EMEA"
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(dict).Build();
+
+        var parsed = ScopeConfig.ParseCustomValueLists(config.GetSection("CustomValueLists"));
+
+        Assert.Equal(2, parsed.Length);
+        Assert.Equal("/tmp/codes.txt", parsed[0].File);
+        Assert.Null(parsed[0].Values);
+        Assert.Equal(string.Empty, parsed[1].File);
+        Assert.Equal(new[] { "APAC", "EMEA" }, parsed[1].Values);
+    }
+
+    #endregion
+
+    #region Inline Values: validation tests
+
+    [Fact]
+    public void Validation_InlineValues_ValidEntry_FlagsExternalRootAndSetsValues()
+    {
+        var orders = MakeTable("dbo", "Orders", "RegionCode");
+        var lookup = MakeTable("dbo", "Lookup", "Region");
+        var allTables = new List<TableInfo> { orders, lookup };
+        var scopedTables = new List<TableInfo> { orders };
+
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Lookup.Region|dbo.Orders.RegionCode"]);
+        var customValueLists = new[]
+        {
+            new CustomValueList
+            {
+                Column = "dbo.Lookup.Region",
+                Values = ["APAC", "EMEA", "AMER"]
+            }
+        };
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope: null, customValueLists);
+
+        Assert.Empty(errors);
+        var sourceCol = groups[0].Columns.Single(c => c.IsSource);
+        Assert.Equal("dbo.Lookup", sourceCol.Table);
+        Assert.True(sourceCol.IsExternalRoot);
+        Assert.Null(sourceCol.ValuesFile);
+        Assert.NotNull(sourceCol.Values);
+        Assert.Equal(new[] { "APAC", "EMEA", "AMER" }, sourceCol.Values);
+    }
+
+    [Fact]
+    public void Validation_BothFileAndValues_Errors()
+    {
+        var orders = MakeTable("dbo", "Orders", "RegionCode");
+        var lookup = MakeTable("dbo", "Lookup", "Region");
+        var allTables = new List<TableInfo> { orders, lookup };
+        var scopedTables = new List<TableInfo> { orders };
+
+        var file = WriteTempFile("FILE_VAL");
+        try
+        {
+            var groups = ScopeConfig.ParseCustomDependencies(
+                ["dbo.Lookup.Region|dbo.Orders.RegionCode"]);
+            var customValueLists = new[]
+            {
+                new CustomValueList
+                {
+                    Column = "dbo.Lookup.Region",
+                    File = file,
+                    Values = ["INLINE_VAL"]
+                }
+            };
+
+            var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+                groups, scopedTables, allTables, columnScope: null, customValueLists);
+
+            Assert.Contains(errors, e =>
+                e.Contains("must specify exactly one of File or Values"));
+        }
+        finally
+        {
+            File.Delete(file);
+        }
+    }
+
+    [Fact]
+    public void Validation_NeitherFileNorValues_Errors()
+    {
+        var orders = MakeTable("dbo", "Orders", "RegionCode");
+        var lookup = MakeTable("dbo", "Lookup", "Region");
+        var allTables = new List<TableInfo> { orders, lookup };
+        var scopedTables = new List<TableInfo> { orders };
+
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Lookup.Region|dbo.Orders.RegionCode"]);
+        var customValueLists = new[]
+        {
+            new CustomValueList
+            {
+                Column = "dbo.Lookup.Region"
+                // Both File and Values intentionally omitted.
+            }
+        };
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope: null, customValueLists);
+
+        Assert.Contains(errors, e => e.Contains("must specify either File or Values"));
+    }
+
+    [Fact]
+    public void Validation_InlineValues_AllBlank_Errors()
+    {
+        var orders = MakeTable("dbo", "Orders", "RegionCode");
+        var lookup = MakeTable("dbo", "Lookup", "Region");
+        var allTables = new List<TableInfo> { orders, lookup };
+        var scopedTables = new List<TableInfo> { orders };
+
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Lookup.Region|dbo.Orders.RegionCode"]);
+        var customValueLists = new[]
+        {
+            new CustomValueList
+            {
+                Column = "dbo.Lookup.Region",
+                Values = ["", "  ", "\t"]
+            }
+        };
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope: null, customValueLists);
+
+        Assert.Contains(errors, e =>
+            e.Contains("Values for column [dbo.Lookup.Region] is empty"));
+    }
+
+    [Fact]
+    public void Validation_InlineValues_StripsBlanksFromColumnRefList()
+    {
+        // The validator should propagate a CLEANED list (no blanks) onto the
+        // CustomColumnRef so the runtime never has to filter again.
+        var orders = MakeTable("dbo", "Orders", "RegionCode");
+        var lookup = MakeTable("dbo", "Lookup", "Region");
+        var allTables = new List<TableInfo> { orders, lookup };
+        var scopedTables = new List<TableInfo> { orders };
+
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Lookup.Region|dbo.Orders.RegionCode"]);
+        var customValueLists = new[]
+        {
+            new CustomValueList
+            {
+                Column = "dbo.Lookup.Region",
+                Values = ["APAC", "", "EMEA", "  ", "AMER"]
+            }
+        };
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope: null, customValueLists);
+
+        Assert.Empty(errors);
+        var sourceCol = groups[0].Columns.Single(c => c.IsSource);
+        Assert.Equal(new[] { "APAC", "EMEA", "AMER" }, sourceCol.Values);
+    }
+
+    [Fact]
+    public void Validation_InlineValues_WinsOverPkInSourceResolution()
+    {
+        // Inline-values column is IsExternalRoot=true so the cascade picks it
+        // (Tier 1 External) over a PK candidate, regardless of declaration order.
+        var orders = new TableInfo
+        {
+            Schema = "dbo", TableName = "Orders", PrimaryKeyColumns = ["OrderId"],
+            Columns =
+            [
+                new ColumnInfo { Name = "OrderId", SqlType = "int", IsPrimaryKey = true },
+                new ColumnInfo { Name = "RegionCode", SqlType = "nvarchar", MaxLength = 20 }
+            ]
+        };
+        var lookup = MakeTable("dbo", "Lookup", "Region");
+        var allTables = new List<TableInfo> { orders, lookup };
+        var scopedTables = new List<TableInfo> { orders };
+
+        // PK declared first; inline-values external second.
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Orders.OrderId|dbo.Orders.RegionCode|dbo.Lookup.Region"]);
+        var customValueLists = new[]
+        {
+            new CustomValueList
+            {
+                Column = "dbo.Lookup.Region",
+                Values = ["APAC", "EMEA"]
+            }
+        };
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope: null, customValueLists);
+
+        Assert.Empty(errors);
+        var source = groups[0].Columns.Single(c => c.IsSource);
+        Assert.Equal("dbo.Lookup", source.Table);
+        Assert.Equal("Region", source.Column);
+        Assert.True(source.IsExternalRoot);
+        Assert.Equal(new[] { "APAC", "EMEA" }, source.Values);
+    }
+
+    #endregion
+
+    #region Inline Values: plan emission tests
+
+    [Fact]
+    public void PlanGenerator_EmitsInlineValuesArg_AndOmitsValuesFile()
+    {
+        var orders = new TableInfo
+        {
+            Schema = "dbo", TableName = "Orders", PrimaryKeyColumns = ["Id"],
+            Columns =
+            [
+                new ColumnInfo { Name = "Id", SqlType = "int", IsPrimaryKey = true, IsIdentity = true },
+                new ColumnInfo { Name = "RegionCode", SqlType = "nvarchar", MaxLength = 20 }
+            ]
+        };
+
+        var customDeps = new List<CustomDependencyGroup>
+        {
+            new()
+            {
+                Columns =
+                [
+                    new CustomColumnRef
+                    {
+                        Table = "dbo.Lookup",
+                        Column = "Region",
+                        IsExternalRoot = true,
+                        IsSource = true,
+                        Values = ["APAC", "EMEA", "AMER"]
+                    },
+                    new CustomColumnRef
+                    {
+                        Table = "dbo.Orders",
+                        Column = "RegionCode"
+                    }
+                ]
+            }
+        };
+
+        var plan = new PlanGenerator().Generate(
+            sortedTables: [orders],
+            selfReferencingTables: new HashSet<string>(),
+            defaultRowCount: 5,
+            seed: 42,
+            customDependencies: customDeps);
+
+        var depColPlan = plan.Tables
+            .Single(t => t.Table == "dbo.Orders")
+            .Columns.Single(c => c.Name == "RegionCode");
+
+        Assert.Equal("customDependency", depColPlan.Generator);
+        Assert.False(depColPlan.GeneratorArgs.ContainsKey("valuesFile"));
+        Assert.True(depColPlan.GeneratorArgs.ContainsKey("values"));
+        var emitted = Assert.IsType<List<string>>(depColPlan.GeneratorArgs["values"]);
+        Assert.Equal(new[] { "APAC", "EMEA", "AMER" }, emitted);
+        Assert.Equal(true, depColPlan.GeneratorArgs["isExternal"]);
+    }
+
+    [Fact]
+    public async Task PlanGenerator_InlineValuesRoundTripThroughYaml()
+    {
+        // Verify the inline list survives a serialize/deserialize round trip
+        // through plan.yaml AND that the executor's BuildCustomDepGroupsFromPlan
+        // recovers it as a usable List<string>. This is the moment where
+        // YamlDotNet swaps List<string> for List<object>, so the normalization
+        // path matters.
+        var orders = new TableInfo
+        {
+            Schema = "dbo", TableName = "Orders", PrimaryKeyColumns = ["Id"],
+            Columns =
+            [
+                new ColumnInfo { Name = "Id", SqlType = "int", IsPrimaryKey = true, IsIdentity = true },
+                new ColumnInfo { Name = "RegionCode", SqlType = "nvarchar", MaxLength = 20 }
+            ]
+        };
+
+        var customDeps = new List<CustomDependencyGroup>
+        {
+            new()
+            {
+                Columns =
+                [
+                    new CustomColumnRef
+                    {
+                        Table = "dbo.Lookup", Column = "Region",
+                        IsExternalRoot = true, IsSource = true,
+                        Values = ["APAC", "EMEA", "AMER"]
+                    },
+                    new CustomColumnRef { Table = "dbo.Orders", Column = "RegionCode" }
+                ]
+            }
+        };
+
+        var plan = new PlanGenerator().Generate(
+            sortedTables: [orders],
+            selfReferencingTables: new HashSet<string>(),
+            defaultRowCount: 5,
+            seed: 42,
+            customDependencies: customDeps);
+
+        var tmpPath = Path.Combine(Path.GetTempPath(),
+            $"cvl_plan_{Guid.NewGuid():N}.yaml");
+        try
+        {
+            await new PlanGenerator().WritePlanAsync(plan, tmpPath);
+            var roundTripped = await PlanGenerator.ReadPlanAsync(tmpPath);
+
+            var depColPlan = roundTripped.Tables
+                .Single(t => t.Table == "dbo.Orders")
+                .Columns.Single(c => c.Name == "RegionCode");
+
+            // Reuse the executor's normalization to confirm runtime hookup.
+            var groups = DataInserter.BuildCustomDepGroupsFromPlan(
+                roundTripped.Tables.Single(t => t.Table == "dbo.Orders").Columns);
+
+            var dep = groups.Single(g => g.DependentColumn == "RegionCode");
+            Assert.Equal("dbo.Lookup", dep.SourceTable);
+            Assert.Equal("Region", dep.SourceColumn);
+            Assert.True(dep.IsExternal);
+            Assert.Null(dep.ValuesFile);
+            Assert.NotNull(dep.Values);
+            Assert.Equal(new[] { "APAC", "EMEA", "AMER" }, dep.Values);
+        }
+        finally
+        {
+            File.Delete(tmpPath);
+        }
+    }
+
     #endregion
 }
 
@@ -797,6 +1241,69 @@ public class CustomValueListsIntegrationTests
         finally
         {
             File.Delete(file);
+        }
+    }
+
+    [Fact]
+    public async Task ValueListRoot_PopulatesDependentFromInlineValues()
+    {
+        // End-to-end mirror of ValueListRoot_PopulatesDependentFromFile, but
+        // the source values are supplied inline via Values: instead of File:.
+        // The lookup table exists (validation requires it) but is intentionally
+        // EMPTY — the inline list is the source of truth.
+        var lookupName = "TestCvlInlineLookup_" + Guid.NewGuid().ToString("N")[..8];
+        var ordersName = "TestCvlInlineOrders_" + Guid.NewGuid().ToString("N")[..8];
+
+        await _fixture.ExecuteSqlAsync($"""
+            CREATE TABLE dbo.{lookupName} (
+                Id INT IDENTITY(1,1) PRIMARY KEY,
+                Region NVARCHAR(20) NOT NULL
+            )
+            """);
+        await _fixture.ExecuteSqlAsync($"""
+            CREATE TABLE dbo.{ordersName} (
+                Id INT IDENTITY(1,1) PRIMARY KEY,
+                RegionCode NVARCHAR(20) NOT NULL,
+                Amount INT NOT NULL
+            )
+            """);
+
+        var validRegions = new[] { "APAC", "EMEA", "AMER", "LATAM" };
+        var scope = new ScopeConfig(
+            schemaFilter: ["dbo"],
+            tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+            rowsPerTable: 25,
+            seed: 42,
+            locale: "en",
+            customDependencies:
+            [
+                $"dbo.{lookupName}.Region|dbo.{ordersName}.RegionCode"
+            ],
+            customValueLists:
+            [
+                new CustomValueList
+                {
+                    Column = $"dbo.{lookupName}.Region",
+                    Values = validRegions.ToList()
+                }
+            ]);
+
+        var planner = new DataGenerationPlanner();
+        var executor = new DataGenerationExecutor();
+        var orchestrator = new GeneratorOrchestrator(
+            _fixture.ConnectionString, scope, planner, executor);
+
+        await orchestrator.RunDirectAsync("insert");
+
+        var rows = await _fixture.ExecuteQueryAsync(
+            $"SELECT RegionCode FROM dbo.{ordersName}");
+
+        Assert.Equal(25, rows.Count);
+        var validSet = new HashSet<string>(validRegions);
+        foreach (var row in rows)
+        {
+            var code = (string)row["RegionCode"]!;
+            Assert.Contains(code, validSet);
         }
     }
 }

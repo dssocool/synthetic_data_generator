@@ -938,7 +938,8 @@ public class DataInserter : IAsyncDisposable
         string DependentColumn,
         bool IsNullable,
         bool IsExternal = false,
-        string? ValuesFile = null);
+        string? ValuesFile = null,
+        IReadOnlyList<string>? Values = null);
 
     private static List<FkGroup> BuildFkGroupsFromPlan<T>(List<T> columns) where T : IColumnMetadata
     {
@@ -973,13 +974,30 @@ public class DataInserter : IAsyncDisposable
                 var valuesFile = c.GeneratorArgs.TryGetValue("valuesFile", out var vf)
                     ? vf as string
                     : null;
+
+                IReadOnlyList<string>? values = null;
+                if (c.GeneratorArgs.TryGetValue("values", out var v) && v is not null)
+                {
+                    values = v switch
+                    {
+                        IEnumerable<string> ss => ss.ToList(),
+                        IEnumerable<object?> os => os.Where(o => o is not null)
+                                                     .Select(o => o!.ToString()!)
+                                                     .ToList(),
+                        _ => null
+                    };
+                    if (values is { Count: 0 })
+                        values = null;
+                }
+
                 return new CustomDepGroup(
                     Helpers.GetArgString(c.GeneratorArgs, "sourceTable"),
                     Helpers.GetArgString(c.GeneratorArgs, "sourceColumn"),
                     c.Name,
                     c.IsNullable,
                     c.GeneratorArgs.TryGetValue("isExternal", out var ext) && Helpers.IsTruthy(ext),
-                    string.IsNullOrEmpty(valuesFile) ? null : valuesFile);
+                    string.IsNullOrEmpty(valuesFile) ? null : valuesFile,
+                    values);
             })
             .ToList();
     }
@@ -1043,10 +1061,10 @@ public class DataInserter : IAsyncDisposable
 
         foreach (var dep in customDepGroups)
         {
-            if (!string.IsNullOrEmpty(dep.ValuesFile))
+            if (!string.IsNullOrEmpty(dep.ValuesFile)
+                || dep.Values is { Count: > 0 })
             {
-                var picker = GetOrCreateValueListSource(
-                    dep.SourceTable, dep.SourceColumn, dep.ValuesFile);
+                var picker = GetOrCreateValueListSource(dep);
                 resolved[dep.DependentColumn] = picker.Pick();
                 continue;
             }
@@ -1081,18 +1099,25 @@ public class DataInserter : IAsyncDisposable
         return streamer;
     }
 
-    private ValueListSource GetOrCreateValueListSource(
-        string sourceTable, string sourceColumn, string valuesFile)
+    private ValueListSource GetOrCreateValueListSource(CustomDepGroup dep)
     {
-        var key = (sourceTable, sourceColumn);
+        var key = (dep.SourceTable, dep.SourceColumn);
         if (_valueListSources.TryGetValue(key, out var existing))
             return existing;
 
-        var resolvedPath = Path.IsPathRooted(valuesFile)
-            ? valuesFile
-            : Path.GetFullPath(valuesFile, _planBasePath ?? Directory.GetCurrentDirectory());
+        ValueListSource source;
+        if (!string.IsNullOrEmpty(dep.ValuesFile))
+        {
+            var resolvedPath = Path.IsPathRooted(dep.ValuesFile)
+                ? dep.ValuesFile
+                : Path.GetFullPath(dep.ValuesFile, _planBasePath ?? Directory.GetCurrentDirectory());
+            source = new ValueListSource(resolvedPath, _random);
+        }
+        else
+        {
+            source = new ValueListSource(dep.Values!, _random);
+        }
 
-        var source = new ValueListSource(resolvedPath, _random);
         _valueListSources[key] = source;
         return source;
     }

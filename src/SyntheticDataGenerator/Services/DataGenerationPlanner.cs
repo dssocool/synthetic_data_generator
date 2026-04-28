@@ -312,7 +312,7 @@ public class DataGenerationPlanner : IDataGenerationPlanner
                     colRef.IsExternalRoot = true;
 
                 var key = (colRef.Table, colRef.Column);
-                if (valueListLookup.TryGetValue(key, out var filePath))
+                if (valueListLookup.TryGetValue(key, out var entry))
                 {
                     if (isColumnInScope)
                     {
@@ -324,7 +324,11 @@ public class DataGenerationPlanner : IDataGenerationPlanner
                         continue;
                     }
 
-                    colRef.ValuesFile = filePath;
+                    if (entry.File is not null)
+                        colRef.ValuesFile = entry.File;
+                    else
+                        colRef.Values = new List<string>(entry.Values!);
+
                     colRef.IsExternalRoot = true;
                     valueListUsage[key] = true;
                 }
@@ -363,15 +367,23 @@ public class DataGenerationPlanner : IDataGenerationPlanner
     }
 
     /// <summary>
-    /// Validates each <see cref="CustomValueList"/> entry: file path is provided,
-    /// the file exists, and the file contains at least one non-blank line.
-    /// Returns a lookup keyed by (table, column) for quick membership checks
-    /// during dependency-group classification, plus any accumulated errors.
+    /// Resolved CustomValueLists entry. Exactly one of <see cref="File"/> or
+    /// <see cref="Values"/> is populated after validation succeeds.
     /// </summary>
-    internal static (Dictionary<(string Table, string Column), string> Lookup, List<string> Errors)
+    internal sealed record ValueListEntry(string? File, List<string>? Values);
+
+    /// <summary>
+    /// Validates each <see cref="CustomValueList"/> entry. Each entry must
+    /// provide exactly one of <c>File</c> (path to a flat values file with at
+    /// least one non-blank line) or <c>Values</c> (inline list with at least
+    /// one non-blank entry). Returns a lookup keyed by (table, column) for
+    /// quick membership checks during dependency-group classification, plus
+    /// any accumulated errors.
+    /// </summary>
+    internal static (Dictionary<(string Table, string Column), ValueListEntry> Lookup, List<string> Errors)
         BuildValueListLookup(CustomValueList[]? customValueLists)
     {
-        var lookup = new Dictionary<(string Table, string Column), string>(new TableColumnComparer());
+        var lookup = new Dictionary<(string Table, string Column), ValueListEntry>(new TableColumnComparer());
         var errors = new List<string>();
 
         if (customValueLists is null or { Length: 0 })
@@ -396,27 +408,57 @@ public class DataGenerationPlanner : IDataGenerationPlanner
             var table = entry.Column[..lastDot];
             var column = entry.Column[(lastDot + 1)..];
 
-            if (string.IsNullOrWhiteSpace(entry.File))
+            var hasFile = !string.IsNullOrWhiteSpace(entry.File);
+            var hasValues = entry.Values is { Count: > 0 };
+
+            if (hasFile && hasValues)
             {
                 errors.Add(
-                    $"CustomValueLists entry [{entry.Column}] is missing the File field.");
+                    $"CustomValueLists entry [{entry.Column}] must specify exactly one of File or Values, not both.");
                 continue;
             }
 
-            if (!File.Exists(entry.File))
+            if (!hasFile && !hasValues)
             {
                 errors.Add(
-                    $"CustomValueLists file '{entry.File}' for column [{entry.Column}] does not exist.");
+                    $"CustomValueLists entry [{entry.Column}] must specify either File or Values.");
                 continue;
             }
 
-            var hasContent = File.ReadLines(entry.File)
-                .Any(line => !string.IsNullOrWhiteSpace(line));
-            if (!hasContent)
+            ValueListEntry resolved;
+            if (hasFile)
             {
-                errors.Add(
-                    $"CustomValueLists file '{entry.File}' for column [{entry.Column}] is empty.");
-                continue;
+                if (!File.Exists(entry.File))
+                {
+                    errors.Add(
+                        $"CustomValueLists file '{entry.File}' for column [{entry.Column}] does not exist.");
+                    continue;
+                }
+
+                var hasContent = File.ReadLines(entry.File)
+                    .Any(line => !string.IsNullOrWhiteSpace(line));
+                if (!hasContent)
+                {
+                    errors.Add(
+                        $"CustomValueLists file '{entry.File}' for column [{entry.Column}] is empty.");
+                    continue;
+                }
+
+                resolved = new ValueListEntry(entry.File, null);
+            }
+            else
+            {
+                var cleaned = entry.Values!
+                    .Where(v => !string.IsNullOrWhiteSpace(v))
+                    .ToList();
+                if (cleaned.Count == 0)
+                {
+                    errors.Add(
+                        $"CustomValueLists Values for column [{entry.Column}] is empty (all entries are blank).");
+                    continue;
+                }
+
+                resolved = new ValueListEntry(null, cleaned);
             }
 
             var key = (table, column);
@@ -427,7 +469,7 @@ public class DataGenerationPlanner : IDataGenerationPlanner
                 continue;
             }
 
-            lookup[key] = entry.File;
+            lookup[key] = resolved;
         }
 
         return (lookup, errors);
@@ -487,7 +529,8 @@ public class DataGenerationPlanner : IDataGenerationPlanner
 
             foreach (var source in group.Columns.Where(c => c.IsExternalRoot))
             {
-                if (!string.IsNullOrEmpty(source.ValuesFile))
+                if (!string.IsNullOrEmpty(source.ValuesFile)
+                    || source.Values is { Count: > 0 })
                     continue;
 
                 var key = (source.Table, source.Column);

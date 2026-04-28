@@ -12,6 +12,12 @@ public class CustomValueList
 {
     public string Column { get; set; } = string.Empty;
     public string File { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Inline list of values. Mutually exclusive with <see cref="File"/>:
+    /// exactly one of the two must be provided per entry.
+    /// </summary>
+    public List<string>? Values { get; set; }
 }
 
 public class ScopeConfig
@@ -170,8 +176,11 @@ public class ScopeConfig
 
     /// <summary>
     /// Parses CustomValueLists from IConfiguration. Only the structured form is
-    /// supported: each child must specify both <c>Column</c> (schema.table.column)
-    /// and <c>File</c> (path to a flat values file, one value per line).
+    /// supported: each child must specify <c>Column</c> (schema.table.column)
+    /// plus exactly one of <c>File</c> (path to a flat values file, one value
+    /// per line) or <c>Values</c> (inline YAML list). The exactly-one-of rule
+    /// is enforced by the validator so users get a friendly error message
+    /// instead of silent drops.
     /// </summary>
     public static CustomValueList[] ParseCustomValueLists(IConfigurationSection section)
     {
@@ -187,10 +196,13 @@ public class ScopeConfig
             if (string.IsNullOrWhiteSpace(column))
                 continue;
 
+            var values = child.GetSection("Values").Get<string[]>();
+
             result.Add(new CustomValueList
             {
                 Column = column,
-                File = file ?? string.Empty
+                File = file ?? string.Empty,
+                Values = values is { Length: > 0 } ? values.ToList() : null
             });
         }
 

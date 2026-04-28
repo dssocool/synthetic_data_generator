@@ -88,10 +88,11 @@ CustomDependencies:
 # even billion-row source tables stay within bounded memory. Defaults to 10000.
 CustomDependencyBufferSize: 10000
 
-# Optional: back an external custom-dependency root column with a flat values
-# file (one value per line, blank lines skipped) instead of streaming from the
-# live database. Each entry maps a `schema.table.column` to a file path
-# (absolute, or relative to the working directory / generated plan file).
+# Optional: back an external custom-dependency root column with a fixed list of
+# values instead of streaming from the live database. Each entry maps a
+# `schema.table.column` to EITHER a `File:` path (flat values file, one value
+# per line, blank lines skipped) OR an inline `Values:` list. Exactly one of
+# the two must be set per entry.
 #
 # A column listed here:
 #   - MUST exist in the actual database schema (validated at startup).
@@ -101,11 +102,18 @@ CustomDependencyBufferSize: 10000
 #     no effect and validation fails).
 #
 # At runtime, every dependent column in the matching CustomDependencies group
-# picks values from the file instead of opening a SQL cursor against the
-# source table.
+# picks values from the file/inline list instead of opening a SQL cursor
+# against the source table.
 CustomValueLists:
+  # File-backed: path is absolute, or relative to the working directory / plan file.
   - Column: dbo.Lookup.Code
     File: ./values/lookup_codes.txt
+  # Inline-backed: values written directly in YAML.
+  - Column: dbo.Lookup.Region
+    Values:
+      - APAC
+      - EMEA
+      - AMER
 ```
 
 ### External custom dependency roots
@@ -129,22 +137,33 @@ CustomDependencies:
 If you would rather control the source values yourself — for example, when the
 live `dbo.Lookup` is empty in lower environments, or you want to constrain
 generated orders to a known short list of codes — pair the same
-`CustomDependencies` entry with a `CustomValueLists` entry pointing at a flat
-text file:
+`CustomDependencies` entry with a `CustomValueLists` entry. You can supply the
+values either as a flat text file (`File:`) or inline in YAML (`Values:`).
+Exactly one of the two must be set per entry.
 
 ```yaml
 TablesToInclude:
   - dbo.Orders
 CustomValueLists:
+  # File-backed: one value per line.
   - Column: dbo.Lookup.Code
     File: ./values/lookup_codes.txt
+  # Inline-backed: values declared right here.
+  - Column: dbo.Lookup.Region
+    Values:
+      - APAC
+      - EMEA
+      - AMER
 CustomDependencies:
   - dbo.Orders.LookupCode|dbo.Lookup.Code
+  - dbo.Orders.RegionCode|dbo.Lookup.Region
 ```
 
-`./values/lookup_codes.txt` is a plain text file with one code per line. Every
-inserted `dbo.Orders.LookupCode` will be picked uniformly at random from the
-file's lines, and no SQL cursor is opened against `dbo.Lookup`.
+Every inserted `dbo.Orders.LookupCode` will be picked uniformly at random from
+the file's lines, and every `dbo.Orders.RegionCode` from the inline list. No
+SQL cursor is opened against `dbo.Lookup`. Inline values are also embedded
+directly into the generated `plan.yaml`, so plan files using `Values:` stay
+self-contained and can be re-executed without the original `appsettings.yaml`.
 
 ## Usage
 

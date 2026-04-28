@@ -147,6 +147,8 @@ public class PlanGenerator
                     };
                     if (!string.IsNullOrEmpty(source.ValuesFile))
                         colPlan.GeneratorArgs["valuesFile"] = source.ValuesFile;
+                    else if (source.Values is { Count: > 0 })
+                        colPlan.GeneratorArgs["values"] = new List<string>(source.Values);
                 }
                 else
                 {

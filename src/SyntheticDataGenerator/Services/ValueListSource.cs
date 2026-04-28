@@ -1,18 +1,21 @@
 namespace SyntheticDataGenerator.Services;
 
 /// <summary>
-/// Picks values uniformly from a flat values file (one value per line, blank
-/// lines skipped). Used by CustomDependencies groups whose external root is
-/// backed by a CustomValueLists entry — values come from the file instead of
-/// being streamed from a live database cursor.
+/// Picks values uniformly from a CustomValueLists-backed source. Two
+/// constructors:
+///   * <see cref="ValueListSource(string, Random?)"/> — loads a flat values
+///     file (one value per line, blank lines skipped) lazily on first
+///     <see cref="Pick"/> call.
+///   * <see cref="ValueListSource(IEnumerable{string}, Random?)"/> — wraps an
+///     in-memory list provided inline via the YAML config; no file I/O.
 ///
-/// Lifecycle: lazy-loads the file on first <see cref="Pick"/> call and keeps
-/// every line in memory for the run. Files are expected to be small lookup
-/// lists; for large datasets prefer the live-DB <see cref="ExternalSourceStreamer"/>.
+/// Either way, every value lives in memory for the run. Files are expected to
+/// be small lookup lists; for large datasets prefer the live-DB
+/// <see cref="ExternalSourceStreamer"/>.
 /// </summary>
 public sealed class ValueListSource
 {
-    private readonly string _filePath;
+    private readonly string? _filePath;
     private readonly Random _random;
     private string[]? _values;
 
@@ -22,7 +25,19 @@ public sealed class ValueListSource
         _random = random ?? new Random();
     }
 
-    public string FilePath => _filePath;
+    public ValueListSource(IEnumerable<string> values, Random? random = null)
+    {
+        _filePath = null;
+        _random = random ?? new Random();
+        _values = values
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .ToArray();
+        if (_values.Length == 0)
+            throw new InvalidOperationException(
+                "CustomValueLists inline values list is empty.");
+    }
+
+    public string? FilePath => _filePath;
 
     public object Pick()
     {
@@ -38,7 +53,7 @@ public sealed class ValueListSource
             throw new InvalidOperationException(
                 $"CustomValueLists file '{_filePath}' does not exist.");
 
-        var values = File.ReadAllLines(_filePath)
+        var values = File.ReadAllLines(_filePath!)
             .Where(line => !string.IsNullOrWhiteSpace(line))
             .ToArray();
 
