@@ -30,6 +30,11 @@ public sealed class ExternalSourceStreamer : IAsyncDisposable, IDisposable
     private int _filled;
     private bool _readerExhausted;
 
+    // Pick / EnsureOpened mutate the buffer, the reader, and _random. Held
+    // for the full Pick call so concurrent callers from parallel table tasks
+    // don't corrupt state or race the SqlDataReader.
+    private readonly object _pickLock = new();
+
     public ExternalSourceStreamer(
         string connectionString,
         string fullTableName,
@@ -59,30 +64,33 @@ public sealed class ExternalSourceStreamer : IAsyncDisposable, IDisposable
     /// </summary>
     public object Pick()
     {
-        EnsureOpened();
-
-        if (_buffer is null || _filled == 0)
-            throw new InvalidOperationException(
-                $"External source [{_schema}].[{_tableName}].[{_column}] returned no non-null values.");
-
-        var idx = _random.Next(_filled);
-        var picked = _buffer[idx];
-
-        if (!_readerExhausted && _reader is not null)
+        lock (_pickLock)
         {
-            if (_reader.Read())
-            {
-                var next = _reader.GetValue(0);
-                if (next is not DBNull)
-                    _buffer[idx] = next;
-            }
-            else
-            {
-                _readerExhausted = true;
-            }
-        }
+            EnsureOpened();
 
-        return picked;
+            if (_buffer is null || _filled == 0)
+                throw new InvalidOperationException(
+                    $"External source [{_schema}].[{_tableName}].[{_column}] returned no non-null values.");
+
+            var idx = _random.Next(_filled);
+            var picked = _buffer[idx];
+
+            if (!_readerExhausted && _reader is not null)
+            {
+                if (_reader.Read())
+                {
+                    var next = _reader.GetValue(0);
+                    if (next is not DBNull)
+                        _buffer[idx] = next;
+                }
+                else
+                {
+                    _readerExhausted = true;
+                }
+            }
+
+            return picked;
+        }
     }
 
     private void EnsureOpened()

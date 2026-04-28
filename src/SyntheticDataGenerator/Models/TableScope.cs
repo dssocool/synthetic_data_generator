@@ -37,6 +37,14 @@ public class ScopeConfig
     /// </summary>
     public int CustomDependencyBufferSize { get; }
 
+    /// <summary>
+    /// Maximum number of unrelated tables that may be inserted/updated in
+    /// parallel. Defaults to <see cref="Environment.ProcessorCount"/>; set to
+    /// 1 to disable parallelism. Tables only run concurrently when they have
+    /// no FK or customDependency edge between them.
+    /// </summary>
+    public int MaxParallelTables { get; }
+
     public ScopeConfig(
         string[]? schemaFilter,
         TableScope[] tablesToInclude,
@@ -45,7 +53,8 @@ public class ScopeConfig
         string locale,
         string[]? customDependencies = null,
         int customDependencyBufferSize = 10_000,
-        CustomValueList[]? customValueLists = null)
+        CustomValueList[]? customValueLists = null,
+        int? maxParallelTables = null)
     {
         SchemaFilter = schemaFilter is { Length: > 0 } ? schemaFilter : null;
         TablesToInclude = tablesToInclude;
@@ -57,6 +66,9 @@ public class ScopeConfig
         CustomDependencyBufferSize = customDependencyBufferSize > 0
             ? customDependencyBufferSize
             : 10_000;
+        MaxParallelTables = maxParallelTables is > 0
+            ? maxParallelTables.Value
+            : Math.Max(1, Environment.ProcessorCount);
     }
 
     /// <summary>

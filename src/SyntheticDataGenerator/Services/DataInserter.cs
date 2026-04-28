@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Data;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -13,27 +14,44 @@ public class DataInserter : IAsyncDisposable
     private readonly IReadOnlySet<string> _selfReferencingTables;
     private readonly int _externalSourceBufferSize;
     private readonly string? _planBasePath;
-    private readonly Random _random = new();
 
-    internal readonly Dictionary<string, List<Dictionary<string, object>>> _generatedKeys = new();
-    private readonly Dictionary<string, HashSet<string>> _generatedPkSets = new();
-    private readonly Dictionary<string, Dictionary<string, HashSet<string>>> _generatedUniqueSets = new();
+    // All cross-table state uses ConcurrentDictionary so the executor can run
+    // unrelated tables in parallel. Within a single table's generation, only
+    // one task ever writes to that table's slot (the scheduler waits for all
+    // parents to finish before dispatching dependents), so the values stored
+    // here (Lists / HashSets / inner Dictionaries) are not themselves
+    // concurrently mutated.
+    internal readonly ConcurrentDictionary<string, List<Dictionary<string, object>>> _generatedKeys = new();
+    private readonly ConcurrentDictionary<string, HashSet<string>> _generatedPkSets = new();
+    private readonly ConcurrentDictionary<string, Dictionary<string, HashSet<string>>> _generatedUniqueSets = new();
+
+    // Tracks the order in which table keys were first added to _generatedKeys.
+    // Required because ConcurrentDictionary does NOT preserve insertion order
+    // (unlike Dictionary<TKey, TValue>), and SortFkGroupsByTopoDepth uses this
+    // order as a proxy for topological depth: groups whose referenced tables
+    // were generated *later* are resolved first so their FK chains can
+    // constrain ancestor groups (this is what keeps the diamond consistent in
+    // tests like Test72_DeepChainDiamond).
+    private readonly List<string> _generationOrder = new();
+    private readonly object _generationOrderLock = new();
 
     // Maps (table, column) -> (referencedTable, referencedColumn) for FK columns
     // of tables that have already been generated. Populated during staging.
-    private readonly Dictionary<(string Table, string Column), (string RefTable, string RefColumn)>
+    private readonly ConcurrentDictionary<(string Table, string Column), (string RefTable, string RefColumn)>
         _fkColumnMap = new(FullNameColumnComparer.Instance);
 
     // One streamer per (externalTable, column) — shared across all dependents
     // that pull from the same root, so we never open more than one cursor per
-    // external source even if multiple groups reference it.
-    private readonly Dictionary<(string Table, string Column), ExternalSourceStreamer>
+    // external source even if multiple groups reference it. Pick() is
+    // internally locked so concurrent table tasks are safe.
+    private readonly ConcurrentDictionary<(string Table, string Column), ExternalSourceStreamer>
         _externalSourceStreamers = new(FullNameColumnComparer.Instance);
 
     // One value-list picker per (externalTable, column) — shared across all
     // dependents that pull from the same CustomValueLists-backed root, so each
-    // file is loaded into memory at most once per run.
-    private readonly Dictionary<(string Table, string Column), ValueListSource>
+    // file is loaded into memory at most once per run. Pick() is internally
+    // locked so concurrent table tasks are safe.
+    private readonly ConcurrentDictionary<(string Table, string Column), ValueListSource>
         _valueListSources = new(FullNameColumnComparer.Instance);
 
     private const int MaxPkRetries = 100;
@@ -65,9 +83,14 @@ public class DataInserter : IAsyncDisposable
     /// <summary>
     /// Generate rows in memory and return a preparation result.
     /// No database connection is opened; the caller decides the insert strategy.
+    /// When <paramref name="valueGen"/> is provided, that generator (typically
+    /// seeded per-table for deterministic parallel runs) is used instead of the
+    /// inserter's shared <see cref="_valueGen"/>. Bogus's <c>Faker</c> is not
+    /// thread-safe, so parallel callers MUST pass distinct instances.
     /// </summary>
-    public GenerationResult GenerateRows(TablePlan tablePlan)
+    public GenerationResult GenerateRows(TablePlan tablePlan, ColumnValueGenerator? valueGen = null)
     {
+        var gen = valueGen ?? _valueGen;
         var table = TablePlanToTableInfo(tablePlan);
         var fullName = tablePlan.FullName;
 
@@ -103,7 +126,8 @@ public class DataInserter : IAsyncDisposable
             foreach (var (parentCol, refCol, _) in group.Columns)
                 _fkColumnMap[(fullName, parentCol)] = (group.RefFullName, refCol);
 
-        _generatedKeys.TryAdd(fullName, []);
+        if (_generatedKeys.TryAdd(fullName, []))
+            RecordGenerationOrder(fullName);
         _generatedPkSets.TryAdd(fullName, []);
         InitUniqueConstraintSets(fullName, uniqueConstraints);
 
@@ -123,7 +147,7 @@ public class DataInserter : IAsyncDisposable
                 do
                 {
                     row = BuildRowFromFkGroups(firstPassColumns, fkGroups,
-                        col => _valueGen.GenerateFromPlan((ColumnPlan)col) ?? DBNull.Value,
+                        col => gen.GenerateFromPlan((ColumnPlan)col) ?? DBNull.Value,
                         tablePlan.RowCount,
                         customDepGroups);
                     pkKey = BuildPkKeyFromRow(table, row);
@@ -287,9 +311,11 @@ public class DataInserter : IAsyncDisposable
     /// <see cref="StagingResult"/> will NOT own (dispose) the connection.
     /// </summary>
     public async Task<StagingResult> StageToTempTableAsync(
-        TablePlan tablePlan, SqlConnection? sharedConnection = null)
+        TablePlan tablePlan,
+        SqlConnection? sharedConnection = null,
+        ColumnValueGenerator? valueGen = null)
     {
-        var gen = GenerateRows(tablePlan);
+        var gen = GenerateRows(tablePlan, valueGen);
         var tempTableName = $"#{gen.Table.TableName}";
 
         var ownsConnection = sharedConnection is null;
@@ -768,7 +794,7 @@ public class DataInserter : IAsyncDisposable
         List<List<(string ParentColumn, string ReferencedColumn)>> fkPairGroups,
         bool updateInMemoryRows)
     {
-        var rowsToUpdate = rows.Skip(1).Where(_ => _random.NextDouble() < 0.7).ToList();
+        var rowsToUpdate = rows.Skip(1).Where(_ => Random.Shared.NextDouble() < 0.7).ToList();
 
         foreach (var targetRow in rowsToUpdate)
         {
@@ -786,7 +812,7 @@ public class DataInserter : IAsyncDisposable
                 var candidates = rows.Where(r => !IsSameRow(r)).ToList();
                 if (candidates.Count == 0) continue;
 
-                var parentRow = candidates[_random.Next(candidates.Count)];
+                var parentRow = candidates[Random.Shared.Next(candidates.Count)];
 
                 var setClauses = pairs.Select((p, i) => $"[{p.ParentColumn}] = @ParentVal{i}");
                 var whereClauses = pkColumns.Select((pk, i) => $"[{pk}] = @TargetPk{i}");
@@ -1039,7 +1065,7 @@ public class DataInserter : IAsyncDisposable
                 continue;
             }
 
-            if (col.IsNullable && _random.NextDouble() < 0.1)
+            if (col.IsNullable && Random.Shared.NextDouble() < 0.1)
             {
                 row[col.Name] = DBNull.Value;
                 continue;
@@ -1078,7 +1104,7 @@ public class DataInserter : IAsyncDisposable
 
             if (_generatedKeys.TryGetValue(dep.SourceTable, out var sourceRows) && sourceRows.Count > 0)
             {
-                var sourceRow = sourceRows[_random.Next(sourceRows.Count)];
+                var sourceRow = sourceRows[Random.Shared.Next(sourceRows.Count)];
                 if (sourceRow.TryGetValue(dep.SourceColumn, out var value))
                     resolved[dep.DependentColumn] = value;
             }
@@ -1090,36 +1116,25 @@ public class DataInserter : IAsyncDisposable
     private ExternalSourceStreamer GetOrCreateExternalSourceStreamer(string sourceTable, string sourceColumn)
     {
         var key = (sourceTable, sourceColumn);
-        if (_externalSourceStreamers.TryGetValue(key, out var existing))
-            return existing;
-
-        var streamer = new ExternalSourceStreamer(
-            _connectionString, sourceTable, sourceColumn, _externalSourceBufferSize, _random);
-        _externalSourceStreamers[key] = streamer;
-        return streamer;
+        return _externalSourceStreamers.GetOrAdd(key, k =>
+            new ExternalSourceStreamer(
+                _connectionString, k.Table, k.Column, _externalSourceBufferSize, Random.Shared));
     }
 
     private ValueListSource GetOrCreateValueListSource(CustomDepGroup dep)
     {
         var key = (dep.SourceTable, dep.SourceColumn);
-        if (_valueListSources.TryGetValue(key, out var existing))
-            return existing;
-
-        ValueListSource source;
-        if (!string.IsNullOrEmpty(dep.ValuesFile))
+        return _valueListSources.GetOrAdd(key, _ =>
         {
-            var resolvedPath = Path.IsPathRooted(dep.ValuesFile)
-                ? dep.ValuesFile
-                : Path.GetFullPath(dep.ValuesFile, _planBasePath ?? Directory.GetCurrentDirectory());
-            source = new ValueListSource(resolvedPath, _random);
-        }
-        else
-        {
-            source = new ValueListSource(dep.Values!, _random);
-        }
-
-        _valueListSources[key] = source;
-        return source;
+            if (!string.IsNullOrEmpty(dep.ValuesFile))
+            {
+                var resolvedPath = Path.IsPathRooted(dep.ValuesFile)
+                    ? dep.ValuesFile
+                    : Path.GetFullPath(dep.ValuesFile, _planBasePath ?? Directory.GetCurrentDirectory());
+                return new ValueListSource(resolvedPath, Random.Shared);
+            }
+            return new ValueListSource(dep.Values!, Random.Shared);
+        });
     }
 
     private Dictionary<string, object?> ResolveFkValues<T>(
@@ -1158,7 +1173,7 @@ public class DataInserter : IAsyncDisposable
             {
                 var filtered = FilterByResolvedRefs(parentRows, group, resolvedRefs, _fkColumnMap);
                 var candidates = filtered.Count > 0 ? filtered : parentRows;
-                var parentRow = candidates[_random.Next(candidates.Count)];
+                var parentRow = candidates[Random.Shared.Next(candidates.Count)];
 
                 foreach (var (parentColumn, referencedColumn, _) in group.Columns)
                 {
@@ -1197,7 +1212,7 @@ public class DataInserter : IAsyncDisposable
         var parentRows = GetParentRows(group, sampleSize);
         if (parentRows is { Count: > 0 })
         {
-            var parentRow = parentRows[_random.Next(parentRows.Count)];
+            var parentRow = parentRows[Random.Shared.Next(parentRows.Count)];
             foreach (var (parentColumn, referencedColumn, _) in group.Columns)
             {
                 if (parentRow.TryGetValue(referencedColumn, out var value))
@@ -1314,7 +1329,7 @@ public class DataInserter : IAsyncDisposable
 
             if (intersection is { Count: > 0 })
             {
-                var pick = intersection.ElementAt(_random.Next(intersection.Count));
+                var pick = intersection.ElementAt(Random.Shared.Next(intersection.Count));
                 result[key] = pick;
             }
         }
@@ -1347,10 +1362,18 @@ public class DataInserter : IAsyncDisposable
         if (fkGroups.Count <= 1)
             return fkGroups;
 
+        // Snapshot _generationOrder under the lock; we cannot rely on
+        // ConcurrentDictionary.Keys for insertion order (it's a hash-bucket
+        // enumeration, not LRU/insertion-ordered). The list itself is purely
+        // append-only so a defensive copy is enough — we do NOT need to hold
+        // the lock for the OrderByDescending below.
+        List<string> orderSnapshot;
+        lock (_generationOrderLock)
+            orderSnapshot = [.._generationOrder];
+
         var keyOrder = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var idx = 0;
-        foreach (var key in _generatedKeys.Keys)
-            keyOrder[key] = idx++;
+        for (var i = 0; i < orderSnapshot.Count; i++)
+            keyOrder[orderSnapshot[i]] = i;
 
         return fkGroups
             .OrderByDescending(g => keyOrder.TryGetValue(g.RefFullName, out var order) ? order : int.MinValue)
@@ -1422,7 +1445,7 @@ public class DataInserter : IAsyncDisposable
         List<Dictionary<string, object>> parentRows,
         FkGroup group,
         Dictionary<(string Table, string Column), object> resolvedRefs,
-        Dictionary<(string Table, string Column), (string RefTable, string RefColumn)> fkColumnMap)
+        IReadOnlyDictionary<(string Table, string Column), (string RefTable, string RefColumn)> fkColumnMap)
     {
         if (resolvedRefs.Count == 0)
             return parentRows;
@@ -1510,8 +1533,19 @@ public class DataInserter : IAsyncDisposable
                 rows.Add(row);
         }
 
-        _generatedKeys[group.RefFullName] = rows;
+        if (_generatedKeys.TryAdd(group.RefFullName, rows))
+            RecordGenerationOrder(group.RefFullName);
+        else
+            _generatedKeys[group.RefFullName] = rows;
         return rows;
+    }
+
+    private void RecordGenerationOrder(string fullName)
+    {
+        lock (_generationOrderLock)
+        {
+            _generationOrder.Add(fullName);
+        }
     }
 
     #endregion

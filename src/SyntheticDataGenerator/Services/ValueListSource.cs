@@ -19,6 +19,11 @@ public sealed class ValueListSource
     private readonly Random _random;
     private string[]? _values;
 
+    // Pick / EnsureLoaded mutate _values (lazy load) and _random. Held for the
+    // full Pick call so concurrent callers from parallel table tasks don't
+    // race the lazy file load or the shared Random instance.
+    private readonly object _pickLock = new();
+
     public ValueListSource(string filePath, Random? random = null)
     {
         _filePath = filePath;
@@ -41,8 +46,11 @@ public sealed class ValueListSource
 
     public object Pick()
     {
-        EnsureLoaded();
-        return _values![_random.Next(_values.Length)];
+        lock (_pickLock)
+        {
+            EnsureLoaded();
+            return _values![_random.Next(_values.Length)];
+        }
     }
 
     private void EnsureLoaded()

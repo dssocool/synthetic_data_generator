@@ -40,7 +40,8 @@ public record ExecutePlanCommand(
     GenerationPlan Plan,
     string ConnectionString,
     string? PlanBasePath,
-    int? ExternalSourceBufferSize = null);
+    int? ExternalSourceBufferSize = null,
+    int MaxParallelTables = 1);
 
 public record TableExecutionDetail(
     string TableName,

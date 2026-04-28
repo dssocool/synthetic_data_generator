@@ -98,6 +98,15 @@ CustomDependencies:
 # even billion-row source tables stay within bounded memory. Defaults to 10000.
 CustomDependencyBufferSize: 10000
 
+# Optional: maximum number of unrelated tables to insert/update in parallel.
+# Defaults to Environment.ProcessorCount; set to 1 to force fully sequential
+# execution. Two tables only run concurrently when neither has a foreign-key
+# nor a CustomDependencies edge to the other (directly or transitively); the
+# scheduler always waits for every parent table to finish before dispatching
+# its dependents. See "Parallel execution" below for the determinism
+# guarantees and connection-pool considerations.
+MaxParallelTables: 8
+
 # Optional: back any column with a fixed list of values. Each entry maps a
 # `schema.table.column` to EITHER a `File:` path (flat values file, one value
 # per line, blank lines skipped) OR an inline `Values:` list. Exactly one of
@@ -238,6 +247,36 @@ allowed per group (an external column or a CustomValueLists-backed column).
 A group with **zero** providers (every column in scope, no value lists) is
 valid: the source-resolution cascade picks one in-scope column to generate,
 and dependents copy from it.
+
+### Parallel execution
+
+By default the executor inserts (and updates) multiple **unrelated** tables in
+parallel, capped by `MaxParallelTables` (defaults to
+`Environment.ProcessorCount`; set to `1` to force the legacy sequential
+behavior). Two tables are considered unrelated only when there is no
+foreign-key edge and no `CustomDependencies` edge between them, directly or
+transitively — every dependency target is fully written before any dependent
+table starts, so referential integrity and `_generatedKeys`-driven FK
+resolution still work the way they always have.
+
+Determinism with `Seed:` is preserved per-table: each table builds its own
+`Bogus.Faker` seeded from `(Seed, table.FullName)` via a stable FNV-1a hash
+of the table name. The same seed therefore produces the same rows for any
+given table regardless of how the scheduler interleaves it with siblings; a
+seeded run is fully reproducible row-for-row even when `MaxParallelTables > 1`.
+
+A few practical notes:
+
+- Each in-flight table opens its own pooled `SqlConnection`. If you set
+  `MaxParallelTables` higher than the connection string's `Max Pool Size`
+  (default 100), you will hit pool-exhaustion timeouts; bump `Max Pool Size`
+  in the connection string to at least `MaxParallelTables`.
+- A failure on one table does not cancel its in-flight siblings; they run to
+  completion (or their own failure) and dependents are still attempted, with
+  the same fall-back behavior as the sequential path (an empty parent
+  `_generatedKeys` simply yields generated/null FK values).
+- The order in which tables appear in the final progress output reflects
+  completion order, not the plan's `order` field.
 
 ## Usage
 

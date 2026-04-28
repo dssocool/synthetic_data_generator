@@ -24,7 +24,8 @@ var scope = new ScopeConfig(
     locale: config["Locale"] ?? "en",
     customDependencies: config.GetSection("CustomDependencies").Get<string[]>(),
     customDependencyBufferSize: int.TryParse(config["CustomDependencyBufferSize"], out var b) ? b : 10_000,
-    customValueLists: ScopeConfig.ParseCustomValueLists(config.GetSection("CustomValueLists")));
+    customValueLists: ScopeConfig.ParseCustomValueLists(config.GetSection("CustomValueLists")),
+    maxParallelTables: int.TryParse(config["MaxParallelTables"], out var p) ? p : null);
 
 var planner = new DataGenerationPlanner();
 var executor = new DataGenerationExecutor();

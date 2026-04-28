@@ -102,7 +102,8 @@ public class GeneratorOrchestrator
         var result = await _executor.ExecutePlanAsync(
             new ExecutePlanCommand(plan, _connectionString,
                 Path.GetDirectoryName(Path.GetFullPath(planPath)),
-                _scope.CustomDependencyBufferSize),
+                _scope.CustomDependencyBufferSize,
+                _scope.MaxParallelTables),
             CancellationToken.None,
             detail => PrintTableProgress(detail, ++completed, tableCount));
         stopwatch.Stop();
@@ -163,7 +164,8 @@ public class GeneratorOrchestrator
 
         var execResult = await _executor.ExecutePlanAsync(
             new ExecutePlanCommand(planResult.Plan, _connectionString, null,
-                _scope.CustomDependencyBufferSize),
+                _scope.CustomDependencyBufferSize,
+                _scope.MaxParallelTables),
             CancellationToken.None,
             detail => PrintTableProgress(detail, ++completed, tableCount));
         stopwatch.Stop();
