@@ -195,7 +195,7 @@ public class CustomDependencyTests
         Assert.Equal(2, errors.Count);
         Assert.Contains(errors, e => e.Contains("dbo.NonExistent")
                                      && e.Contains("does not exist in the database"));
-        Assert.Contains(errors, e => e.Contains("multiple external columns"));
+        Assert.Contains(errors, e => e.Contains("multiple source-data providers"));
     }
 
     [Fact]
@@ -312,10 +312,11 @@ public class CustomDependencyTests
             groups, scopedTables, allTables, columnScope: null);
 
         Assert.Single(errors);
-        Assert.Contains("multiple external columns", errors[0]);
+        Assert.Contains("multiple source-data providers", errors[0]);
         Assert.Contains("dbo.Regions", errors[0]);
         Assert.Contains("dbo.Areas", errors[0]);
-        Assert.Contains("at most one column may be outside TablesToInclude", errors[0]);
+        Assert.Contains("external root", errors[0]);
+        Assert.Contains("At most one source-data provider is allowed per group", errors[0]);
     }
 
     [Fact]
@@ -617,7 +618,7 @@ public class CustomDependencyTests
             groups, scopedTables, allTables, columnScope: null);
 
         Assert.Single(errors);
-        Assert.Contains("multiple external columns", errors[0]);
+        Assert.Contains("multiple source-data providers", errors[0]);
         Assert.Contains("dbo.Orders", errors[0]);
         Assert.Contains("dbo.Regions", errors[0]);
         Assert.Contains("dbo.Areas", errors[0]);

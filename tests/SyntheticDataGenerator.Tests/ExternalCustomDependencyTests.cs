@@ -517,7 +517,8 @@ public class ExternalCustomDependencyTests
 
         Assert.False(validateResult.IsValid);
         Assert.Contains(validateResult.Errors,
-            e => e.Contains("multiple external columns"));
+            e => e.Contains("multiple source-data providers")
+                 && e.Contains("external root"));
 
         var count = (int)(await _fixture.ExecuteScalarAsync(
             $"SELECT COUNT(*) FROM dbo.{ordersName}"))!;

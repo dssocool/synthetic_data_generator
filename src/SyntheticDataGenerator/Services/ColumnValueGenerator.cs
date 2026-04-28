@@ -71,6 +71,16 @@ public class ColumnValueGenerator
         if (string.Equals(plan.Generator, "customDependency", StringComparison.OrdinalIgnoreCase))
             return null;
 
+        if (string.Equals(plan.Generator, "valueList", StringComparison.OrdinalIgnoreCase))
+        {
+            var picked = PickFromValueListArgs(plan);
+            if (picked is not null)
+                return ClampValue(picked, plan);
+            throw new InvalidOperationException(
+                $"Column '{plan.Name}' uses generator 'valueList' but neither 'valuesFile' " +
+                "nor a non-empty 'values' arg is set.");
+        }
+
         if (!string.IsNullOrWhiteSpace(plan.ValuesFile))
         {
             var values = LoadValuesFile(plan.ValuesFile, plan.Name);
@@ -93,6 +103,54 @@ public class ColumnValueGenerator
         }
 
         return _faker.Random.AlphaNumeric(8);
+    }
+
+    /// <summary>
+    /// Picks a random value for a "valueList" column. Honors either a
+    /// <c>valuesFile</c> path (loaded via <see cref="LoadValuesFile"/>) or an
+    /// inline <c>values</c> arg. The inline list may have arrived as
+    /// <c>List&lt;string&gt;</c> (in-memory plan) or <c>List&lt;object?&gt;</c>
+    /// (after a YamlDotNet round-trip), so both shapes are normalized.
+    /// </summary>
+    private object? PickFromValueListArgs(ColumnPlan plan)
+    {
+        if (plan.GeneratorArgs.TryGetValue("valuesFile", out var vfObj)
+            && vfObj is string vf
+            && !string.IsNullOrWhiteSpace(vf))
+        {
+            var values = LoadValuesFile(vf, plan.Name);
+            return _faker.PickRandom(values);
+        }
+
+        if (!string.IsNullOrWhiteSpace(plan.ValuesFile))
+        {
+            var values = LoadValuesFile(plan.ValuesFile, plan.Name);
+            return _faker.PickRandom(values);
+        }
+
+        if (plan.GeneratorArgs.TryGetValue("values", out var vObj) && vObj is not null)
+        {
+            var inline = NormalizeInlineValues(vObj);
+            if (inline.Length > 0)
+                return _faker.PickRandom(inline);
+        }
+
+        return null;
+    }
+
+    private static string[] NormalizeInlineValues(object raw)
+    {
+        return raw switch
+        {
+            IEnumerable<string> ss => ss.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
+            IEnumerable<object?> os => os
+                .Where(o => o is not null)
+                .Select(o => o!.ToString())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s!)
+                .ToArray(),
+            _ => []
+        };
     }
 
     private string[] LoadValuesFile(string filePath, string columnName)

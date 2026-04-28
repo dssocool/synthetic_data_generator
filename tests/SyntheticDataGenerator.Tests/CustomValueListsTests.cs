@@ -312,11 +312,13 @@ public class CustomValueListsTests
     }
 
     [Fact]
-    public void Validation_ColumnInsideScope_Errors()
+    public void Validation_InScopeCvlColumnInGroup_UsedAsSource()
     {
-        // CustomValueLists columns must live OUTSIDE TablesToInclude — they're
-        // treated as external roots. If the column is in scope it's a config
-        // mistake.
+        // CustomValueLists columns may now live IN-SCOPE. When such a column
+        // is referenced by a CustomDependencies group, the value list backs
+        // the column itself AND its dependents — the cascade must pick the
+        // value-list column as the source (Tier 1: ValueList) regardless of
+        // whether the column is also a PK on the in-scope side.
         var orders = MakeTable("dbo", "Orders", "LookupCode");
         var lookup = MakeTable("dbo", "Lookup", "Code");
         var allTables = new List<TableInfo> { orders, lookup };
@@ -336,9 +338,13 @@ public class CustomValueListsTests
             var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
                 groups, scopedTables, allTables, columnScope: null, customValueLists);
 
-            Assert.Contains(errors, e => e.Contains("must be outside")
-                                         && e.Contains("dbo.Lookup")
-                                         && e.Contains("Code"));
+            Assert.Empty(errors);
+            var source = groups[0].Columns.Single(c => c.IsSource);
+            Assert.Equal("dbo.Lookup", source.Table);
+            Assert.Equal("Code", source.Column);
+            // In-scope CVL columns are NOT external roots.
+            Assert.False(source.IsExternalRoot);
+            Assert.Equal(file, source.ValuesFile);
         }
         finally
         {
@@ -347,35 +353,180 @@ public class CustomValueListsTests
     }
 
     [Fact]
-    public void Validation_UnreferencedEntry_Errors()
+    public void Validation_StandaloneCvlOnInScopeColumn_Succeeds()
     {
-        // CustomValueLists entry that no CustomDependencies group mentions is
-        // dead config — must surface as an error rather than silently ignored.
+        // A CustomValueLists entry that no CustomDependencies group references
+        // is now valid AS LONG AS the column is in scope: the planner just
+        // generates that column directly from the list.
+        var orders = MakeTable("dbo", "Orders", "Status");
+        var allTables = new List<TableInfo> { orders };
+        var scopedTables = new List<TableInfo> { orders };
+
+        // No CustomDependencies group references the column.
+        var groups = new List<CustomDependencyGroup>();
+        var customValueLists = new[]
+        {
+            new CustomValueList
+            {
+                Column = "dbo.Orders.Status",
+                Values = ["Pending", "Active", "Closed"]
+            }
+        };
+
+        var standalone = new Dictionary<string, DataGenerationPlanner.ValueListEntry>(
+            StringComparer.OrdinalIgnoreCase);
+        var groupErrors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope: null,
+            customValueLists, standalone);
+        Assert.Empty(groupErrors);
+
+        var standaloneErrors = DataGenerationPlanner.CollectStandaloneValueListErrors(
+            standalone, scopedTables, columnScope: null);
+        Assert.Empty(standaloneErrors);
+
+        // The entry survives to the planner-facing lookup.
+        Assert.True(standalone.ContainsKey("dbo.Orders.Status"));
+        var entry = standalone["dbo.Orders.Status"];
+        Assert.Null(entry.File);
+        Assert.NotNull(entry.Values);
+        Assert.Equal(new[] { "Pending", "Active", "Closed" }, entry.Values);
+    }
+
+    [Fact]
+    public void Validation_StandaloneCvlOnOutOfScopeColumn_Errors()
+    {
+        // A standalone CustomValueLists entry on a column that is NOT in
+        // TablesToInclude has no way to be applied — fail fast with a
+        // descriptive error.
         var orders = MakeTable("dbo", "Orders", "LookupCode");
         var lookup = MakeTable("dbo", "Lookup", "Code");
         var allTables = new List<TableInfo> { orders, lookup };
         var scopedTables = new List<TableInfo> { orders };
 
-        var file = WriteTempFile("a");
-        try
+        var groups = new List<CustomDependencyGroup>();
+        var customValueLists = new[]
         {
-            // Note: NO CustomDependencies group references Lookup.Code.
-            var groups = new List<CustomDependencyGroup>();
-            var customValueLists = new[]
+            new CustomValueList
             {
-                new CustomValueList { Column = "dbo.Lookup.Code", File = file }
-            };
+                Column = "dbo.Lookup.Code",
+                Values = ["X", "Y"]
+            }
+        };
 
-            var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
-                groups, scopedTables, allTables, columnScope: null, customValueLists);
+        var standalone = new Dictionary<string, DataGenerationPlanner.ValueListEntry>(
+            StringComparer.OrdinalIgnoreCase);
+        var groupErrors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope: null,
+            customValueLists, standalone);
+        Assert.Empty(groupErrors);
 
-            Assert.Contains(errors, e =>
-                e.Contains("not referenced by any CustomDependencies group"));
-        }
-        finally
+        var standaloneErrors = DataGenerationPlanner.CollectStandaloneValueListErrors(
+            standalone, scopedTables, columnScope: null);
+
+        Assert.Contains(standaloneErrors, e =>
+            e.Contains("dbo.Lookup")
+            && e.Contains("Code")
+            && e.Contains("not in scope"));
+        // Out-of-scope entry is removed from the lookup so the planner doesn't try to apply it.
+        Assert.False(standalone.ContainsKey("dbo.Lookup.Code"));
+    }
+
+    [Fact]
+    public void Validation_StandaloneCvlOnColumnExcludedFromColumnsFilter_Errors()
+    {
+        // The Orders table is in scope, but its Columns filter excludes 'Status'.
+        // A standalone CustomValueLists entry on Status must therefore fail.
+        var orders = MakeTable("dbo", "Orders", "Status", "Other");
+        var allTables = new List<TableInfo> { orders };
+        var scopedTables = new List<TableInfo> { orders };
+
+        var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            File.Delete(file);
-        }
+            ["dbo.Orders"] = new(StringComparer.OrdinalIgnoreCase) { "Other" }
+        };
+
+        var groups = new List<CustomDependencyGroup>();
+        var customValueLists = new[]
+        {
+            new CustomValueList { Column = "dbo.Orders.Status", Values = ["A", "B"] }
+        };
+
+        var standalone = new Dictionary<string, DataGenerationPlanner.ValueListEntry>(
+            StringComparer.OrdinalIgnoreCase);
+        var groupErrors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope, customValueLists, standalone);
+        Assert.Empty(groupErrors);
+
+        var standaloneErrors = DataGenerationPlanner.CollectStandaloneValueListErrors(
+            standalone, scopedTables, columnScope);
+
+        Assert.Contains(standaloneErrors, e =>
+            e.Contains("dbo.Orders")
+            && e.Contains("Status")
+            && e.Contains("not in scope"));
+    }
+
+    [Fact]
+    public void Validation_GroupWithExternalAndCvl_Errors()
+    {
+        // A group containing BOTH an external column without value-list backing
+        // (data would stream from the live DB) AND another column with a
+        // CustomValueLists entry has two source-data providers — fail fast.
+        var orders = MakeTable("dbo", "Orders", "RegionCode");
+        var lookup = MakeTable("dbo", "Lookup", "Region");
+        var areas = MakeTable("dbo", "Areas", "Code");
+        var allTables = new List<TableInfo> { orders, lookup, areas };
+        // Only Orders is in scope; both Lookup and Areas are external.
+        var scopedTables = new List<TableInfo> { orders };
+
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Lookup.Region|dbo.Areas.Code|dbo.Orders.RegionCode"]);
+        var customValueLists = new[]
+        {
+            new CustomValueList { Column = "dbo.Lookup.Region", Values = ["APAC", "EMEA"] }
+        };
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope: null, customValueLists);
+
+        Assert.Single(errors);
+        Assert.Contains("multiple source-data providers", errors[0]);
+        Assert.Contains("CustomValueLists", errors[0]);
+        Assert.Contains("external root", errors[0]);
+        Assert.Contains("dbo.Lookup", errors[0]);
+        Assert.Contains("dbo.Areas", errors[0]);
+    }
+
+    [Fact]
+    public void Validation_GroupWithOnlyCvlSource_Succeeds()
+    {
+        // A single CVL-backed column among otherwise in-scope columns counts
+        // as the lone source-data provider; other in-scope columns are
+        // dependents.
+        var orders = MakeTable("dbo", "Orders", "RegionCode");
+        var stats = MakeTable("dbo", "Stats", "RegionCode");
+        var lookup = MakeTable("dbo", "Lookup", "Region");
+        var allTables = new List<TableInfo> { orders, stats, lookup };
+        // Orders + Stats in scope; Lookup external (CVL-backed).
+        var scopedTables = new List<TableInfo> { orders, stats };
+
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Orders.RegionCode|dbo.Stats.RegionCode|dbo.Lookup.Region"]);
+        var customValueLists = new[]
+        {
+            new CustomValueList { Column = "dbo.Lookup.Region", Values = ["APAC", "EMEA"] }
+        };
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope: null, customValueLists);
+
+        Assert.Empty(errors);
+        var source = groups[0].Columns.Single(c => c.IsSource);
+        Assert.Equal("dbo.Lookup", source.Table);
+        Assert.Equal("Region", source.Column);
+        Assert.True(source.IsExternalRoot);
+        Assert.NotNull(source.Values);
+        Assert.Equal(new[] { "APAC", "EMEA" }, source.Values);
     }
 
     [Fact]
@@ -976,6 +1127,174 @@ public class CustomValueListsTests
     }
 
     [Fact]
+    public void PlanGenerator_StampsValueListGeneratorOnInScopeColumnFromStandaloneEntry()
+    {
+        // A standalone CustomValueLists entry (not in any CustomDependencies
+        // group) on an in-scope column should produce a column plan whose
+        // generator is "valueList" and whose generatorArgs carry the values.
+        var orders = new TableInfo
+        {
+            Schema = "dbo", TableName = "Orders", PrimaryKeyColumns = ["Id"],
+            Columns =
+            [
+                new ColumnInfo { Name = "Id", SqlType = "int", IsPrimaryKey = true, IsIdentity = true },
+                new ColumnInfo { Name = "Status", SqlType = "nvarchar", MaxLength = 20 }
+            ]
+        };
+
+        var standalone = new Dictionary<string, ValueListBinding>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dbo.Orders.Status"] = new(File: null, Values: ["Pending", "Active", "Closed"])
+        };
+
+        var plan = new PlanGenerator().Generate(
+            sortedTables: [orders],
+            selfReferencingTables: new HashSet<string>(),
+            defaultRowCount: 5,
+            seed: 42,
+            standaloneValueLists: standalone);
+
+        var statusPlan = plan.Tables
+            .Single(t => t.Table == "dbo.Orders")
+            .Columns.Single(c => c.Name == "Status");
+
+        Assert.Equal("valueList", statusPlan.Generator);
+        Assert.True(statusPlan.GeneratorArgs.ContainsKey("values"));
+        var emitted = Assert.IsType<List<string>>(statusPlan.GeneratorArgs["values"]);
+        Assert.Equal(new[] { "Pending", "Active", "Closed" }, emitted);
+    }
+
+    [Fact]
+    public void PlanGenerator_StampsValuesFileOnInScopeColumnFromStandaloneEntry()
+    {
+        // File-backed standalone CVL should emit a "valuesFile" generator arg.
+        var orders = new TableInfo
+        {
+            Schema = "dbo", TableName = "Orders", PrimaryKeyColumns = ["Id"],
+            Columns =
+            [
+                new ColumnInfo { Name = "Id", SqlType = "int", IsPrimaryKey = true, IsIdentity = true },
+                new ColumnInfo { Name = "LookupCode", SqlType = "nvarchar", MaxLength = 20 }
+            ]
+        };
+
+        var standalone = new Dictionary<string, ValueListBinding>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dbo.Orders.LookupCode"] = new(File: "/tmp/codes.txt", Values: null)
+        };
+
+        var plan = new PlanGenerator().Generate(
+            sortedTables: [orders],
+            selfReferencingTables: new HashSet<string>(),
+            defaultRowCount: 5,
+            seed: 42,
+            standaloneValueLists: standalone);
+
+        var colPlan = plan.Tables
+            .Single(t => t.Table == "dbo.Orders")
+            .Columns.Single(c => c.Name == "LookupCode");
+
+        Assert.Equal("valueList", colPlan.Generator);
+        Assert.True(colPlan.GeneratorArgs.ContainsKey("valuesFile"));
+        Assert.Equal("/tmp/codes.txt", colPlan.GeneratorArgs["valuesFile"]);
+        Assert.False(colPlan.GeneratorArgs.ContainsKey("values"));
+    }
+
+    [Fact]
+    public void PlanGenerator_StampsValueListOnInScopeGroupSource()
+    {
+        // When the source column of a CustomDependencies group is in-scope AND
+        // backed by a CustomValueLists entry, the source column itself must use
+        // the "valueList" generator. The dependents continue to use
+        // "customDependency" and copy from the source's generated rows.
+        var orders = new TableInfo
+        {
+            Schema = "dbo", TableName = "Orders", PrimaryKeyColumns = ["Id"],
+            Columns =
+            [
+                new ColumnInfo { Name = "Id", SqlType = "int", IsPrimaryKey = true, IsIdentity = true },
+                new ColumnInfo { Name = "RegionCode", SqlType = "nvarchar", MaxLength = 20 }
+            ]
+        };
+        var stats = new TableInfo
+        {
+            Schema = "dbo", TableName = "Stats", PrimaryKeyColumns = ["Id"],
+            Columns =
+            [
+                new ColumnInfo { Name = "Id", SqlType = "int", IsPrimaryKey = true, IsIdentity = true },
+                new ColumnInfo { Name = "RegionCode", SqlType = "nvarchar", MaxLength = 20 }
+            ]
+        };
+
+        var customDeps = new List<CustomDependencyGroup>
+        {
+            new()
+            {
+                Columns =
+                [
+                    new CustomColumnRef
+                    {
+                        Table = "dbo.Orders", Column = "RegionCode",
+                        IsSource = true,
+                        Values = ["APAC", "EMEA", "AMER"]
+                    },
+                    new CustomColumnRef { Table = "dbo.Stats", Column = "RegionCode" }
+                ]
+            }
+        };
+
+        var plan = new PlanGenerator().Generate(
+            sortedTables: [orders, stats],
+            selfReferencingTables: new HashSet<string>(),
+            defaultRowCount: 5,
+            seed: 42,
+            customDependencies: customDeps);
+
+        var ordersRegion = plan.Tables
+            .Single(t => t.Table == "dbo.Orders")
+            .Columns.Single(c => c.Name == "RegionCode");
+        Assert.Equal("valueList", ordersRegion.Generator);
+        Assert.True(ordersRegion.GeneratorArgs.ContainsKey("values"));
+
+        var statsRegion = plan.Tables
+            .Single(t => t.Table == "dbo.Stats")
+            .Columns.Single(c => c.Name == "RegionCode");
+        Assert.Equal("customDependency", statsRegion.Generator);
+        Assert.Equal("dbo.Orders", statsRegion.GeneratorArgs["sourceTable"]);
+        Assert.Equal("RegionCode", statsRegion.GeneratorArgs["sourceColumn"]);
+    }
+
+    [Fact]
+    public void ColumnValueGenerator_PicksOnlyFromInlineValuesArg()
+    {
+        // The runtime "valueList" generator must honor an inline `values` arg
+        // even when no `valuesFile` is supplied. This is the round-trip path
+        // for inline CVL data.
+        var plan = new ColumnPlan
+        {
+            Name = "Status",
+            SqlType = "nvarchar",
+            MaxLength = 20,
+            Generator = "valueList",
+            GeneratorArgs = new Dictionary<string, object?>
+            {
+                ["values"] = new List<string> { "Pending", "Active", "Closed" }
+            }
+        };
+
+        var gen = new ColumnValueGenerator(seed: 42);
+        var seen = new HashSet<string>();
+        var allowed = new HashSet<string> { "Pending", "Active", "Closed" };
+        for (var i = 0; i < 100; i++)
+        {
+            var v = (string)gen.GenerateFromPlan(plan)!;
+            Assert.Contains(v, allowed);
+            seen.Add(v);
+        }
+        Assert.Equal(allowed.OrderBy(x => x), seen.OrderBy(x => x));
+    }
+
+    [Fact]
     public async Task PlanGenerator_InlineValuesRoundTripThroughYaml()
     {
         // Verify the inline list survives a serialize/deserialize round trip
@@ -1242,6 +1561,107 @@ public class CustomValueListsIntegrationTests
         {
             File.Delete(file);
         }
+    }
+
+    [Fact]
+    public async Task StandaloneCvl_PopulatesInScopeColumnFromInlineValues()
+    {
+        // A standalone CustomValueLists entry on an in-scope column (no
+        // CustomDependencies group references it) generates that column
+        // directly from the inline list. End-to-end smoke test of the new
+        // "valueList" generator path.
+        var ordersName = "TestStandaloneCvlOrders_" + Guid.NewGuid().ToString("N")[..8];
+
+        await _fixture.ExecuteSqlAsync($"""
+            CREATE TABLE dbo.{ordersName} (
+                Id INT IDENTITY(1,1) PRIMARY KEY,
+                Status NVARCHAR(20) NOT NULL,
+                Amount INT NOT NULL
+            )
+            """);
+
+        var validStatuses = new[] { "Pending", "Active", "Closed" };
+        var scope = new ScopeConfig(
+            schemaFilter: ["dbo"],
+            tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+            rowsPerTable: 25,
+            seed: 42,
+            locale: "en",
+            customValueLists:
+            [
+                new CustomValueList
+                {
+                    Column = $"dbo.{ordersName}.Status",
+                    Values = validStatuses.ToList()
+                }
+            ]);
+
+        var planner = new DataGenerationPlanner();
+        var executor = new DataGenerationExecutor();
+        var orchestrator = new GeneratorOrchestrator(
+            _fixture.ConnectionString, scope, planner, executor);
+
+        await orchestrator.RunDirectAsync("insert");
+
+        var rows = await _fixture.ExecuteQueryAsync(
+            $"SELECT Status FROM dbo.{ordersName}");
+
+        Assert.Equal(25, rows.Count);
+        var validSet = new HashSet<string>(validStatuses);
+        foreach (var row in rows)
+        {
+            var status = (string)row["Status"]!;
+            Assert.Contains(status, validSet);
+        }
+    }
+
+    [Fact]
+    public async Task StandaloneCvl_FailsFastWhenColumnNotInScope()
+    {
+        // A standalone CustomValueLists entry on a column whose table is NOT
+        // in TablesToInclude must surface as a validation error before any
+        // insert is attempted.
+        var ordersName = "TestStandaloneCvlMissing_" + Guid.NewGuid().ToString("N")[..8];
+        var lookupName = "TestStandaloneCvlLookup_" + Guid.NewGuid().ToString("N")[..8];
+
+        await _fixture.ExecuteSqlAsync($"""
+            CREATE TABLE dbo.{ordersName} (
+                Id INT IDENTITY(1,1) PRIMARY KEY,
+                Code NVARCHAR(20) NOT NULL
+            );
+
+            CREATE TABLE dbo.{lookupName} (
+                Id INT IDENTITY(1,1) PRIMARY KEY,
+                Region NVARCHAR(20) NOT NULL
+            );
+            """);
+
+        var scope = new ScopeConfig(
+            schemaFilter: ["dbo"],
+            // Lookup table intentionally NOT in scope.
+            tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+            rowsPerTable: 5,
+            seed: 42,
+            locale: "en",
+            customValueLists:
+            [
+                new CustomValueList
+                {
+                    Column = $"dbo.{lookupName}.Region",
+                    Values = ["APAC", "EMEA"]
+                }
+            ]);
+
+        var planner = new DataGenerationPlanner();
+        var validateResult = await planner.ValidateScopeAsync(
+            new ValidateScopeCommand(_fixture.ConnectionString, scope, "insert"),
+            CancellationToken.None);
+
+        Assert.False(validateResult.IsValid);
+        Assert.Contains(validateResult.Errors,
+            e => e.Contains($"dbo.{lookupName}")
+                 && e.Contains("Region")
+                 && e.Contains("not in scope"));
     }
 
     [Fact]

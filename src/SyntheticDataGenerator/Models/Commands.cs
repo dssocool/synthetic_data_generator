@@ -12,11 +12,19 @@ public record ValidateScopeResult(
     IReadOnlySet<string>? SelfReferencingTables,
     Dictionary<string, HashSet<string>>? ColumnScope,
     List<ExternalDependency>? ExternalDependencies = null,
-    List<CustomDependencyGroup>? CustomDependencies = null)
+    List<CustomDependencyGroup>? CustomDependencies = null,
+    Dictionary<string, ValueListBinding>? StandaloneValueLists = null)
 {
     public static ValidateScopeResult Failure(List<string> errors) =>
         new(false, errors, [], null, null);
 }
+
+/// <summary>
+/// A standalone CustomValueLists binding ready for the planner to attach to
+/// an in-scope column. Exactly one of <see cref="File"/> or <see cref="Values"/>
+/// is populated.
+/// </summary>
+public sealed record ValueListBinding(string? File, List<string>? Values);
 
 public record GeneratePlanCommand(
     ValidateScopeResult ValidationResult,
