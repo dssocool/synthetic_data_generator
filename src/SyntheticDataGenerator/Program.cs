@@ -22,7 +22,8 @@ var scope = new ScopeConfig(
     rowsPerTable: int.TryParse(config["RowsPerTable"], out var r) ? r : 100,
     seed: int.TryParse(config["Seed"], out var s) ? s : null,
     locale: config["Locale"] ?? "en",
-    customDependencies: config.GetSection("CustomDependencies").Get<string[]>());
+    customDependencies: config.GetSection("CustomDependencies").Get<string[]>(),
+    customDependencyBufferSize: int.TryParse(config["CustomDependencyBufferSize"], out var b) ? b : 10_000);
 
 var planner = new DataGenerationPlanner();
 var executor = new DataGenerationExecutor();

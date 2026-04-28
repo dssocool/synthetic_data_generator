@@ -6,11 +6,12 @@ using SyntheticDataGenerator.Models;
 
 namespace SyntheticDataGenerator.Services;
 
-public class DataInserter
+public class DataInserter : IAsyncDisposable
 {
     private readonly string _connectionString;
     private readonly ColumnValueGenerator _valueGen;
     private readonly IReadOnlySet<string> _selfReferencingTables;
+    private readonly int _externalSourceBufferSize;
     private readonly Random _random = new();
 
     internal readonly Dictionary<string, List<Dictionary<string, object>>> _generatedKeys = new();
@@ -22,16 +23,34 @@ public class DataInserter
     private readonly Dictionary<(string Table, string Column), (string RefTable, string RefColumn)>
         _fkColumnMap = new(FullNameColumnComparer.Instance);
 
+    // One streamer per (externalTable, column) — shared across all dependents
+    // that pull from the same root, so we never open more than one cursor per
+    // external source even if multiple groups reference it.
+    private readonly Dictionary<(string Table, string Column), ExternalSourceStreamer>
+        _externalSourceStreamers = new(FullNameColumnComparer.Instance);
+
     private const int MaxPkRetries = 100;
+    private const int DefaultExternalSourceBufferSize = 10_000;
 
     public DataInserter(
         string connectionString,
         ColumnValueGenerator valueGen,
-        IReadOnlySet<string> selfReferencingTables)
+        IReadOnlySet<string> selfReferencingTables,
+        int externalSourceBufferSize = DefaultExternalSourceBufferSize)
     {
         _connectionString = connectionString;
         _valueGen = valueGen;
         _selfReferencingTables = selfReferencingTables;
+        _externalSourceBufferSize = externalSourceBufferSize > 0
+            ? externalSourceBufferSize
+            : DefaultExternalSourceBufferSize;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var streamer in _externalSourceStreamers.Values)
+            await streamer.DisposeAsync();
+        _externalSourceStreamers.Clear();
     }
 
     /// <summary>
@@ -908,7 +927,8 @@ public class DataInserter
         string SourceTable,
         string SourceColumn,
         string DependentColumn,
-        bool IsNullable);
+        bool IsNullable,
+        bool IsExternal = false);
 
     private static List<FkGroup> BuildFkGroupsFromPlan<T>(List<T> columns) where T : IColumnMetadata
     {
@@ -942,7 +962,8 @@ public class DataInserter
                 Helpers.GetArgString(c.GeneratorArgs, "sourceTable"),
                 Helpers.GetArgString(c.GeneratorArgs, "sourceColumn"),
                 c.Name,
-                c.IsNullable))
+                c.IsNullable,
+                c.GeneratorArgs.TryGetValue("isExternal", out var ext) && Helpers.IsTruthy(ext)))
             .ToList();
     }
 
@@ -1005,6 +1026,13 @@ public class DataInserter
 
         foreach (var dep in customDepGroups)
         {
+            if (dep.IsExternal)
+            {
+                var streamer = GetOrCreateExternalSourceStreamer(dep.SourceTable, dep.SourceColumn);
+                resolved[dep.DependentColumn] = streamer.Pick();
+                continue;
+            }
+
             if (_generatedKeys.TryGetValue(dep.SourceTable, out var sourceRows) && sourceRows.Count > 0)
             {
                 var sourceRow = sourceRows[_random.Next(sourceRows.Count)];
@@ -1014,6 +1042,18 @@ public class DataInserter
         }
 
         return resolved;
+    }
+
+    private ExternalSourceStreamer GetOrCreateExternalSourceStreamer(string sourceTable, string sourceColumn)
+    {
+        var key = (sourceTable, sourceColumn);
+        if (_externalSourceStreamers.TryGetValue(key, out var existing))
+            return existing;
+
+        var streamer = new ExternalSourceStreamer(
+            _connectionString, sourceTable, sourceColumn, _externalSourceBufferSize, _random);
+        _externalSourceStreamers[key] = streamer;
+        return streamer;
     }
 
     private Dictionary<string, object?> ResolveFkValues<T>(

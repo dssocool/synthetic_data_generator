@@ -17,13 +17,21 @@ public class ScopeConfig
     public string Locale { get; }
     public string[] CustomDependencies { get; }
 
+    /// <summary>
+    /// Maximum number of values held in memory per external custom-dependency
+    /// root column. Streamer pulls one row at a time from the DB to keep this
+    /// window rotating across the full result set. Defaults to 10,000.
+    /// </summary>
+    public int CustomDependencyBufferSize { get; }
+
     public ScopeConfig(
         string[]? schemaFilter,
         TableScope[] tablesToInclude,
         int rowsPerTable,
         int? seed,
         string locale,
-        string[]? customDependencies = null)
+        string[]? customDependencies = null,
+        int customDependencyBufferSize = 10_000)
     {
         SchemaFilter = schemaFilter is { Length: > 0 } ? schemaFilter : null;
         TablesToInclude = tablesToInclude;
@@ -31,6 +39,9 @@ public class ScopeConfig
         Seed = seed;
         Locale = locale;
         CustomDependencies = customDependencies ?? [];
+        CustomDependencyBufferSize = customDependencyBufferSize > 0
+            ? customDependencyBufferSize
+            : 10_000;
     }
 
     /// <summary>

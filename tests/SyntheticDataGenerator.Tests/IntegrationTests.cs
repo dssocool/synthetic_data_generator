@@ -2848,9 +2848,13 @@ public class IntegrationTests
             .ToList();
 
         // Deliberately write the dependency "backwards": dependent column first, source PK second.
-        // The system should auto-detect that SrcId is identity and swap direction.
+        // The validator's source-resolution cascade should pick TestCDAutoSrc.SrcId
+        // (PK + identity) as the source despite its position in the YAML.
         var customDepGroups = ScopeConfig.ParseCustomDependencies(
             ["dbo.TestCDAutoDep.SrcRef|dbo.TestCDAutoSrc.SrcId"]);
+        var validationErrors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            customDepGroups, tables, allTables, columnScope: null);
+        Assert.Empty(validationErrors);
 
         var graph = new DependencyGraph();
         graph.Build(tables);
@@ -2860,7 +2864,7 @@ public class IntegrationTests
         var srcIdx = sorted.FindIndex(t => t.TableName == "TestCDAutoSrc");
         var depIdx = sorted.FindIndex(t => t.TableName == "TestCDAutoDep");
         Assert.True(srcIdx < depIdx,
-            "Auto-corrected: identity table (TestCDAutoSrc) must come before dependent");
+            "Cascade picked SrcId (PK+identity) as source; TestCDAutoSrc must come before dependent");
 
         var planGen = new PlanGenerator();
         var plan = planGen.Generate(sorted, graph.SelfReferencingTables, RowCount, Seed, "en",

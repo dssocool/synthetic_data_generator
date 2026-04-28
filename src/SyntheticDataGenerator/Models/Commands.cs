@@ -31,7 +31,8 @@ public record GeneratePlanResult(
 public record ExecutePlanCommand(
     GenerationPlan Plan,
     string ConnectionString,
-    string? PlanBasePath);
+    string? PlanBasePath,
+    int? ExternalSourceBufferSize = null);
 
 public record TableExecutionDetail(
     string TableName,

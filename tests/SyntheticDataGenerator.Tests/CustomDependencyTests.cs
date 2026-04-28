@@ -108,11 +108,13 @@ public class CustomDependencyTests
             MakeTable("dbo", "Regions", "Code")
         };
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
 
-        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(groups, tables);
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, tables, tables, columnScope: null);
 
         Assert.Empty(errors);
+        Assert.False(groups[0].Columns[0].IsExternalRoot);
     }
 
     [Fact]
@@ -123,13 +125,14 @@ public class CustomDependencyTests
             MakeTable("dbo", "Orders", "RegionCode")
         };
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
 
-        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(groups, tables);
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, tables, tables, columnScope: null);
 
         Assert.Single(errors);
         Assert.Contains("dbo.Regions", errors[0]);
-        Assert.Contains("not in scope", errors[0]);
+        Assert.Contains("does not exist in the database", errors[0]);
     }
 
     [Fact]
@@ -141,9 +144,10 @@ public class CustomDependencyTests
             MakeTable("dbo", "Regions")
         };
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
 
-        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(groups, tables);
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, tables, tables, columnScope: null);
 
         Assert.Single(errors);
         Assert.Contains("Code", errors[0]);
@@ -158,11 +162,296 @@ public class CustomDependencyTests
             MakeTable("dbo", "Orders")
         };
         var groups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
 
-        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(groups, tables);
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, tables, tables, columnScope: null);
 
         Assert.Equal(2, errors.Count);
+    }
+
+    [Fact]
+    public void CollectCustomDependencyErrors_AllowsExternalRootTable()
+    {
+        // Orders is in scope, Regions is in the DB but NOT in TablesToInclude.
+        // Regions.Code becomes an external root.
+        var allTables = new List<TableInfo>
+        {
+            MakeTable("dbo", "Orders", "RegionCode"),
+            MakeTable("dbo", "Regions", "Code")
+        };
+        var scopedTables = new List<TableInfo>
+        {
+            allTables.First(t => t.TableName == "Orders")
+        };
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope: null);
+
+        Assert.Empty(errors);
+        Assert.True(groups[0].Columns[0].IsExternalRoot,
+            "Source column on a table outside scope must be flagged external.");
+        Assert.False(groups[0].Columns[1].IsExternalRoot,
+            "Dependent column inside scope must remain non-external.");
+    }
+
+    [Fact]
+    public void CollectCustomDependencyErrors_AllowsExternalRootColumn()
+    {
+        // Both tables in scope, but Regions has a column-scope filter that
+        // excludes 'Code'. That column is then considered an external root.
+        var allTables = new List<TableInfo>
+        {
+            MakeTable("dbo", "Orders", "RegionCode"),
+            MakeTable("dbo", "Regions", "Code", "Other")
+        };
+        var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dbo.Regions"] = new(StringComparer.OrdinalIgnoreCase) { "Other" }
+        };
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, allTables, allTables, columnScope);
+
+        Assert.Empty(errors);
+        Assert.True(groups[0].Columns[0].IsExternalRoot);
+    }
+
+    [Fact]
+    public void CollectCustomDependencyErrors_RejectsMultipleExternals()
+    {
+        // Two external columns in the same group → fatal error.
+        var allTables = new List<TableInfo>
+        {
+            MakeTable("dbo", "Orders", "RegionCode"),
+            MakeTable("dbo", "Regions", "Code"),
+            MakeTable("dbo", "Areas", "Code")
+        };
+        // Only Orders is in scope; both Regions and Areas are external.
+        var scopedTables = new List<TableInfo>
+        {
+            allTables.First(t => t.TableName == "Orders")
+        };
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Regions.Code|dbo.Areas.Code|dbo.Orders.RegionCode"]);
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope: null);
+
+        Assert.Single(errors);
+        Assert.Contains("multiple external columns", errors[0]);
+        Assert.Contains("dbo.Regions", errors[0]);
+        Assert.Contains("dbo.Areas", errors[0]);
+        Assert.Contains("at most one column may be outside TablesToInclude", errors[0]);
+    }
+
+    [Fact]
+    public void ResolveSource_ExternalWinsOverPk()
+    {
+        // Regions.Id is an out-of-scope PK; Orders.RegionCode is an in-scope
+        // plain column. External wins (Tier 1).
+        var allTables = new List<TableInfo>
+        {
+            MakeTable("dbo", "Orders", "RegionCode"),
+            MakeTable("dbo", "Regions") // only the PK 'Id'
+        };
+        var scopedTables = new List<TableInfo>
+        {
+            allTables.First(t => t.TableName == "Orders")
+        };
+        // Declare the PK second so we know external (Regions.Id) didn't win
+        // by virtue of being declared first.
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Orders.RegionCode|dbo.Regions.Id"]);
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, scopedTables, allTables, columnScope: null);
+
+        Assert.Empty(errors);
+        var source = groups[0].Columns.Single(c => c.IsSource);
+        Assert.Equal("dbo.Regions", source.Table);
+        Assert.Equal("Id", source.Column);
+        Assert.True(source.IsExternalRoot);
+    }
+
+    [Fact]
+    public void ResolveSource_PkWinsOverAutoGen()
+    {
+        // Orders has a non-identity PK 'OrderCode'; AuditLog has an identity
+        // 'Id' that is NOT a PK. PK (Tier 2) wins over AutoGenerated (Tier 3).
+        // The previous 2-column auto-correction would have picked the identity.
+        var orders = new TableInfo
+        {
+            Schema = "dbo", TableName = "Orders",
+            PrimaryKeyColumns = ["OrderCode"],
+            Columns =
+            [
+                new ColumnInfo { Name = "OrderCode", SqlType = "nvarchar", MaxLength = 20, IsPrimaryKey = true }
+            ]
+        };
+        var auditLog = new TableInfo
+        {
+            Schema = "dbo", TableName = "AuditLog",
+            Columns =
+            [
+                new ColumnInfo { Name = "Id", SqlType = "int", IsIdentity = true }
+            ]
+        };
+        var tables = new List<TableInfo> { orders, auditLog };
+
+        // Declare the identity column first to confirm cascade beats position.
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.AuditLog.Id|dbo.Orders.OrderCode"]);
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, tables, tables, columnScope: null);
+
+        Assert.Empty(errors);
+        var source = groups[0].Columns.Single(c => c.IsSource);
+        Assert.Equal("dbo.Orders", source.Table);
+        Assert.Equal("OrderCode", source.Column);
+    }
+
+    [Fact]
+    public void ResolveSource_AutoGenWinsOverUnique()
+    {
+        // No PK on either side. Customers.Id is identity; Orders.OrderCode
+        // is unique-not-PK. AutoGen (Tier 3) wins over Unique (Tier 4).
+        var orders = new TableInfo
+        {
+            Schema = "dbo", TableName = "Orders",
+            Columns =
+            [
+                new ColumnInfo { Name = "OrderCode", SqlType = "nvarchar", MaxLength = 20, IsUnique = true }
+            ]
+        };
+        var customers = new TableInfo
+        {
+            Schema = "dbo", TableName = "Customers",
+            Columns =
+            [
+                new ColumnInfo { Name = "Id", SqlType = "int", IsIdentity = true }
+            ]
+        };
+        var tables = new List<TableInfo> { orders, customers };
+
+        // Declare the unique column first; AutoGen should still win.
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Orders.OrderCode|dbo.Customers.Id"]);
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, tables, tables, columnScope: null);
+
+        Assert.Empty(errors);
+        var source = groups[0].Columns.Single(c => c.IsSource);
+        Assert.Equal("dbo.Customers", source.Table);
+    }
+
+    [Fact]
+    public void ResolveSource_UniqueWinsOverPlain()
+    {
+        // No PK, no auto-gen on either side. One side has IsUnique.
+        var orders = new TableInfo
+        {
+            Schema = "dbo", TableName = "Orders",
+            Columns =
+            [
+                new ColumnInfo { Name = "RegionCode", SqlType = "nvarchar", MaxLength = 10 }
+            ]
+        };
+        var regions = new TableInfo
+        {
+            Schema = "dbo", TableName = "Regions",
+            Columns =
+            [
+                new ColumnInfo { Name = "Code", SqlType = "nvarchar", MaxLength = 10, IsUnique = true }
+            ]
+        };
+        var tables = new List<TableInfo> { orders, regions };
+
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Orders.RegionCode|dbo.Regions.Code"]);
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, tables, tables, columnScope: null);
+
+        Assert.Empty(errors);
+        var source = groups[0].Columns.Single(c => c.IsSource);
+        Assert.Equal("dbo.Regions", source.Table);
+    }
+
+    [Fact]
+    public void ResolveSource_AllPlainColumnsFallsBackToFirstDeclared()
+    {
+        // No tier matches → first declared wins.
+        var a = new TableInfo
+        {
+            Schema = "dbo", TableName = "TableA",
+            Columns =
+            [
+                new ColumnInfo { Name = "Col1", SqlType = "nvarchar", MaxLength = 10 }
+            ]
+        };
+        var b = new TableInfo
+        {
+            Schema = "dbo", TableName = "TableB",
+            Columns =
+            [
+                new ColumnInfo { Name = "Col1", SqlType = "nvarchar", MaxLength = 10 }
+            ]
+        };
+        var tables = new List<TableInfo> { a, b };
+
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.TableA.Col1|dbo.TableB.Col1"]);
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, tables, tables, columnScope: null);
+
+        Assert.Empty(errors);
+        var source = groups[0].Columns.Single(c => c.IsSource);
+        Assert.Equal("dbo.TableA", source.Table);
+    }
+
+    [Fact]
+    public void ResolveSource_FirstDeclaredOnTieAtLowestTier()
+    {
+        // Both columns are PKs from different tables: cascade narrows but
+        // doesn't pick a single winner; the final fallback (first declared)
+        // applies, which by then is constrained to the PK candidates.
+        var a = new TableInfo
+        {
+            Schema = "dbo", TableName = "TableA",
+            PrimaryKeyColumns = ["Id"],
+            Columns =
+            [
+                new ColumnInfo { Name = "Id", SqlType = "int", IsPrimaryKey = true }
+            ]
+        };
+        var b = new TableInfo
+        {
+            Schema = "dbo", TableName = "TableB",
+            PrimaryKeyColumns = ["Id"],
+            Columns =
+            [
+                new ColumnInfo { Name = "Id", SqlType = "int", IsPrimaryKey = true }
+            ]
+        };
+        var tables = new List<TableInfo> { a, b };
+
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.TableB.Id|dbo.TableA.Id"]);
+
+        var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
+            groups, tables, tables, columnScope: null);
+
+        Assert.Empty(errors);
+        var source = groups[0].Columns.Single(c => c.IsSource);
+        Assert.Equal("dbo.TableB", source.Table);
     }
 
     #endregion
@@ -276,6 +565,29 @@ public class CustomDependencyTests
 
         var sorted = graph.GetTopologicalOrder();
         Assert.Single(sorted);
+    }
+
+    [Fact]
+    public void DependencyGraph_ExternalRootDoesNotConstrainOrder()
+    {
+        // Only Orders is in the graph (Regions is "external").
+        // The external root must NOT introduce any edges or in-degree —
+        // dependents must still be valid root nodes themselves.
+        var orders = MakeTable("dbo", "Orders", "RegionCode");
+
+        var graph = new DependencyGraph();
+        graph.Build([orders]);
+
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
+        // Simulate validator marking the source as external.
+        groups[0].Columns[0].IsExternalRoot = true;
+
+        graph.AddCustomDependencies(groups);
+
+        var sorted = graph.GetTopologicalOrder();
+        Assert.Single(sorted);
+        Assert.Equal("dbo.Orders", sorted[0].FullName);
     }
 
     #endregion
@@ -432,6 +744,35 @@ public class CustomDependencyTests
         Assert.Null(plan.CustomDependencies);
     }
 
+    [Fact]
+    public void PlanGenerator_ExternalRootEmitsIsExternalArg()
+    {
+        // Only Orders is in scope; Regions.Code is the external root source.
+        var orders = MakeTable("dbo", "Orders", "RegionCode");
+
+        var graph = new DependencyGraph();
+        graph.Build([orders]);
+
+        var groups = ScopeConfig.ParseCustomDependencies(
+            ["dbo.Regions.Code|dbo.Orders.RegionCode"]);
+        groups[0].Columns[0].IsExternalRoot = true;
+        graph.AddCustomDependencies(groups);
+
+        var sorted = graph.GetTopologicalOrder();
+
+        var planGen = new PlanGenerator();
+        var plan = planGen.Generate(sorted, graph.SelfReferencingTables, 10, 42,
+            customDependencies: groups);
+
+        var col = plan.Tables.First(t => t.Table == "dbo.Orders")
+            .Columns.First(c => c.Name == "RegionCode");
+        Assert.Equal("customDependency", col.Generator);
+        Assert.Equal("dbo.Regions", Helpers.GetArgString(col.GeneratorArgs, "sourceTable"));
+        Assert.Equal("Code", Helpers.GetArgString(col.GeneratorArgs, "sourceColumn"));
+        Assert.True(col.GeneratorArgs.TryGetValue("isExternal", out var ext)
+                    && Helpers.IsTruthy(ext));
+    }
+
     #endregion
 
     #region Runtime linking tests
@@ -538,6 +879,42 @@ public class CustomDependencyTests
         Assert.Equal(2, groups.Count);
         Assert.Equal("dbo.Regions", groups[0].SourceTable);
         Assert.Equal("dbo.Categories", groups[1].SourceTable);
+    }
+
+    [Fact]
+    public void BuildCustomDepGroupsFromPlan_PreservesIsExternal()
+    {
+        var columns = new List<ColumnPlan>
+        {
+            new()
+            {
+                Name = "RegionCode", SqlType = "int",
+                Generator = "customDependency",
+                GeneratorArgs = new Dictionary<string, object?>
+                {
+                    ["sourceTable"] = "dbo.Regions",
+                    ["sourceColumn"] = "Code",
+                    ["isExternal"] = true
+                }
+            },
+            new()
+            {
+                Name = "CategoryId", SqlType = "int",
+                Generator = "customDependency",
+                GeneratorArgs = new Dictionary<string, object?>
+                {
+                    ["sourceTable"] = "dbo.Categories",
+                    ["sourceColumn"] = "Id",
+                    ["isExternal"] = false
+                }
+            }
+        };
+
+        var groups = DataInserter.BuildCustomDepGroupsFromPlan(columns);
+
+        Assert.Equal(2, groups.Count);
+        Assert.True(groups[0].IsExternal);
+        Assert.False(groups[1].IsExternal);
     }
 
     [Fact]

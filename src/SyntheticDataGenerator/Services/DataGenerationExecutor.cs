@@ -29,8 +29,9 @@ public class DataGenerationExecutor : IDataGenerationExecutor
         if (command.PlanBasePath != null)
             valueGen.SetPlanBasePath(command.PlanBasePath);
 
-        var inserter = new DataInserter(
-            command.ConnectionString, valueGen, selfRefTables);
+        await using var inserter = new DataInserter(
+            command.ConnectionString, valueGen, selfRefTables,
+            command.ExternalSourceBufferSize ?? 10_000);
 
         var details = new List<TableExecutionDetail>();
         var totalRows = 0;

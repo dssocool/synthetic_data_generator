@@ -60,10 +60,51 @@ Locale: en
 
 # Optional: non-FK column relationships used for ordering.
 # Each entry is a pipe-separated (`|`) list of `schema.table.column` references.
-# The first entry is the source (must be inserted first); subsequent entries depend on it.
+# The order of entries does NOT matter — the tool inspects each column's schema
+# and picks the source via this priority cascade:
+#   1. External root (column outside TablesToInclude)
+#   2. Primary key
+#   3. Auto-generated (identity / computed / sequence default / rowversion)
+#   4. Unique constraint / unique index
+#   5. First declared (final tiebreaker)
+# Every other column in the group becomes a dependent that copies values from
+# the chosen source.
+#
+# A source column may live OUTSIDE TablesToInclude — either the entire table is
+# excluded, or the column is excluded from a scoped table's Columns filter. In
+# that case the source is treated as an "external root": values are streamed
+# from the live database (with bounded memory) and copied into the dependents.
+# A group may contain at most one external column; more than one is a fatal
+# error. The tool also fails fast at validation time if any external root has
+# no non-null data.
 CustomDependencies:
   - dbo.Lookup.Code|dbo.Orders.LookupCode
-  - dbo.Categories.Id|dbo.Products.CategoryId|dbo.Inventory.CategoryId
+  # Order is irrelevant — dbo.Categories.Id is a primary key, so it is picked
+  # as the source even though it is not declared first.
+  - dbo.Products.CategoryId|dbo.Categories.Id|dbo.Inventory.CategoryId
+
+# Optional: maximum number of values held in memory per external custom-dependency
+# root column. The streamer rotates this window across the entire result set so
+# even billion-row source tables stay within bounded memory. Defaults to 10000.
+CustomDependencyBufferSize: 10000
+```
+
+### External custom dependency roots
+
+Suppose you have a large `dbo.Lookup` table that you do not want to insert into
+(perhaps because it is reference data already maintained elsewhere), but you do
+want the synthetic rows generated for `dbo.Orders` to use realistic values from
+`dbo.Lookup.Code`. Just leave `dbo.Lookup` out of `TablesToInclude` and declare
+the relationship under `CustomDependencies`:
+
+```yaml
+TablesToInclude:
+  - dbo.Orders
+CustomDependencies:
+  # dbo.Lookup is NOT in TablesToInclude — it becomes an external root whose
+  # values are streamed from the DB at runtime and copied into Orders.LookupCode.
+  # Order does not matter; the external column always wins as source.
+  - dbo.Orders.LookupCode|dbo.Lookup.Code
 ```
 
 ## Usage
