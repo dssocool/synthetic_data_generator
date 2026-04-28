@@ -123,6 +123,18 @@ public class CustomColumnRef
     public bool IsSource { get; set; }
 
     public bool ShouldSerializeIsSource() => IsSource;
+
+    /// <summary>
+    /// When set, this column's values come from a flat values file (one value
+    /// per line) instead of being streamed from the live database. Only
+    /// meaningful when <see cref="IsExternalRoot"/> is also true — it backs the
+    /// external root's data source. Path may be absolute or relative; relative
+    /// paths are resolved against the plan file's directory at runtime.
+    /// </summary>
+    [YamlMember(Alias = "valuesFile")]
+    public string? ValuesFile { get; set; }
+
+    public bool ShouldSerializeValuesFile() => !string.IsNullOrEmpty(ValuesFile);
 }
 
 public class ColumnPlan : IColumnMetadata

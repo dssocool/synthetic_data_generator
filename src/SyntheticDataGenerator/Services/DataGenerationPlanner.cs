@@ -40,7 +40,7 @@ public class DataGenerationPlanner : IDataGenerationPlanner
         var customDepGroups = ScopeConfig.ParseCustomDependencies(scope.CustomDependencies);
 
         var customDepErrors = CollectCustomDependencyErrors(
-            customDepGroups, tables, allTables, columnScope);
+            customDepGroups, tables, allTables, columnScope, scope.CustomValueLists);
         if (customDepErrors.Count > 0)
             return ValidateScopeResult.Failure(customDepErrors);
 
@@ -253,7 +253,8 @@ public class DataGenerationPlanner : IDataGenerationPlanner
         List<CustomDependencyGroup> groups,
         List<TableInfo> scopedTables,
         List<TableInfo> allTables,
-        Dictionary<string, HashSet<string>>? columnScope)
+        Dictionary<string, HashSet<string>>? columnScope,
+        CustomValueList[]? customValueLists = null)
     {
         var errors = new List<string>();
 
@@ -268,6 +269,14 @@ public class DataGenerationPlanner : IDataGenerationPlanner
         foreach (var t in allTables)
             foreach (var c in t.Columns)
                 columnLookup.TryAdd($"{t.FullName}.{c.Name}", c);
+
+        var (valueListLookup, valueListErrors) = BuildValueListLookup(customValueLists);
+        errors.AddRange(valueListErrors);
+
+        var valueListUsage = valueListLookup.Keys.ToDictionary(
+            k => k,
+            _ => false,
+            new TableColumnComparer());
 
         foreach (var group in groups)
         {
@@ -301,6 +310,24 @@ public class DataGenerationPlanner : IDataGenerationPlanner
 
                 if (!isColumnInScope)
                     colRef.IsExternalRoot = true;
+
+                var key = (colRef.Table, colRef.Column);
+                if (valueListLookup.TryGetValue(key, out var filePath))
+                {
+                    if (isColumnInScope)
+                    {
+                        errors.Add(
+                            $"CustomValueLists column [{colRef.Table}].[{colRef.Column}] must be outside " +
+                            "TablesToInclude (it is treated as an external root). Remove the column from " +
+                            "TablesToInclude or remove it from CustomValueLists.");
+                        groupHadResolutionFailure = true;
+                        continue;
+                    }
+
+                    colRef.ValuesFile = filePath;
+                    colRef.IsExternalRoot = true;
+                    valueListUsage[key] = true;
+                }
             }
 
             if (groupHadResolutionFailure || group.Columns.Count < 2)
@@ -323,7 +350,87 @@ public class DataGenerationPlanner : IDataGenerationPlanner
             group.Columns[sourceIndex].IsSource = true;
         }
 
+        foreach (var ((table, column), used) in valueListUsage)
+        {
+            if (used) continue;
+            errors.Add(
+                $"CustomValueLists entry [{table}].[{column}] is not referenced by any " +
+                "CustomDependencies group; it would have no effect. Add a CustomDependencies " +
+                "entry that includes this column, or remove it from CustomValueLists.");
+        }
+
         return errors;
+    }
+
+    /// <summary>
+    /// Validates each <see cref="CustomValueList"/> entry: file path is provided,
+    /// the file exists, and the file contains at least one non-blank line.
+    /// Returns a lookup keyed by (table, column) for quick membership checks
+    /// during dependency-group classification, plus any accumulated errors.
+    /// </summary>
+    internal static (Dictionary<(string Table, string Column), string> Lookup, List<string> Errors)
+        BuildValueListLookup(CustomValueList[]? customValueLists)
+    {
+        var lookup = new Dictionary<(string Table, string Column), string>(new TableColumnComparer());
+        var errors = new List<string>();
+
+        if (customValueLists is null or { Length: 0 })
+            return (lookup, errors);
+
+        foreach (var entry in customValueLists)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Column))
+            {
+                errors.Add("CustomValueLists entry is missing the Column field.");
+                continue;
+            }
+
+            var lastDot = entry.Column.LastIndexOf('.');
+            if (lastDot <= 0 || lastDot == entry.Column.Length - 1)
+            {
+                errors.Add(
+                    $"CustomValueLists Column [{entry.Column}] must be in the form schema.table.column.");
+                continue;
+            }
+
+            var table = entry.Column[..lastDot];
+            var column = entry.Column[(lastDot + 1)..];
+
+            if (string.IsNullOrWhiteSpace(entry.File))
+            {
+                errors.Add(
+                    $"CustomValueLists entry [{entry.Column}] is missing the File field.");
+                continue;
+            }
+
+            if (!File.Exists(entry.File))
+            {
+                errors.Add(
+                    $"CustomValueLists file '{entry.File}' for column [{entry.Column}] does not exist.");
+                continue;
+            }
+
+            var hasContent = File.ReadLines(entry.File)
+                .Any(line => !string.IsNullOrWhiteSpace(line));
+            if (!hasContent)
+            {
+                errors.Add(
+                    $"CustomValueLists file '{entry.File}' for column [{entry.Column}] is empty.");
+                continue;
+            }
+
+            var key = (table, column);
+            if (lookup.ContainsKey(key))
+            {
+                errors.Add(
+                    $"CustomValueLists has duplicate entries for column [{entry.Column}].");
+                continue;
+            }
+
+            lookup[key] = entry.File;
+        }
+
+        return (lookup, errors);
     }
 
     /// <summary>
@@ -380,6 +487,9 @@ public class DataGenerationPlanner : IDataGenerationPlanner
 
             foreach (var source in group.Columns.Where(c => c.IsExternalRoot))
             {
+                if (!string.IsNullOrEmpty(source.ValuesFile))
+                    continue;
+
                 var key = (source.Table, source.Column);
                 if (!rootDependents.TryGetValue(key, out var deps))
                 {

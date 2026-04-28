@@ -31,7 +31,8 @@ public class DataGenerationExecutor : IDataGenerationExecutor
 
         await using var inserter = new DataInserter(
             command.ConnectionString, valueGen, selfRefTables,
-            command.ExternalSourceBufferSize ?? 10_000);
+            command.ExternalSourceBufferSize ?? 10_000,
+            command.PlanBasePath);
 
         var details = new List<TableExecutionDetail>();
         var totalRows = 0;

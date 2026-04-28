@@ -8,6 +8,12 @@ public class TableScope
     public List<string>? Columns { get; set; }
 }
 
+public class CustomValueList
+{
+    public string Column { get; set; } = string.Empty;
+    public string File { get; set; } = string.Empty;
+}
+
 public class ScopeConfig
 {
     public string[]? SchemaFilter { get; }
@@ -16,6 +22,7 @@ public class ScopeConfig
     public int? Seed { get; }
     public string Locale { get; }
     public string[] CustomDependencies { get; }
+    public CustomValueList[] CustomValueLists { get; }
 
     /// <summary>
     /// Maximum number of values held in memory per external custom-dependency
@@ -31,7 +38,8 @@ public class ScopeConfig
         int? seed,
         string locale,
         string[]? customDependencies = null,
-        int customDependencyBufferSize = 10_000)
+        int customDependencyBufferSize = 10_000,
+        CustomValueList[]? customValueLists = null)
     {
         SchemaFilter = schemaFilter is { Length: > 0 } ? schemaFilter : null;
         TablesToInclude = tablesToInclude;
@@ -39,6 +47,7 @@ public class ScopeConfig
         Seed = seed;
         Locale = locale;
         CustomDependencies = customDependencies ?? [];
+        CustomValueLists = customValueLists ?? [];
         CustomDependencyBufferSize = customDependencyBufferSize > 0
             ? customDependencyBufferSize
             : 10_000;
@@ -157,5 +166,34 @@ public class ScopeConfig
         return new HashSet<string>(
             TablesToInclude.Select(t => t.Table),
             StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Parses CustomValueLists from IConfiguration. Only the structured form is
+    /// supported: each child must specify both <c>Column</c> (schema.table.column)
+    /// and <c>File</c> (path to a flat values file, one value per line).
+    /// </summary>
+    public static CustomValueList[] ParseCustomValueLists(IConfigurationSection section)
+    {
+        var children = section.GetChildren().ToList();
+        if (children.Count == 0)
+            return [];
+
+        var result = new List<CustomValueList>();
+        foreach (var child in children)
+        {
+            var column = child["Column"];
+            var file = child["File"];
+            if (string.IsNullOrWhiteSpace(column))
+                continue;
+
+            result.Add(new CustomValueList
+            {
+                Column = column,
+                File = file ?? string.Empty
+            });
+        }
+
+        return result.ToArray();
     }
 }

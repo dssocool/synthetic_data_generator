@@ -87,6 +87,25 @@ CustomDependencies:
 # root column. The streamer rotates this window across the entire result set so
 # even billion-row source tables stay within bounded memory. Defaults to 10000.
 CustomDependencyBufferSize: 10000
+
+# Optional: back an external custom-dependency root column with a flat values
+# file (one value per line, blank lines skipped) instead of streaming from the
+# live database. Each entry maps a `schema.table.column` to a file path
+# (absolute, or relative to the working directory / generated plan file).
+#
+# A column listed here:
+#   - MUST exist in the actual database schema (validated at startup).
+#   - MUST live OUTSIDE TablesToInclude — it is treated exactly like an
+#     external custom-dependency root.
+#   - MUST appear in at least one CustomDependencies group (otherwise it has
+#     no effect and validation fails).
+#
+# At runtime, every dependent column in the matching CustomDependencies group
+# picks values from the file instead of opening a SQL cursor against the
+# source table.
+CustomValueLists:
+  - Column: dbo.Lookup.Code
+    File: ./values/lookup_codes.txt
 ```
 
 ### External custom dependency roots
@@ -106,6 +125,26 @@ CustomDependencies:
   # Order does not matter; the external column always wins as source.
   - dbo.Orders.LookupCode|dbo.Lookup.Code
 ```
+
+If you would rather control the source values yourself — for example, when the
+live `dbo.Lookup` is empty in lower environments, or you want to constrain
+generated orders to a known short list of codes — pair the same
+`CustomDependencies` entry with a `CustomValueLists` entry pointing at a flat
+text file:
+
+```yaml
+TablesToInclude:
+  - dbo.Orders
+CustomValueLists:
+  - Column: dbo.Lookup.Code
+    File: ./values/lookup_codes.txt
+CustomDependencies:
+  - dbo.Orders.LookupCode|dbo.Lookup.Code
+```
+
+`./values/lookup_codes.txt` is a plain text file with one code per line. Every
+inserted `dbo.Orders.LookupCode` will be picked uniformly at random from the
+file's lines, and no SQL cursor is opened against `dbo.Lookup`.
 
 ## Usage
 

@@ -145,6 +145,8 @@ public class PlanGenerator
                         ["sourceColumn"] = source.Column,
                         ["isExternal"] = source.IsExternalRoot
                     };
+                    if (!string.IsNullOrEmpty(source.ValuesFile))
+                        colPlan.GeneratorArgs["valuesFile"] = source.ValuesFile;
                 }
                 else
                 {

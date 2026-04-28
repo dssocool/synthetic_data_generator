@@ -23,7 +23,8 @@ var scope = new ScopeConfig(
     seed: int.TryParse(config["Seed"], out var s) ? s : null,
     locale: config["Locale"] ?? "en",
     customDependencies: config.GetSection("CustomDependencies").Get<string[]>(),
-    customDependencyBufferSize: int.TryParse(config["CustomDependencyBufferSize"], out var b) ? b : 10_000);
+    customDependencyBufferSize: int.TryParse(config["CustomDependencyBufferSize"], out var b) ? b : 10_000,
+    customValueLists: ScopeConfig.ParseCustomValueLists(config.GetSection("CustomValueLists")));
 
 var planner = new DataGenerationPlanner();
 var executor = new DataGenerationExecutor();

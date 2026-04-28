@@ -12,6 +12,7 @@ public class DataInserter : IAsyncDisposable
     private readonly ColumnValueGenerator _valueGen;
     private readonly IReadOnlySet<string> _selfReferencingTables;
     private readonly int _externalSourceBufferSize;
+    private readonly string? _planBasePath;
     private readonly Random _random = new();
 
     internal readonly Dictionary<string, List<Dictionary<string, object>>> _generatedKeys = new();
@@ -29,6 +30,12 @@ public class DataInserter : IAsyncDisposable
     private readonly Dictionary<(string Table, string Column), ExternalSourceStreamer>
         _externalSourceStreamers = new(FullNameColumnComparer.Instance);
 
+    // One value-list picker per (externalTable, column) — shared across all
+    // dependents that pull from the same CustomValueLists-backed root, so each
+    // file is loaded into memory at most once per run.
+    private readonly Dictionary<(string Table, string Column), ValueListSource>
+        _valueListSources = new(FullNameColumnComparer.Instance);
+
     private const int MaxPkRetries = 100;
     private const int DefaultExternalSourceBufferSize = 10_000;
 
@@ -36,7 +43,8 @@ public class DataInserter : IAsyncDisposable
         string connectionString,
         ColumnValueGenerator valueGen,
         IReadOnlySet<string> selfReferencingTables,
-        int externalSourceBufferSize = DefaultExternalSourceBufferSize)
+        int externalSourceBufferSize = DefaultExternalSourceBufferSize,
+        string? planBasePath = null)
     {
         _connectionString = connectionString;
         _valueGen = valueGen;
@@ -44,6 +52,7 @@ public class DataInserter : IAsyncDisposable
         _externalSourceBufferSize = externalSourceBufferSize > 0
             ? externalSourceBufferSize
             : DefaultExternalSourceBufferSize;
+        _planBasePath = planBasePath;
     }
 
     public async ValueTask DisposeAsync()
@@ -928,7 +937,8 @@ public class DataInserter : IAsyncDisposable
         string SourceColumn,
         string DependentColumn,
         bool IsNullable,
-        bool IsExternal = false);
+        bool IsExternal = false,
+        string? ValuesFile = null);
 
     private static List<FkGroup> BuildFkGroupsFromPlan<T>(List<T> columns) where T : IColumnMetadata
     {
@@ -958,12 +968,19 @@ public class DataInserter : IAsyncDisposable
         return columns
             .OfType<ColumnPlan>()
             .Where(c => c.Generator.Equals("customDependency", StringComparison.OrdinalIgnoreCase))
-            .Select(c => new CustomDepGroup(
-                Helpers.GetArgString(c.GeneratorArgs, "sourceTable"),
-                Helpers.GetArgString(c.GeneratorArgs, "sourceColumn"),
-                c.Name,
-                c.IsNullable,
-                c.GeneratorArgs.TryGetValue("isExternal", out var ext) && Helpers.IsTruthy(ext)))
+            .Select(c =>
+            {
+                var valuesFile = c.GeneratorArgs.TryGetValue("valuesFile", out var vf)
+                    ? vf as string
+                    : null;
+                return new CustomDepGroup(
+                    Helpers.GetArgString(c.GeneratorArgs, "sourceTable"),
+                    Helpers.GetArgString(c.GeneratorArgs, "sourceColumn"),
+                    c.Name,
+                    c.IsNullable,
+                    c.GeneratorArgs.TryGetValue("isExternal", out var ext) && Helpers.IsTruthy(ext),
+                    string.IsNullOrEmpty(valuesFile) ? null : valuesFile);
+            })
             .ToList();
     }
 
@@ -1026,6 +1043,14 @@ public class DataInserter : IAsyncDisposable
 
         foreach (var dep in customDepGroups)
         {
+            if (!string.IsNullOrEmpty(dep.ValuesFile))
+            {
+                var picker = GetOrCreateValueListSource(
+                    dep.SourceTable, dep.SourceColumn, dep.ValuesFile);
+                resolved[dep.DependentColumn] = picker.Pick();
+                continue;
+            }
+
             if (dep.IsExternal)
             {
                 var streamer = GetOrCreateExternalSourceStreamer(dep.SourceTable, dep.SourceColumn);
@@ -1054,6 +1079,22 @@ public class DataInserter : IAsyncDisposable
             _connectionString, sourceTable, sourceColumn, _externalSourceBufferSize, _random);
         _externalSourceStreamers[key] = streamer;
         return streamer;
+    }
+
+    private ValueListSource GetOrCreateValueListSource(
+        string sourceTable, string sourceColumn, string valuesFile)
+    {
+        var key = (sourceTable, sourceColumn);
+        if (_valueListSources.TryGetValue(key, out var existing))
+            return existing;
+
+        var resolvedPath = Path.IsPathRooted(valuesFile)
+            ? valuesFile
+            : Path.GetFullPath(valuesFile, _planBasePath ?? Directory.GetCurrentDirectory());
+
+        var source = new ValueListSource(resolvedPath, _random);
+        _valueListSources[key] = source;
+        return source;
     }
 
     private Dictionary<string, object?> ResolveFkValues<T>(
