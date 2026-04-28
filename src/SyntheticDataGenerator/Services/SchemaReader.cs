@@ -252,7 +252,9 @@ public class SchemaReader
             var schema = reader.GetString(0);
             var tableName = reader.GetString(1);
             var columnName = reader.GetString(2);
-            var definition = reader.GetString(3);
+            // dc.definition can come back NULL when the SQL login lacks
+            // VIEW DEFINITION permission on the object/database.
+            var definition = reader.IsDBNull(3) ? null : reader.GetString(3);
             var fullName = $"{schema}.{tableName}";
 
             if (tables.TryGetValue(fullName, out var table))
@@ -298,6 +300,12 @@ public class SchemaReader
 
             if (tables.TryGetValue(fullName, out var table))
             {
+                // cc.definition can come back NULL when the SQL login lacks
+                // VIEW DEFINITION permission. Skip such constraints rather
+                // than crash, since we can't enforce a check we cannot read.
+                if (reader.IsDBNull(3))
+                    continue;
+
                 table.CheckConstraints.Add(new CheckConstraintInfo
                 {
                     Name = reader.GetString(2),
