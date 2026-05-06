@@ -49,7 +49,8 @@ public class PlanGenerator
         string mode = "insert",
         Dictionary<string, HashSet<string>>? columnsInScope = null,
         List<ExternalDependency>? externalDependencies = null,
-        List<CustomDependencyGroup>? customDependencies = null)
+        List<CustomDependencyGroup>? customDependencies = null,
+        Dictionary<string, ValueListBinding>? standaloneValueLists = null)
     {
         var outboundFkKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (externalDependencies is not null)
@@ -60,6 +61,8 @@ public class PlanGenerator
         }
 
         var customDepLookup = BuildCustomDependencyLookup(customDependencies, sortedTables);
+        var inScopeValueListLookup = BuildInScopeValueListLookup(
+            customDependencies, standaloneValueLists);
 
         var plan = new GenerationPlan
         {
@@ -142,8 +145,22 @@ public class PlanGenerator
                     colPlan.GeneratorArgs = new Dictionary<string, object?>
                     {
                         ["sourceTable"] = source.Table,
-                        ["sourceColumn"] = source.Column
+                        ["sourceColumn"] = source.Column,
+                        ["isExternal"] = source.IsExternalRoot
                     };
+                    if (!string.IsNullOrEmpty(source.ValuesFile))
+                        colPlan.GeneratorArgs["valuesFile"] = source.ValuesFile;
+                    else if (source.Values is { Count: > 0 })
+                        colPlan.GeneratorArgs["values"] = new List<string>(source.Values);
+                }
+                else if (inScopeValueListLookup.TryGetValue($"{table.FullName}.{col.Name}", out var binding))
+                {
+                    colPlan.Generator = "valueList";
+                    colPlan.GeneratorArgs = new Dictionary<string, object?>();
+                    if (!string.IsNullOrEmpty(binding.File))
+                        colPlan.GeneratorArgs["valuesFile"] = binding.File;
+                    else if (binding.Values is { Count: > 0 })
+                        colPlan.GeneratorArgs["values"] = new List<string>(binding.Values);
                 }
                 else
                 {
@@ -171,6 +188,15 @@ public class PlanGenerator
                     .ToList();
             }
 
+            var maxRows = ComputeMaxDistinctRows(tablePlan, table);
+            if (maxRows.HasValue && tablePlan.RowCount > maxRows.Value)
+            {
+                Console.WriteLine(
+                    $"  WARNING: [{table.FullName}] rowCount capped from {tablePlan.RowCount} " +
+                    $"to {maxRows.Value} (limited by narrow PK/unique column cardinality).");
+                tablePlan.RowCount = maxRows.Value;
+            }
+
             plan.Tables.Add(tablePlan);
         }
 
@@ -178,12 +204,12 @@ public class PlanGenerator
     }
 
     /// <summary>
-    /// Builds a lookup from "schema.table.column" -> source CustomColumnRef for all
-    /// dependent columns in custom dependency groups. For two-column groups the
-    /// direction is auto-detected: whichever column is identity/computed/rowversion/
-    /// sequence ("skip") becomes the source that provides values, and the other
-    /// column becomes the dependent that copies from it. When neither or both are
-    /// skip columns, the first column is treated as the source.
+    /// Builds a lookup from "schema.table.column" -> source CustomColumnRef for
+    /// all dependent columns in custom dependency groups. The source is whichever
+    /// column the validator flagged with <see cref="CustomColumnRef.IsSource"/>;
+    /// every other column in the group becomes a dependent that copies from it.
+    /// Dependents that are auto-generated ("skip") columns are excluded — the
+    /// database fills them in, so the runtime should not overwrite them.
     /// </summary>
     private static Dictionary<string, CustomColumnRef> BuildCustomDependencyLookup(
         List<CustomDependencyGroup>? groups,
@@ -205,19 +231,14 @@ public class PlanGenerator
             if (group.Columns.Count < 2)
                 continue;
 
-            if (group.Columns.Count == 2)
-            {
-                var (sourceRef, depRef) = ResolveDirection(
-                    group.Columns[0], group.Columns[1], columnLookup);
-                var depKey = $"{depRef.Table}.{depRef.Column}";
-                lookup.TryAdd(depKey, sourceRef);
-                continue;
-            }
+            var source = group.Columns.FirstOrDefault(c => c.IsSource)
+                         ?? group.Columns[0];
 
-            var source = group.Columns[0];
-            for (var i = 1; i < group.Columns.Count; i++)
+            foreach (var dep in group.Columns)
             {
-                var dep = group.Columns[i];
+                if (ReferenceEquals(dep, source))
+                    continue;
+
                 var depColKey = $"{dep.Table}.{dep.Column}";
                 var depIsSkip = columnLookup.TryGetValue(depColKey, out var depCol)
                                 && IsSkipColumn(depCol);
@@ -231,18 +252,53 @@ public class PlanGenerator
         return lookup;
     }
 
-    private static (CustomColumnRef Source, CustomColumnRef Dependent) ResolveDirection(
-        CustomColumnRef first, CustomColumnRef second,
-        Dictionary<string, ColumnInfo> columnLookup)
-    {
-        return Helpers.ResolveCustomDepDirection(first, second, colRef =>
-        {
-            var key = $"{colRef.Table}.{colRef.Column}";
-            return columnLookup.TryGetValue(key, out var col) && IsSkipColumn(col);
-        });
-    }
-
     private static bool IsSkipColumn(ColumnInfo col) => col.IsAutoGenerated;
+
+    /// <summary>
+    /// Builds a lookup from "schema.table.column" -> <see cref="ValueListBinding"/>
+    /// for every in-scope column whose values come from a CustomValueLists entry.
+    /// Two sources merge into this lookup:
+    ///  * <paramref name="standaloneValueLists"/> — entries not referenced by any
+    ///    CustomDependencies group; the column is generated directly from the list.
+    ///  * <paramref name="customDependencies"/> — for groups whose source column
+    ///    is in-scope AND has a value-list backing, the source column itself is
+    ///    generated from the list (its dependents copy from the source's
+    ///    generated rows via the existing customDependency runtime path).
+    /// Both cases route through the planner's "valueList" generator branch.
+    /// </summary>
+    private static Dictionary<string, ValueListBinding> BuildInScopeValueListLookup(
+        List<CustomDependencyGroup>? customDependencies,
+        Dictionary<string, ValueListBinding>? standaloneValueLists)
+    {
+        var lookup = new Dictionary<string, ValueListBinding>(StringComparer.OrdinalIgnoreCase);
+
+        if (standaloneValueLists is not null)
+        {
+            foreach (var (key, binding) in standaloneValueLists)
+                lookup[key] = binding;
+        }
+
+        if (customDependencies is not null)
+        {
+            foreach (var group in customDependencies)
+            {
+                var source = group.Columns.FirstOrDefault(c => c.IsSource);
+                if (source is null) continue;
+                if (source.IsExternalRoot) continue;
+
+                var hasFile = !string.IsNullOrEmpty(source.ValuesFile);
+                var hasValues = source.Values is { Count: > 0 };
+                if (!hasFile && !hasValues) continue;
+
+                var key = $"{source.Table}.{source.Column}";
+                lookup[key] = new ValueListBinding(
+                    hasFile ? source.ValuesFile : null,
+                    hasValues ? new List<string>(source.Values!) : null);
+            }
+        }
+
+        return lookup;
+    }
 
     public async Task WritePlanAsync(GenerationPlan plan, string outputPath)
     {
@@ -265,6 +321,111 @@ public class PlanGenerator
 
         return deserializer.Deserialize<GenerationPlan>(yaml)
                ?? throw new InvalidOperationException("Failed to deserialize plan file.");
+    }
+
+    /// <summary>
+    /// Returns the maximum number of distinct rows this table can support, based on the
+    /// narrowest PK or unique column/constraint. Returns null if no constraint limits it.
+    /// </summary>
+    internal static int? ComputeMaxDistinctRows(TablePlan tablePlan, TableInfo table)
+    {
+        long? minCardinality = null;
+
+        var pkColumns = tablePlan.Columns
+            .Where(c => c.IsPrimaryKey && !c.Generator.Equals("skip", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (pkColumns.Count > 0)
+        {
+            long compositeCardinality = 1;
+            foreach (var col in pkColumns)
+            {
+                var card = MaxCardinalityForColumn(col);
+                if (card.HasValue)
+                    compositeCardinality = Math.Min(compositeCardinality * card.Value, long.MaxValue);
+                else
+                {
+                    compositeCardinality = long.MaxValue;
+                    break;
+                }
+            }
+
+            if (compositeCardinality < long.MaxValue)
+                minCardinality = compositeCardinality;
+        }
+
+        foreach (var col in tablePlan.Columns.Where(c =>
+                     c.IsUnique && !c.Generator.Equals("skip", StringComparison.OrdinalIgnoreCase)))
+        {
+            var card = MaxCardinalityForColumn(col);
+            if (card.HasValue)
+                minCardinality = minCardinality.HasValue
+                    ? Math.Min(minCardinality.Value, card.Value)
+                    : card.Value;
+        }
+
+        if (tablePlan.UniqueConstraints is { Count: > 0 })
+        {
+            foreach (var uc in tablePlan.UniqueConstraints)
+            {
+                long compositeCard = 1;
+                var allKnown = true;
+                foreach (var colName in uc.Columns)
+                {
+                    var col = tablePlan.Columns.FirstOrDefault(c =>
+                        c.Name.Equals(colName, StringComparison.OrdinalIgnoreCase));
+                    if (col is null || col.Generator.Equals("skip", StringComparison.OrdinalIgnoreCase))
+                    {
+                        allKnown = false;
+                        break;
+                    }
+
+                    var card = MaxCardinalityForColumn(col);
+                    if (card.HasValue)
+                        compositeCard = Math.Min(compositeCard * card.Value, long.MaxValue);
+                    else
+                    {
+                        allKnown = false;
+                        break;
+                    }
+                }
+
+                if (allKnown && compositeCard < long.MaxValue)
+                    minCardinality = minCardinality.HasValue
+                        ? Math.Min(minCardinality.Value, compositeCard)
+                        : compositeCard;
+            }
+        }
+
+        if (minCardinality is > 0 and <= int.MaxValue)
+            return (int)minCardinality.Value;
+
+        return null;
+    }
+
+    internal static long? MaxCardinalityForColumn(ColumnPlan col)
+    {
+        var sqlType = col.SqlType.ToLowerInvariant();
+        var effectiveLen = col.MaxLength;
+        if (sqlType.StartsWith('n') && effectiveLen > 0)
+            effectiveLen /= 2;
+        if (effectiveLen <= 0)
+            return null;
+
+        const int alphaNumericChars = 36; // 0-9, a-z
+
+        return sqlType switch
+        {
+            "char" or "nchar" when col.Generator == "Random.AlphaNumeric"
+                => (long)Math.Pow(alphaNumericChars, effectiveLen),
+
+            "bit" => 2,
+            "tinyint" => 256,
+
+            "char" or "nchar" => (long)Math.Pow(alphaNumericChars, effectiveLen),
+
+            _ => null
+        };
     }
 
     private static void ResolveGenerator(ColumnInfo col, ColumnPlan colPlan)

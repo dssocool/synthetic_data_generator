@@ -40,6 +40,7 @@ public class GeneratorOrchestrator
 
         WarnUnsupportedColumns(validateResult.ScopedTables);
         WarnExternalDependencies(validateResult.ExternalDependencies);
+        WarnExternalCustomDependencyRoots(validateResult.CustomDependencies, _scope.CustomDependencyBufferSize);
 
         var planResult = await _planner.GeneratePlanAsync(
             new GeneratePlanCommand(validateResult, _scope, outputPath, mode), CancellationToken.None);
@@ -90,6 +91,7 @@ public class GeneratorOrchestrator
         Console.WriteLine();
 
         WarnExternalDependencies(plan.ExternalDependencies);
+        WarnExternalCustomDependencyRoots(plan.CustomDependencies, _scope.CustomDependencyBufferSize);
 
         var tableCount = sortedTables.Count;
         var completed = 0;
@@ -99,7 +101,9 @@ public class GeneratorOrchestrator
 
         var result = await _executor.ExecutePlanAsync(
             new ExecutePlanCommand(plan, _connectionString,
-                Path.GetDirectoryName(Path.GetFullPath(planPath))),
+                Path.GetDirectoryName(Path.GetFullPath(planPath)),
+                _scope.CustomDependencyBufferSize,
+                _scope.MaxParallelTables),
             CancellationToken.None,
             detail => PrintTableProgress(detail, ++completed, tableCount));
         stopwatch.Stop();
@@ -113,8 +117,8 @@ public class GeneratorOrchestrator
         Console.WriteLine($"Target: {MaskConnectionString(_connectionString)}");
         Console.WriteLine($"Rows per table: {_scope.RowsPerTable}");
         Console.WriteLine($"Seed: {_scope.Seed?.ToString() ?? "(random)"}");
-        if (!string.IsNullOrEmpty(_scope.SchemaFilter))
-            Console.WriteLine($"Schema filter: {_scope.SchemaFilter}");
+        if (_scope.SchemaFilter is { Length: > 0 })
+            Console.WriteLine($"Schema filter: {string.Join(", ", _scope.SchemaFilter)}");
         Console.WriteLine();
 
         var isUpdate = mode.Equals("update", StringComparison.OrdinalIgnoreCase);
@@ -145,6 +149,7 @@ public class GeneratorOrchestrator
 
         WarnUnsupportedColumns(validateResult.ScopedTables);
         WarnExternalDependencies(validateResult.ExternalDependencies);
+        WarnExternalCustomDependencyRoots(validateResult.CustomDependencies, _scope.CustomDependencyBufferSize);
 
         var planOutputPath = "plan.yaml";
         var planResult = await _planner.GeneratePlanAsync(
@@ -158,7 +163,9 @@ public class GeneratorOrchestrator
         Console.WriteLine(isUpdate ? "Generating data and updating..." : "Generating and inserting data...");
 
         var execResult = await _executor.ExecutePlanAsync(
-            new ExecutePlanCommand(planResult.Plan, _connectionString, null),
+            new ExecutePlanCommand(planResult.Plan, _connectionString, null,
+                _scope.CustomDependencyBufferSize,
+                _scope.MaxParallelTables),
             CancellationToken.None,
             detail => PrintTableProgress(detail, ++completed, tableCount));
         stopwatch.Stop();
@@ -220,6 +227,44 @@ public class GeneratorOrchestrator
                     $"[{dep.ScopedTable}].[{dep.ScopedColumn}] " +
                     $"(inbound: external table references scoped table)");
             }
+            Console.ResetColor();
+        }
+    }
+
+    internal static void WarnExternalCustomDependencyRoots(
+        List<CustomDependencyGroup>? groups, int bufferSize)
+    {
+        if (groups is not { Count: > 0 })
+            return;
+
+        var rootDependents = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var group in groups)
+        {
+            if (group.Columns.Count < 2) continue;
+            var source = group.Columns[0];
+            if (!source.IsExternalRoot) continue;
+
+            var rootKey = $"[{source.Table}].[{source.Column}]";
+            if (!rootDependents.TryGetValue(rootKey, out var deps))
+            {
+                deps = [];
+                rootDependents[rootKey] = deps;
+            }
+
+            for (var i = 1; i < group.Columns.Count; i++)
+            {
+                var dep = group.Columns[i];
+                deps.Add($"[{dep.Table}].[{dep.Column}]");
+            }
+        }
+
+        foreach (var (root, deps) in rootDependents)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine(
+                $"  Custom dep root: {root} -> dependents: {string.Join(", ", deps)} " +
+                $"(will stream from DB; buffer={bufferSize})");
             Console.ResetColor();
         }
     }
