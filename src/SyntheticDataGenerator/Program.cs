@@ -31,25 +31,15 @@ var planner = new DataGenerationPlanner();
 var executor = new DataGenerationExecutor();
 var orchestrator = new GeneratorOrchestrator(connectionString, scope, planner, executor);
 
-var parsed = ParseArgs(args);
+var subcommand = ParseSubcommand(args);
 
-switch (parsed.Subcommand)
+switch (subcommand)
 {
-    case "insert" when parsed.GeneratePlan:
-        await orchestrator.RunGeneratePlanAsync(parsed.Arg ?? "plan.yaml", "insert");
-        break;
     case "insert":
         await orchestrator.RunDirectAsync("insert");
         break;
-    case "update" when parsed.GeneratePlan:
-        await orchestrator.RunGeneratePlanAsync(parsed.Arg ?? "plan.yaml", "update");
-        break;
     case "update":
         await orchestrator.RunDirectAsync("update");
-        break;
-    case "execute-plan":
-        await orchestrator.RunExecutePlanAsync(parsed.Arg ?? throw new InvalidOperationException(
-            "Usage: dotnet run -- --execute-plan <plan-file-path>"));
         break;
     default:
         PrintUsage();
@@ -58,45 +48,40 @@ switch (parsed.Subcommand)
 
 return 0;
 
-static ParsedArgs ParseArgs(string[] args)
+static string? ParseSubcommand(string[] args)
 {
     string? subcommand = null;
-    var generatePlan = false;
-    string? arg = null;
+    var hasUnknown = false;
 
-    for (var i = 0; i < args.Length; i++)
+    foreach (var token in args)
     {
-        switch (args[i])
+        switch (token)
         {
             case "insert" or "update" when subcommand is null:
-                subcommand = args[i];
+                subcommand = token;
                 break;
-            case "--generate-plan" when subcommand is "insert" or "update":
-                generatePlan = true;
-                if (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
-                    arg = args[++i];
-                break;
-            case "--execute-plan":
-                subcommand = "execute-plan";
-                if (i + 1 < args.Length)
-                    arg = args[++i];
+            default:
+                hasUnknown = true;
                 break;
         }
     }
 
-    return new ParsedArgs(subcommand, generatePlan, arg);
+    // Default to "insert" mode when no subcommand is supplied and no unknown
+    // tokens were seen. Unknown tokens fall through to PrintUsage so typos
+    // don't silently kick off a real insert run.
+    if (subcommand is null && !hasUnknown)
+        subcommand = "insert";
+
+    return subcommand;
 }
 
 static void PrintUsage()
 {
     Console.WriteLine("Usage:");
+    Console.WriteLine("  dotnet run --                                    Insert synthetic data directly (default mode)");
     Console.WriteLine("  dotnet run -- insert                             Insert synthetic data directly");
-    Console.WriteLine("  dotnet run -- insert --generate-plan [path]      Generate a plan file without inserting");
     Console.WriteLine("  dotnet run -- update                             Update existing data directly");
-    Console.WriteLine("  dotnet run -- update --generate-plan [path]      Generate an update plan file");
-    Console.WriteLine("  dotnet run -- --execute-plan <path>              Execute a previously generated plan");
     Console.WriteLine();
     Console.WriteLine("Tables and columns to include/update are configured in appsettings.yaml (TablesToInclude).");
+    Console.WriteLine("Each run writes the generated plan to ./plan.yaml in the current folder for inspection.");
 }
-
-record ParsedArgs(string? Subcommand, bool GeneratePlan, string? Arg);

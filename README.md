@@ -290,7 +290,13 @@ Then run the tool with one of the following commands:
 
 | Command | Description |
 |---------|-------------|
+| `dotnet run --project src/SyntheticDataGenerator` | Run with the default mode (`insert`). Equivalent to passing `-- insert`. |
 | `dotnet run --project src/SyntheticDataGenerator -- insert` | Read the database schema and insert synthetic rows immediately, using the scope defined in `appsettings.yaml`. |
+| `dotnet run --project src/SyntheticDataGenerator -- update` | Update existing rows in the scoped tables instead of inserting new ones. |
+
+When no subcommand is supplied (`dotnet run --project src/SyntheticDataGenerator`), the tool runs in `insert` mode. Pass `update` explicitly to switch to update mode.
+
+Every `insert`/`update` run writes the plan it executed to `./plan.yaml` in the current working directory. The file is informational/auditable — it captures the exact generators, row counts, and order the run used. It is not intended to be hand-edited.
 
 ## Running Tests
 
