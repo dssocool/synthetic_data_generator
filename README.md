@@ -2,6 +2,37 @@
 
 A .NET console application that connects to a Microsoft SQL Server database, reads its schema (tables, columns, primary keys, and foreign keys), and automatically generates realistic synthetic data using the [Bogus](https://github.com/bopoda/Bogus) library. Tables are inserted in the correct order based on foreign-key dependencies so referential integrity is preserved.
 
+## TL;DR
+
+> **Warning:** This tool only **inserts** rows; it never deletes or anonymizes
+> what is already there. Before pointing it at any database, make sure the
+> user or the DBA has scrubbed all sensitive / production data from the
+> target tables. Run it against a fresh, empty, or sanitized database only.
+
+1. Drop a minimal `appsettings.yaml` into `src/SyntheticDataGenerator/`:
+
+   ```yaml
+   ConnectionString: "Server=localhost,1433;Database=YOUR_DB;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True;Encrypt=false;"
+   TablesToInclude:
+     - dbo.Users
+     - dbo.Orders
+   RowsPerTable: 100
+   ```
+
+2. Build and run:
+
+   ```bash
+   dotnet build
+   dotnet run --project src/SyntheticDataGenerator
+   ```
+
+That's it — the tool reads the schema of the listed tables, plans an
+FK-safe insertion order, and fills each table with `RowsPerTable` rows of
+realistic synthetic data. The exact plan it executed is written to
+`./plan.yaml` for inspection.
+
+See [Configuration](#configuration) for every supported setting.
+
 ## Features
 
 - **Schema-driven generation** — reads table and column metadata directly from SQL Server system views, so no manual mapping is needed.
