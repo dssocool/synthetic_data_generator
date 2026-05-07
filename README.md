@@ -11,6 +11,8 @@ A .NET console application that connects to a Microsoft SQL Server database, rea
 - **Custom dependency ordering** — define non-FK column relationships so tables are inserted in the right order even without formal foreign keys.
 - **Custom value lists** — pin any column (in-scope or out-of-scope) to a fixed set of values from a flat file or inline YAML list. A group of dependent columns may have at most one such source-data provider; conflicts fail fast at validation time.
 - **Schema and table filtering** — optionally restrict generation to one or more schemas and an explicit list of tables.
+- **Parallel execution** — unrelated tables are inserted in parallel up to a configurable cap; deterministic per-table seeding keeps seeded runs reproducible row-for-row.
+- **Narrow-column cardinality safeguard** — `RowsPerTable` is automatically capped when a PK or unique constraint can't accommodate that many distinct values, with a warning printed.
 - **Locale support** — generated data can target different locales (defaults to `en`).
 - **Seeded generation** — supply a seed for reproducible output.
 
@@ -18,6 +20,31 @@ A .NET console application that connects to a Microsoft SQL Server database, rea
 
 - [.NET 8 SDK or higher](https://dotnet.microsoft.com/en-us/download)
 - A SQL Server instance you can connect to (the tool needs permission to read schema metadata and insert rows)
+
+## Project layout
+
+```
+src/SyntheticDataGenerator/
+  Program.cs                  # Entry point: loads config, builds scope, runs orchestrator
+  appsettings.yaml            # Per-run configuration (gitignored)
+  Models/                     # Plan / scope / command POCOs (YamlDotNet-serialized)
+  Services/
+    SchemaReader.cs           # Reads tables, columns, PKs, FKs, defaults, unique indexes
+    DependencyGraph.cs        # FK + custom-dependency topological sort (Kahn's)
+    DataGenerationPlanner.cs  # Validates scope, classifies dependencies, emits plan
+    PlanGenerator.cs          # Maps SQL types -> Bogus generators, builds plan.yaml
+    NameHeuristics.cs         # Column-name -> generator rules (email, first_name, ...)
+    ColumnValueGenerator.cs   # Bogus-backed value generation (per table, seeded)
+    ExternalSourceStreamer.cs # Bounded-memory cursor for external-root columns
+    ValueListSource.cs        # Loads file/inline value lists, picks at random
+    DataInserter.cs           # Generates rows in memory and bulk-inserts via SqlClient
+    DataGenerationExecutor.cs # Sequential or parallel table dispatch with FK-aware DAG
+    GeneratorOrchestrator.cs  # Console UX: warnings, progress, plan output
+tests/SyntheticDataGenerator.Tests/
+  *Tests.cs                   # xUnit suites covering integration, custom deps, value
+                              # lists, parallel execution, narrow-column cardinality
+  DatabaseFixture.cs          # Per-test SQL Server database (created + dropped)
+```
 
 ## Configuration
 
@@ -285,15 +312,55 @@ Then run the tool:
 dotnet run --project src/SyntheticDataGenerator
 ```
 
-The tool reads the database schema and inserts synthetic rows into every table listed in `TablesToInclude`, generating a complete row per insert. There are no subcommands or modes to choose from.
+The tool reads the database schema and inserts synthetic rows into every
+table listed in `TablesToInclude`, generating a complete row per insert.
+There are no subcommands or modes to choose from.
 
-Every run writes the plan it executed to `./plan.yaml` in the current working directory. The file is informational/auditable — it captures the exact generators, row counts, and order the run used. It is not intended to be hand-edited.
+Every run writes the plan it executed to `./plan.yaml` in the current working
+directory. The file is informational/auditable — it captures the exact
+generators, row counts, insertion order, and any external/custom dependency
+metadata the run used. It is not intended to be hand-edited and is not used
+as input on a subsequent run (each invocation re-derives the plan from the
+live database schema).
+
+While running, the tool prints (in this order):
+
+1. The masked connection string, row count, seed, and any schema filter.
+2. The full insertion order with each table's column count, FK count, and a
+   `(self-referencing)` marker where applicable.
+3. Yellow warnings for skipped unsupported columns (`geography`, `geometry`,
+   `hierarchyid`, user-defined types), inbound/outbound external dependencies,
+   and external custom-dependency roots being streamed from the live DB.
+4. Per-table progress lines (`[n/total] schema.table  rows`) as each table
+   completes — note that with `MaxParallelTables > 1`, these appear in
+   completion order rather than in plan order.
+5. A final summary line with total rows inserted, elapsed seconds, and the
+   absolute path of the emitted `plan.yaml`.
 
 ## Running Tests
 
-The test suite uses xUnit and connects to whatever SQL Server is configured in `src/SyntheticDataGenerator/appsettings.yaml` (the same `ConnectionString` used by the app — the file is linked into the test project at build time). Any SQL Server instance you can reach works (LocalDB, Express, Developer, a containerized instance, etc.); the connecting account just needs permission to create and drop databases on that server.
+The test suite uses xUnit and connects to whatever SQL Server is configured
+in `src/SyntheticDataGenerator/appsettings.yaml` (the same `ConnectionString`
+used by the app — the file is linked into the test project at build time).
+Any SQL Server instance you can reach works (LocalDB, Express, Developer, a
+containerized instance, etc.); the connecting account just needs permission
+to create and drop databases on that server.
 
-For each test run a uniquely-named database (`SyntheticDataGenTest_<guid>`) is created on that server and dropped automatically when the run finishes, so your existing databases are not touched.
+For each test class a uniquely-named database (`SyntheticDataGenTest_<guid>`)
+is created on that server via the `DatabaseFixture` collection fixture and
+dropped automatically when the run finishes, so your existing databases are
+not touched. The test suites are split by concern:
+
+- `IntegrationTests` — end-to-end schema → plan → insert flows.
+- `CustomDependencyTests` — non-FK dependency groups and source resolution.
+- `CustomValueListsTests` — file- and inline-backed value lists, both
+  standalone and group-backed.
+- `ExternalDependencyTests` / `ExternalCustomDependencyTests` — out-of-scope
+  FK/dependency wiring and DB-streamed external roots.
+- `ParallelExecutionTests` — `MaxParallelTables` scheduling and seeded
+  determinism.
+- `NarrowColumnCardinalityTests` — automatic `RowsPerTable` capping for
+  narrow PKs / unique constraints.
 
 ```bash
 dotnet test
