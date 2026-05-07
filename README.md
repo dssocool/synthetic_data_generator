@@ -1,6 +1,6 @@
 # Synthetic Data Generator
 
-A .NET console application that connects to a Microsoft SQL Server database, reads its schema (tables, columns, primary keys, and foreign keys), and automatically generates realistic synthetic data using the [Bogus](https://github.com/bopoda/Bogus) library. Tables are inserted in the correct order based on foreign-key dependencies so referential integrity is preserved.
+A .NET console application that connects to a Microsoft SQL Server database, reads its schema (tables, columns, primary keys, and foreign keys), and automatically generates realistic synthetic data using the [Bogus](https://github.com/bchavez/Bogus) library. Tables are inserted in the correct order based on foreign-key dependencies so referential integrity is preserved.
 
 ## TL;DR
 
