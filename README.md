@@ -10,7 +10,7 @@ A .NET console application that connects to a Microsoft SQL Server database, rea
 - **External dependency detection** — warns when foreign keys reference tables outside the current scope (outbound) or when external tables reference scoped tables (inbound).
 - **Custom dependency ordering** — define non-FK column relationships so tables are inserted in the right order even without formal foreign keys.
 - **Custom value lists** — pin any column (in-scope or out-of-scope) to a fixed set of values from a flat file or inline YAML list. A group of dependent columns may have at most one such source-data provider; conflicts fail fast at validation time.
-- **Table and column filtering** — optionally restrict generation to one or more schemas, an explicit list of tables, and per-table column lists.
+- **Schema and table filtering** — optionally restrict generation to one or more schemas and an explicit list of tables.
 - **Locale support** — generated data can target different locales (defaults to `en`).
 - **Seeded generation** — supply a seed for reproducible output.
 
@@ -37,18 +37,11 @@ Schema: dbo
 #   - dbo
 #   - sales
 
-# Optional: tables (and optionally columns) in scope. Defaults to all tables.
-# Two formats are supported and can be mixed:
-#   - Simple form: just the table name (all columns are in scope).
-#   - Structured form: Table + Columns list (only the listed columns are targeted;
-#     omit Columns or leave it empty to include all columns).
+# Optional: tables in scope. Defaults to all tables. Each entry is a fully
+# qualified `schema.table` name; every column on the table will be populated.
 TablesToInclude:
   - dbo.Orders
-  - Table: dbo.Users
-    Columns:
-      - FirstName
-      - LastName
-      - Email
+  - dbo.Users
 
 # Optional: number of rows to insert per table. Defaults to 100.
 RowsPerTable: 100
@@ -72,10 +65,10 @@ Locale: en
 # Every other column in the group becomes a dependent that copies values from
 # the chosen source.
 #
-# A source column may live OUTSIDE TablesToInclude — either the entire table is
-# excluded, or the column is excluded from a scoped table's Columns filter. In
-# that case the source is treated as an "external root": values are streamed
-# from the live database (with bounded memory) and copied into the dependents.
+# A source column may live OUTSIDE TablesToInclude (the entire table is
+# excluded). In that case the source is treated as an "external root": values
+# are streamed from the live database (with bounded memory) and copied into
+# the dependents.
 #
 # A group may contain at most ONE source-data provider, where a source-data
 # provider is either:
@@ -98,7 +91,7 @@ CustomDependencies:
 # even billion-row source tables stay within bounded memory. Defaults to 10000.
 CustomDependencyBufferSize: 10000
 
-# Optional: maximum number of unrelated tables to insert/update in parallel.
+# Optional: maximum number of unrelated tables to insert in parallel.
 # Defaults to Environment.ProcessorCount; set to 1 to force fully sequential
 # execution. Two tables only run concurrently when neither has a foreign-key
 # nor a CustomDependencies edge to the other (directly or transitively); the
@@ -250,7 +243,7 @@ and dependents copy from it.
 
 ### Parallel execution
 
-By default the executor inserts (and updates) multiple **unrelated** tables in
+By default the executor inserts multiple **unrelated** tables in
 parallel, capped by `MaxParallelTables` (defaults to
 `Environment.ProcessorCount`; set to `1` to force the legacy sequential
 behavior). Two tables are considered unrelated only when there is no
@@ -286,17 +279,15 @@ Build the project first:
 dotnet build
 ```
 
-Then run the tool with one of the following commands:
+Then run the tool:
 
-| Command | Description |
-|---------|-------------|
-| `dotnet run --project src/SyntheticDataGenerator` | Run with the default mode (`insert`). Equivalent to passing `-- insert`. |
-| `dotnet run --project src/SyntheticDataGenerator -- insert` | Read the database schema and insert synthetic rows immediately, using the scope defined in `appsettings.yaml`. |
-| `dotnet run --project src/SyntheticDataGenerator -- update` | Update existing rows in the scoped tables instead of inserting new ones. |
+```bash
+dotnet run --project src/SyntheticDataGenerator
+```
 
-When no subcommand is supplied (`dotnet run --project src/SyntheticDataGenerator`), the tool runs in `insert` mode. Pass `update` explicitly to switch to update mode.
+The tool reads the database schema and inserts synthetic rows into every table listed in `TablesToInclude`, generating a complete row per insert. There are no subcommands or modes to choose from.
 
-Every `insert`/`update` run writes the plan it executed to `./plan.yaml` in the current working directory. The file is informational/auditable — it captures the exact generators, row counts, and order the run used. It is not intended to be hand-edited.
+Every run writes the plan it executed to `./plan.yaml` in the current working directory. The file is informational/auditable — it captures the exact generators, row counts, and order the run used. It is not intended to be hand-edited.
 
 ## Running Tests
 
