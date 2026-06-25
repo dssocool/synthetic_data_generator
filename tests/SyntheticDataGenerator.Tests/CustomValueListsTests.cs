@@ -1416,7 +1416,6 @@ public class CustomValueListsIntegrationTests
         try
         {
             var scope = new ScopeConfig(
-                schemaFilter: ["dbo"],
                 tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
                 rowsPerTable: 25,
                 seed: 42,
@@ -1481,7 +1480,6 @@ public class CustomValueListsIntegrationTests
         try
         {
             var scope = new ScopeConfig(
-                schemaFilter: ["dbo"],
                 tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
                 rowsPerTable: 5,
                 seed: 42,
@@ -1530,7 +1528,6 @@ public class CustomValueListsIntegrationTests
         try
         {
             var scope = new ScopeConfig(
-                schemaFilter: ["dbo"],
                 tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
                 rowsPerTable: 5,
                 seed: 42,
@@ -1582,7 +1579,6 @@ public class CustomValueListsIntegrationTests
 
         var validStatuses = new[] { "Pending", "Active", "Closed" };
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
             rowsPerTable: 25,
             seed: 42,
@@ -1637,7 +1633,6 @@ public class CustomValueListsIntegrationTests
             """);
 
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             // Lookup table intentionally NOT in scope.
             tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
             rowsPerTable: 5,
@@ -1690,7 +1685,6 @@ public class CustomValueListsIntegrationTests
 
         var validRegions = new[] { "APAC", "EMEA", "AMER", "LATAM" };
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
             rowsPerTable: 25,
             seed: 42,

@@ -41,7 +41,7 @@ See [Configuration](#configuration) for every supported setting.
 - **External dependency detection** — warns when foreign keys reference tables outside the current scope (outbound) or when external tables reference scoped tables (inbound).
 - **Custom dependency ordering** — define non-FK column relationships so tables are inserted in the right order even without formal foreign keys.
 - **Custom value lists** — pin any column (in-scope or out-of-scope) to a fixed set of values from a flat file or inline YAML list. A group of dependent columns may have at most one such source-data provider; conflicts fail fast at validation time.
-- **Schema and table filtering** — optionally restrict generation to one or more schemas and an explicit list of tables.
+- **Table filtering** — optionally restrict generation to an explicit list of tables.
 - **Parallel execution** — unrelated tables are inserted in parallel up to a configurable cap; deterministic per-table seeding keeps seeded runs reproducible row-for-row.
 - **Narrow-column cardinality safeguard** — `RowsPerTable` is automatically capped when a PK or unique constraint can't accommodate that many distinct values, with a warning printed.
 - **Locale support** — generated data can target different locales (defaults to `en`).
@@ -88,15 +88,10 @@ ConnectionString: Server=YOUR_SERVER;Trusted_Connection=True;TrustServerCertific
 # Optional: database name. Overrides Initial Catalog / Database in the connection string.
 DatabaseName: YOUR_DATABASE
 
-# Optional: restrict generation to specific schemas. Defaults to all schemas.
-# Supports a single value or a list:
-Schema: dbo
-# Schema:
-#   - dbo
-#   - sales
-
 # Optional: tables in scope. Defaults to all tables. Each entry is a fully
 # qualified `schema.table` name; every column on the table will be populated.
+# The schema is taken from each `schema.table` entry, so there is no separate
+# schema setting.
 TablesToInclude:
   - dbo.Orders
   - dbo.Users
@@ -356,7 +351,7 @@ live database schema).
 
 While running, the tool prints (in this order):
 
-1. The masked connection string, row count, seed, and any schema filter.
+1. The masked connection string, row count, and seed.
 2. The full insertion order with each table's column count, FK count, and a
    `(self-referencing)` marker where applicable.
 3. Yellow warnings for skipped unsupported columns (`geography`, `geometry`,

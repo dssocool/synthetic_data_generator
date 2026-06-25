@@ -17,7 +17,6 @@ var connectionString = string.IsNullOrWhiteSpace(databaseName)
         { InitialCatalog = databaseName }.ConnectionString;
 
 var scope = new ScopeConfig(
-    schemaFilter: ScopeConfig.ParseSchemaFilter(config.GetSection("Schema")),
     tablesToInclude: ScopeConfig.ParseTablesToInclude(config.GetSection("TablesToInclude")),
     rowsPerTable: int.TryParse(config["RowsPerTable"], out var r) ? r : 100,
     seed: int.TryParse(config["Seed"], out var s) ? s : null,

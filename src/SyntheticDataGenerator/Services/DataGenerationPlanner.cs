@@ -14,7 +14,7 @@ public class DataGenerationPlanner : IDataGenerationPlanner
         var columnScope = scope.BuildColumnScope();
 
         var schemaReader = new SchemaReader(command.ConnectionString);
-        var allTables = await schemaReader.ReadSchemaAsync(scope.SchemaFilter);
+        var allTables = await schemaReader.ReadSchemaAsync();
 
         var tables = allTables;
         var errors = new List<string>();

@@ -229,7 +229,6 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
             rowsPerTable: 25,
             seed: 42,
@@ -276,7 +275,6 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
             rowsPerTable: 5,
             seed: 42,
@@ -324,7 +322,6 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
             rowsPerTable: 5,
             seed: 42,
@@ -374,7 +371,6 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude:
             [
                 new TableScope { Table = $"dbo.{ordersName}" },
@@ -441,7 +437,6 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
             rowsPerTable: 30,
             seed: 42,
@@ -500,7 +495,6 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
             rowsPerTable: 5,
             seed: 42,
@@ -547,7 +541,6 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
             rowsPerTable: 10,
             seed: 42,

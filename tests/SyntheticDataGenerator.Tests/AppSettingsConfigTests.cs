@@ -38,7 +38,6 @@ public class AppSettingsConfigTests
     {
         var config = LoadYaml(yaml);
         return new ScopeConfig(
-            schemaFilter: ScopeConfig.ParseSchemaFilter(config.GetSection("Schema")),
             tablesToInclude: ScopeConfig.ParseTablesToInclude(config.GetSection("TablesToInclude")),
             rowsPerTable: int.TryParse(config["RowsPerTable"], out var r) ? r : 100,
             seed: int.TryParse(config["Seed"], out var s) ? s : null,
@@ -99,7 +98,6 @@ public class AppSettingsConfigTests
 
         Assert.Equal(100, scope.RowsPerTable);
 
-        Assert.Null(scope.SchemaFilter);
         Assert.Null(scope.Seed);
         Assert.Equal("en", scope.Locale);
         Assert.Empty(scope.CustomDependencies);
@@ -136,103 +134,13 @@ public class AppSettingsConfigTests
 
         Assert.Empty(scope.TablesToInclude);
         Assert.Equal(100, scope.RowsPerTable);
-        Assert.Null(scope.SchemaFilter);
         Assert.Equal("en", scope.Locale);
     }
 
     #endregion
 
     // ──────────────────────────────────────────────
-    // 2. Schema filter
-    // ──────────────────────────────────────────────
-
-    #region Schema filter
-
-    [Fact]
-    public void Schema_SingleString_ReturnsSingletonArray()
-    {
-        const string yaml = """
-            Schema: dbo
-            """;
-
-        var filter = ScopeConfig.ParseSchemaFilter(LoadYaml(yaml).GetSection("Schema"));
-
-        Assert.NotNull(filter);
-        Assert.Equal(["dbo"], filter);
-    }
-
-    [Fact]
-    public void Schema_List_ReturnsAllValues()
-    {
-        const string yaml = """
-            Schema:
-              - dbo
-              - sales
-            """;
-
-        var filter = ScopeConfig.ParseSchemaFilter(LoadYaml(yaml).GetSection("Schema"));
-
-        Assert.NotNull(filter);
-        Assert.Equal(["dbo", "sales"], filter);
-    }
-
-    [Fact]
-    public void Schema_Missing_ReturnsNull()
-    {
-        const string yaml = """
-            ConnectionString: "x"
-            """;
-
-        var filter = ScopeConfig.ParseSchemaFilter(LoadYaml(yaml).GetSection("Schema"));
-
-        Assert.Null(filter);
-    }
-
-    [Fact]
-    public void Schema_EmptyList_ReturnsNull()
-    {
-        // Configuration sources collapse "Schema: []" to no children, so we
-        // cover both shapes (no key vs explicit empty list) here.
-        const string yaml = """
-            Schema: []
-            """;
-
-        var filter = ScopeConfig.ParseSchemaFilter(LoadYaml(yaml).GetSection("Schema"));
-
-        Assert.Null(filter);
-    }
-
-    [Fact]
-    public void Schema_WhitespaceOnly_ReturnsNull()
-    {
-        const string yaml = """
-            Schema: "   "
-            """;
-
-        var filter = ScopeConfig.ParseSchemaFilter(LoadYaml(yaml).GetSection("Schema"));
-
-        Assert.Null(filter);
-    }
-
-    [Fact]
-    public void Schema_PassedToScopeConfig_NullWhenEmpty()
-    {
-        // Constructor coerces an empty array to null per the
-        // `SchemaFilter is { Length: > 0 }` guard.
-        var scope = new ScopeConfig(
-            schemaFilter: [],
-            tablesToInclude: [new TableScope { Table = "dbo.Users" }],
-            rowsPerTable: 10,
-            seed: null,
-            locale: "en");
-
-        Assert.Null(scope.SchemaFilter);
-    }
-
-    #endregion
-
-    // ──────────────────────────────────────────────
-    // 3. TablesToInclude
+    // 2. TablesToInclude
     // ──────────────────────────────────────────────
 
     #region TablesToInclude
@@ -341,7 +249,6 @@ public class AppSettingsConfigTests
     public void BuildColumnScope_AllSimpleEntries_ReturnsNull()
     {
         var scope = new ScopeConfig(
-            schemaFilter: null,
             tablesToInclude:
             [
                 new TableScope { Table = "dbo.Users" },
@@ -358,7 +265,6 @@ public class AppSettingsConfigTests
     public void BuildColumnScope_StructuredEntries_ReturnsCaseInsensitiveDict()
     {
         var scope = new ScopeConfig(
-            schemaFilter: null,
             tablesToInclude:
             [
                 new TableScope { Table = "dbo.Users", Columns = ["Id", "Email"] },
@@ -386,7 +292,6 @@ public class AppSettingsConfigTests
     public void GetIncludeTableNames_IsCaseInsensitive()
     {
         var scope = new ScopeConfig(
-            schemaFilter: null,
             tablesToInclude:
             [
                 new TableScope { Table = "dbo.Users" },
@@ -735,7 +640,6 @@ public class AppSettingsConfigTests
         const string yaml = """
             ConnectionString: Server=YOUR_SERVER;Trusted_Connection=True;TrustServerCertificate=True;
             DatabaseName: YOUR_DATABASE
-            Schema: dbo
             TablesToInclude:
               - dbo.Orders
               - dbo.Users
@@ -770,9 +674,6 @@ public class AppSettingsConfigTests
             config["ConnectionString"]);
         Assert.Equal("YOUR_DATABASE", config["DatabaseName"]);
 
-        Assert.NotNull(scope.SchemaFilter);
-        Assert.Equal(["dbo"], scope.SchemaFilter);
-
         Assert.Equal(2, scope.TablesToInclude.Length);
         Assert.Equal("dbo.Orders", scope.TablesToInclude[0].Table);
         Assert.Equal("dbo.Users", scope.TablesToInclude[1].Table);
@@ -804,27 +705,6 @@ public class AppSettingsConfigTests
         Assert.Equal("dbo.Orders.Status", scope.CustomValueLists[2].Column);
         Assert.Equal(string.Empty, scope.CustomValueLists[2].File);
         Assert.Equal(["Pending", "Active", "Closed"], scope.CustomValueLists[2].Values);
-    }
-
-    [Fact]
-    public void FullConfig_SchemaAsList_ParsesAllSchemas()
-    {
-        // Variant of the full config that uses the list form of Schema:.
-        const string yaml = """
-            ConnectionString: "x"
-            Schema:
-              - dbo
-              - sales
-            TablesToInclude:
-              - dbo.Orders
-              - sales.Invoices
-            """;
-
-        var scope = BuildScopeFromYaml(yaml);
-
-        Assert.NotNull(scope.SchemaFilter);
-        Assert.Equal(["dbo", "sales"], scope.SchemaFilter);
-        Assert.Equal(2, scope.TablesToInclude.Length);
     }
 
     #endregion

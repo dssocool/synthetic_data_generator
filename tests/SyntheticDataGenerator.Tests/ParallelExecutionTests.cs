@@ -93,7 +93,6 @@ public class ParallelExecutionTests
         }
 
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude: names.Select(n => new TableScope { Table = $"dbo.{n}" }).ToArray(),
             rowsPerTable: 50,
             seed: Seed,
@@ -143,7 +142,6 @@ public class ParallelExecutionTests
 
         var tables = new[] { parent, child1, child2, child3 };
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude: tables.Select(t => new TableScope { Table = $"dbo.{t}" }).ToArray(),
             rowsPerTable: 30,
             seed: Seed,
@@ -217,7 +215,6 @@ public class ParallelExecutionTests
 
         var tables = new[] { root, mid1, mid2, leaf };
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude: tables.Select(t => new TableScope { Table = $"dbo.{t}" }).ToArray(),
             rowsPerTable: 20,
             seed: Seed,
@@ -266,7 +263,6 @@ public class ParallelExecutionTests
 
         var validRegions = new[] { "APAC", "EMEA", "AMER", "LATAM" };
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude:
             [
                 new TableScope { Table = $"dbo.{srcName}" },
@@ -324,7 +320,6 @@ public class ParallelExecutionTests
         }
 
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude:
             [
                 new TableScope { Table = $"dbo.{t1}" },
@@ -385,7 +380,7 @@ public class ParallelExecutionTests
         };
 
         var sequentialScope = new ScopeConfig(
-            schemaFilter: ["dbo"], tablesToInclude: tablesScope,
+            tablesToInclude: tablesScope,
             rowsPerTable: 25, seed: Seed, locale: "en",
             maxParallelTables: 1);
         await RunAsync(sequentialScope, maxParallel: 1);
@@ -395,7 +390,7 @@ public class ParallelExecutionTests
             await TruncateAsync($"dbo.{n}");
 
         var parallelScope = new ScopeConfig(
-            schemaFilter: ["dbo"], tablesToInclude: tablesScope,
+            tablesToInclude: tablesScope,
             rowsPerTable: 25, seed: Seed, locale: "en",
             maxParallelTables: 8);
         await RunAsync(parallelScope, maxParallel: 8);
@@ -438,7 +433,6 @@ public class ParallelExecutionTests
         }
 
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude:
             [
                 new TableScope { Table = $"dbo.{doomed}" },
@@ -495,7 +489,6 @@ public class ParallelExecutionTests
             """);
 
         var scope = new ScopeConfig(
-            schemaFilter: ["dbo"],
             tablesToInclude:
             [
                 new TableScope { Table = $"dbo.{selfRef}" },
@@ -554,7 +547,7 @@ public class ParallelExecutionTests
         var tablesScope = names.Select(n => new TableScope { Table = $"dbo.{n}" }).ToArray();
 
         var sequentialScope = new ScopeConfig(
-            schemaFilter: ["dbo"], tablesToInclude: tablesScope,
+            tablesToInclude: tablesScope,
             rowsPerTable: RowCount, seed: Seed, locale: "en",
             maxParallelTables: 1);
 
@@ -566,7 +559,7 @@ public class ParallelExecutionTests
             await TruncateAsync($"dbo.{n}");
 
         var parallelScope = new ScopeConfig(
-            schemaFilter: ["dbo"], tablesToInclude: tablesScope,
+            tablesToInclude: tablesScope,
             rowsPerTable: RowCount, seed: Seed, locale: "en",
             maxParallelTables: 4);
 

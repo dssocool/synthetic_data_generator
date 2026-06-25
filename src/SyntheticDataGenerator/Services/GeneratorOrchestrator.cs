@@ -28,8 +28,6 @@ public class GeneratorOrchestrator
         Console.WriteLine($"Target: {MaskConnectionString(_connectionString)}");
         Console.WriteLine($"Rows per table: {_scope.RowsPerTable}");
         Console.WriteLine($"Seed: {_scope.Seed?.ToString() ?? "(random)"}");
-        if (_scope.SchemaFilter is { Length: > 0 })
-            Console.WriteLine($"Schema filter: {string.Join(", ", _scope.SchemaFilter)}");
         Console.WriteLine();
 
         var isUpdate = mode.Equals("update", StringComparison.OrdinalIgnoreCase);
