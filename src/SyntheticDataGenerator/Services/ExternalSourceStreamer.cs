@@ -1,4 +1,5 @@
 using Microsoft.Data.SqlClient;
+using SyntheticDataGenerator.Models;
 using System.Data;
 
 namespace SyntheticDataGenerator.Services;
@@ -16,8 +17,7 @@ namespace SyntheticDataGenerator.Services;
 public sealed class ExternalSourceStreamer : IAsyncDisposable, IDisposable
 {
     private readonly string _connectionString;
-    private readonly string _schema;
-    private readonly string _tableName;
+    private readonly SqlTableName _table;
     private readonly string _column;
     private readonly int _bufferSize;
     private readonly Random _random;
@@ -43,15 +43,13 @@ public sealed class ExternalSourceStreamer : IAsyncDisposable, IDisposable
         Random? random = null)
     {
         _connectionString = connectionString;
-        var dotIdx = fullTableName.IndexOf('.');
-        _schema = dotIdx >= 0 ? fullTableName[..dotIdx] : "dbo";
-        _tableName = dotIdx >= 0 ? fullTableName[(dotIdx + 1)..] : fullTableName;
+        _table = SqlTableName.Parse(fullTableName);
         _column = column;
         _bufferSize = bufferSize > 0 ? bufferSize : 10_000;
         _random = random ?? new Random();
     }
 
-    public string FullTableName => $"{_schema}.{_tableName}";
+    public string FullTableName => _table.FullName;
     public string Column => _column;
     public int BufferSize => _bufferSize;
 
@@ -70,7 +68,7 @@ public sealed class ExternalSourceStreamer : IAsyncDisposable, IDisposable
 
             if (_buffer is null || _filled == 0)
                 throw new InvalidOperationException(
-                    $"External source [{_schema}].[{_tableName}].[{_column}] returned no non-null values.");
+                    $"External source {_table.Bracketed}.[{_column}] returned no non-null values.");
 
             var idx = _random.Next(_filled);
             var picked = _buffer[idx];
@@ -100,7 +98,7 @@ public sealed class ExternalSourceStreamer : IAsyncDisposable, IDisposable
         _connection = new SqlConnection(_connectionString);
         _connection.Open();
 
-        var sql = $"SELECT [{_column}] FROM [{_schema}].[{_tableName}] WHERE [{_column}] IS NOT NULL";
+        var sql = $"SELECT [{_column}] FROM {_table.Bracketed} WHERE [{_column}] IS NOT NULL";
         _command = new SqlCommand(sql, _connection)
         {
             CommandTimeout = 0

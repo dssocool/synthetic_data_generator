@@ -12,29 +12,90 @@ public class SchemaReader
         _connectionString = connectionString;
     }
 
-    public async Task<List<TableInfo>> ReadSchemaAsync()
+    /// <summary>
+    /// Returns online, read-write user databases the login can access
+    /// (excludes system DBs and snapshots).
+    /// </summary>
+    public async Task<List<string>> GetUserDatabasesAsync(CancellationToken ct = default)
     {
-        var tables = new Dictionary<string, TableInfo>();
+        var databases = new List<string>();
 
         await using var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync();
+        await connection.OpenAsync(ct);
 
-        await ReadTablesAndColumns(connection, tables);
-        await ReadPrimaryKeys(connection, tables);
-        await ReadForeignKeys(connection, tables);
-        await ReadDefaultConstraints(connection, tables);
+        const string sql = """
+            SELECT name
+            FROM sys.databases
+            WHERE database_id > 4
+              AND state = 0
+              AND is_read_only = 0
+              AND source_database_id IS NULL
+              AND HAS_DBACCESS(name) = 1
+            ORDER BY name
+            """;
+
+        await using var cmd = new SqlCommand(sql, connection);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            databases.Add(reader.GetString(0));
+
+        return databases;
+    }
+
+    /// <summary>
+    /// Reads schema metadata. When <paramref name="databases"/> is null, all user
+    /// databases are read. Otherwise only the listed databases are queried.
+    /// </summary>
+    public async Task<List<TableInfo>> ReadSchemaAsync(
+        IReadOnlyCollection<string>? databases = null,
+        CancellationToken ct = default)
+    {
+        var targetDbs = databases?.ToList()
+            ?? await GetUserDatabasesAsync(ct);
+
+        var allTables = new List<TableInfo>();
+
+        foreach (var db in targetDbs)
+        {
+            var dbTables = await ReadDatabaseSchemaAsync(db, ct);
+            allTables.AddRange(dbTables);
+        }
+
+        return allTables;
+    }
+
+    private async Task<List<TableInfo>> ReadDatabaseSchemaAsync(string database, CancellationToken ct)
+    {
+        var tables = new Dictionary<string, TableInfo>(StringComparer.OrdinalIgnoreCase);
+
+        var builder = new SqlConnectionStringBuilder(_connectionString)
+        {
+            InitialCatalog = database
+        };
+
+        await using var connection = new SqlConnection(builder.ConnectionString);
+        await connection.OpenAsync(ct);
+
+        await ReadTablesAndColumns(connection, database, tables);
+        await ReadPrimaryKeys(connection, database, tables);
+        await ReadForeignKeys(connection, database, tables);
+        await ReadDefaultConstraints(connection, database, tables);
         MarkSequenceDefaults(tables);
-        await ReadCheckConstraints(connection, tables);
-        await ReadUniqueConstraints(connection, tables);
+        await ReadCheckConstraints(connection, database, tables);
+        await ReadUniqueConstraints(connection, database, tables);
 
         return tables.Values.ToList();
     }
 
+    private static string MakeFullName(string database, string schema, string tableName) =>
+        $"{database}.{schema}.{tableName}";
+
     private static async Task ReadTablesAndColumns(
         SqlConnection connection,
+        string database,
         Dictionary<string, TableInfo> tables)
     {
-        var sql = $"""
+        const string sql = """
             SELECT
                 s.name       AS SchemaName,
                 t.name       AS TableName,
@@ -64,11 +125,16 @@ public class SchemaReader
         {
             var schema = reader.GetString(0);
             var tableName = reader.GetString(1);
-            var fullName = $"{schema}.{tableName}";
+            var fullName = MakeFullName(database, schema, tableName);
 
             if (!tables.TryGetValue(fullName, out var table))
             {
-                table = new TableInfo { Schema = schema, TableName = tableName };
+                table = new TableInfo
+                {
+                    Database = database,
+                    Schema = schema,
+                    TableName = tableName
+                };
                 tables[fullName] = table;
             }
 
@@ -91,9 +157,10 @@ public class SchemaReader
 
     private static async Task ReadPrimaryKeys(
         SqlConnection connection,
+        string database,
         Dictionary<string, TableInfo> tables)
     {
-        var sql = $"""
+        const string sql = """
             SELECT
                 s.name  AS SchemaName,
                 t.name  AS TableName,
@@ -118,7 +185,7 @@ public class SchemaReader
             var schema = reader.GetString(0);
             var tableName = reader.GetString(1);
             var columnName = reader.GetString(2);
-            var fullName = $"{schema}.{tableName}";
+            var fullName = MakeFullName(database, schema, tableName);
 
             if (tables.TryGetValue(fullName, out var table))
             {
@@ -133,9 +200,10 @@ public class SchemaReader
 
     private static async Task ReadForeignKeys(
         SqlConnection connection,
+        string database,
         Dictionary<string, TableInfo> tables)
     {
-        var sql = """
+        const string sql = """
             SELECT
                 fk.name            AS FkName,
                 s_parent.name      AS ParentSchema,
@@ -165,13 +233,14 @@ public class SchemaReader
         {
             var parentSchema = reader.GetString(1);
             var parentTable = reader.GetString(2);
-            var fullParent = $"{parentSchema}.{parentTable}";
+            var fullParent = MakeFullName(database, parentSchema, parentTable);
 
             if (tables.TryGetValue(fullParent, out var table))
             {
                 table.ForeignKeys.Add(new ForeignKeyInfo
                 {
                     FkName = reader.GetString(0),
+                    Database = database,
                     ParentSchema = parentSchema,
                     ParentTable = parentTable,
                     ParentColumn = reader.GetString(3),
@@ -185,9 +254,10 @@ public class SchemaReader
 
     private static async Task ReadDefaultConstraints(
         SqlConnection connection,
+        string database,
         Dictionary<string, TableInfo> tables)
     {
-        var sql = $"""
+        const string sql = """
             SELECT
                 s.name  AS SchemaName,
                 t.name  AS TableName,
@@ -210,10 +280,8 @@ public class SchemaReader
             var schema = reader.GetString(0);
             var tableName = reader.GetString(1);
             var columnName = reader.GetString(2);
-            // dc.definition can come back NULL when the SQL login lacks
-            // VIEW DEFINITION permission on the object/database.
             var definition = reader.IsDBNull(3) ? null : reader.GetString(3);
-            var fullName = $"{schema}.{tableName}";
+            var fullName = MakeFullName(database, schema, tableName);
 
             if (tables.TryGetValue(fullName, out var table))
             {
@@ -227,9 +295,10 @@ public class SchemaReader
 
     private static async Task ReadCheckConstraints(
         SqlConnection connection,
+        string database,
         Dictionary<string, TableInfo> tables)
     {
-        var sql = $"""
+        const string sql = """
             SELECT
                 s.name  AS SchemaName,
                 t.name  AS TableName,
@@ -250,13 +319,10 @@ public class SchemaReader
         {
             var schema = reader.GetString(0);
             var tableName = reader.GetString(1);
-            var fullName = $"{schema}.{tableName}";
+            var fullName = MakeFullName(database, schema, tableName);
 
             if (tables.TryGetValue(fullName, out var table))
             {
-                // cc.definition can come back NULL when the SQL login lacks
-                // VIEW DEFINITION permission. Skip such constraints rather
-                // than crash, since we can't enforce a check we cannot read.
                 if (reader.IsDBNull(3))
                     continue;
 
@@ -271,9 +337,10 @@ public class SchemaReader
 
     private static async Task ReadUniqueConstraints(
         SqlConnection connection,
+        string database,
         Dictionary<string, TableInfo> tables)
     {
-        var sql = $"""
+        const string sql = """
             SELECT
                 s.name  AS SchemaName,
                 t.name  AS TableName,
@@ -308,7 +375,7 @@ public class SchemaReader
             var columnName = reader.GetString(3);
             var hasFilter = reader.GetBoolean(5);
             var filterDef = hasFilter && !reader.IsDBNull(6) ? reader.GetString(6) : null;
-            var fullName = $"{schema}.{tableName}";
+            var fullName = MakeFullName(database, schema, tableName);
 
             var key = (fullName, indexName);
             if (!constraintData.TryGetValue(key, out var data))

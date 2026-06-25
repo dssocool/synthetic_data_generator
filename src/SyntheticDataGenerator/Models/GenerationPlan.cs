@@ -44,10 +44,18 @@ public class TablePlan
     public string FullName => Table;
 
     [YamlIgnore]
-    public string Schema => Table.Contains('.') ? Table[..Table.IndexOf('.')] : string.Empty;
+    public string Database => Parsed.Database;
 
     [YamlIgnore]
-    public string TableName => Table.Contains('.') ? Table[(Table.IndexOf('.') + 1)..] : Table;
+    public string Schema => Parsed.Schema;
+
+    [YamlIgnore]
+    public string TableName => Parsed.TableName;
+
+    [YamlIgnore]
+    public string BracketedName => Parsed.Bracketed;
+
+    private SqlTableName Parsed => SqlTableName.Parse(Table);
 }
 
 public class UniqueConstraintPlan
@@ -102,7 +110,7 @@ public class CustomColumnRef
     public string Column { get; set; } = string.Empty;
 
     /// <summary>
-    /// True when this column lives outside TablesToInclude (either the whole
+    /// True when this column lives outside Include (either the whole
     /// table is excluded, or the column is excluded from a scoped table's
     /// Columns filter). Such columns become virtual roots — never generated;
     /// values are streamed from the live database at execution time.

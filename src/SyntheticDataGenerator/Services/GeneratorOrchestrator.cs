@@ -28,6 +28,16 @@ public class GeneratorOrchestrator
         Console.WriteLine($"Target: {MaskConnectionString(_connectionString)}");
         Console.WriteLine($"Rows per table: {_scope.RowsPerTable}");
         Console.WriteLine($"Seed: {_scope.Seed?.ToString() ?? "(random)"}");
+        if (_scope.Include.Length == 0)
+            Console.WriteLine("Database scope: all online user databases (system DBs excluded)");
+        else
+        {
+            var dbs = _scope.CollectReferencedDatabases();
+            if (dbs.Count > 0)
+                Console.WriteLine($"Database scope: {string.Join(", ", dbs.OrderBy(d => d))}");
+        }
+        if (_scope.Exclude.Length > 0)
+            Console.WriteLine($"Exclude: {string.Join(", ", _scope.Exclude)}");
         Console.WriteLine();
 
         var isUpdate = mode.Equals("update", StringComparison.OrdinalIgnoreCase);
@@ -40,6 +50,16 @@ public class GeneratorOrchestrator
             PrintErrors(validateResult.Errors);
             return;
         }
+
+        var targetDbs = validateResult.ScopedTables
+            .Select(t => t.Database)
+            .Where(d => !string.IsNullOrEmpty(d))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(d => d)
+            .ToList();
+        if (targetDbs.Count > 0)
+            Console.WriteLine($"Generating for {targetDbs.Count} database(s): {string.Join(", ", targetDbs)}");
+        Console.WriteLine();
 
         if (!isUpdate)
         {

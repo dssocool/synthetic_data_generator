@@ -14,22 +14,26 @@ public class DataGenerationPlanner : IDataGenerationPlanner
         var columnScope = scope.BuildColumnScope();
 
         var schemaReader = new SchemaReader(command.ConnectionString);
-        var allTables = await schemaReader.ReadSchemaAsync();
+        var targetDatabases = await ResolveTargetDatabasesAsync(schemaReader, scope, ct);
+        if (targetDatabases.Count == 0)
+        {
+            return ValidateScopeResult.Failure(["No accessible user databases found matching the specified scope."]);
+        }
 
-        var tables = allTables;
+        var allTables = await schemaReader.ReadSchemaAsync(targetDatabases, ct);
+
         var errors = new List<string>();
 
-        if (scope.TablesToInclude.Length > 0)
+        if (scope.Include.Length > 0)
         {
-            var scopeErrors = CollectScopeErrors(allTables, scope.TablesToInclude);
+            var scopeErrors = CollectScopeErrors(allTables, scope.Include, targetDatabases);
             if (scopeErrors.Count > 0)
                 return ValidateScopeResult.Failure(scopeErrors);
-
-            var includeSet = scope.GetIncludeTableNames();
-            tables = allTables
-                .Where(t => includeSet.Contains(t.TableName) || includeSet.Contains(t.FullName))
-                .ToList();
         }
+
+        var tables = allTables
+            .Where(t => scope.IsIncluded(t.FullName) && !scope.IsExcluded(t.FullName))
+            .ToList();
 
         if (tables.Count == 0)
         {
@@ -117,46 +121,97 @@ public class DataGenerationPlanner : IDataGenerationPlanner
         return new GeneratePlanResult(plan, command.OutputPath);
     }
 
-    internal static List<string> CollectScopeErrors(
-        List<TableInfo> allTables,
-        TableScope[] tablesToInclude)
+    internal static async Task<List<string>> ResolveTargetDatabasesAsync(
+        SchemaReader reader,
+        ScopeConfig scope,
+        CancellationToken ct)
     {
-        var tableByName = new Dictionary<string, TableInfo>(StringComparer.OrdinalIgnoreCase);
-        var tableByFullName = new Dictionary<string, TableInfo>(StringComparer.OrdinalIgnoreCase);
-        foreach (var t in allTables)
+        var excludedDbs = scope.GetExcludedDatabaseNames();
+        var allUser = await reader.GetUserDatabasesAsync(ct);
+        var userSet = allUser.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        List<string> targets;
+
+        if (scope.Include.Length == 0)
         {
-            tableByName.TryAdd(t.TableName, t);
-            tableByFullName.TryAdd(t.FullName, t);
+            targets = allUser;
+        }
+        else
+        {
+            targets = scope.CollectReferencedDatabases()
+                .Where(userSet.Contains)
+                .ToList();
         }
 
-        var missingTables = new List<string>();
+        return targets
+            .Where(db => !excludedDbs.Contains(db))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    internal static List<string> CollectScopeErrors(
+        List<TableInfo> allTables,
+        TableScope[] include,
+        IReadOnlyCollection<string> targetDatabases)
+    {
+        var tableByFullName = new Dictionary<string, TableInfo>(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in allTables)
+            tableByFullName.TryAdd(t.FullName, t);
+
+        var dbsWithTables = allTables
+            .Select(t => t.Database)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var missingEntries = new List<string>();
         var missingColumns = new List<(string Table, string Column)>();
 
-        foreach (var entry in tablesToInclude)
+        foreach (var entry in include)
         {
-            if (!tableByFullName.TryGetValue(entry.Table, out var matched)
-                && !tableByName.TryGetValue(entry.Table, out matched))
+            var (db, schema, tableName) = SqlTableName.ParsePattern(entry.Table);
+
+            if (tableName is not null)
             {
-                missingTables.Add(entry.Table);
-                continue;
+                if (!tableByFullName.TryGetValue(entry.Table, out var matched))
+                {
+                    missingEntries.Add(entry.Table);
+                    continue;
+                }
+
+                if (entry.Columns is not { Count: > 0 })
+                    continue;
+
+                var dbColumns = new HashSet<string>(
+                    matched.Columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase);
+
+                foreach (var col in entry.Columns)
+                {
+                    if (!dbColumns.Contains(col))
+                        missingColumns.Add((matched.FullName, col));
+                }
             }
-
-            if (entry.Columns is not { Count: > 0 })
-                continue;
-
-            var dbColumns = new HashSet<string>(
-                matched.Columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase);
-
-            foreach (var col in entry.Columns)
+            else if (schema is not null)
             {
-                if (!dbColumns.Contains(col))
-                    missingColumns.Add((matched.FullName, col));
+                if (!targetDatabases.Contains(db, StringComparer.OrdinalIgnoreCase)
+                    || !allTables.Any(t =>
+                        string.Equals(t.Database, db, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(t.Schema, schema, StringComparison.OrdinalIgnoreCase)))
+                {
+                    missingEntries.Add(entry.Table);
+                }
+            }
+            else
+            {
+                if (!targetDatabases.Contains(db, StringComparer.OrdinalIgnoreCase)
+                    || !dbsWithTables.Contains(db))
+                {
+                    missingEntries.Add(entry.Table);
+                }
             }
         }
 
         var errors = new List<string>();
-        foreach (var table in missingTables)
-            errors.Add($"Table [{table}] does not exist in the database.");
+        foreach (var entry in missingEntries)
+            errors.Add($"Include entry [{entry}] does not match any database, schema, or table in scope.");
         foreach (var (table, column) in missingColumns)
             errors.Add($"Column [{column}] does not exist in table [{table}].");
 
@@ -440,8 +495,8 @@ public class DataGenerationPlanner : IDataGenerationPlanner
             {
                 errors.Add(
                     $"CustomValueLists column [{table}].[{column}] is not in scope: it is " +
-                    "neither in any CustomDependencies group nor in TablesToInclude. " +
-                    "Add the column to TablesToInclude (and its Columns filter, if used), " +
+                    "neither in any CustomDependencies group nor in Include. " +
+                    "Add the column to Include (and its Columns filter, if used), " +
                     "or include it in a CustomDependencies group.");
                 toRemove.Add(key);
             }
@@ -488,7 +543,7 @@ public class DataGenerationPlanner : IDataGenerationPlanner
             if (lastDot <= 0 || lastDot == entry.Column.Length - 1)
             {
                 errors.Add(
-                    $"CustomValueLists Column [{entry.Column}] must be in the form schema.table.column.");
+                    $"CustomValueLists Column [{entry.Column}] must be in the form database.schema.table.column.");
                 continue;
             }
 
@@ -647,11 +702,8 @@ public class DataGenerationPlanner : IDataGenerationPlanner
 
         foreach (var ((table, column), deps) in rootDependents)
         {
-            var dotIdx = table.IndexOf('.');
-            var schema = dotIdx >= 0 ? table[..dotIdx] : "dbo";
-            var tableName = dotIdx >= 0 ? table[(dotIdx + 1)..] : table;
-
-            var sql = $"SELECT TOP 1 [{column}] FROM [{schema}].[{tableName}] WHERE [{column}] IS NOT NULL";
+            var parsed = SqlTableName.Parse(table);
+            var sql = $"SELECT TOP 1 [{column}] FROM {parsed.Bracketed} WHERE [{column}] IS NOT NULL";
 
             try
             {

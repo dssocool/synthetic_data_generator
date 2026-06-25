@@ -93,7 +93,7 @@ public class ParallelExecutionTests
         }
 
         var scope = new ScopeConfig(
-            tablesToInclude: names.Select(n => new TableScope { Table = $"dbo.{n}" }).ToArray(),
+            include: names.Select(n => new TableScope { Table = _fixture.Qualify(n) }).ToArray(),
             rowsPerTable: 50,
             seed: Seed,
             locale: "en",
@@ -104,7 +104,7 @@ public class ParallelExecutionTests
         Assert.Equal(names.Count, result.Tables.Count);
         Assert.All(result.Tables, t => Assert.True(t.Success, t.ErrorMessage));
         foreach (var n in names)
-            Assert.Equal(50, await CountAsync($"dbo.{n}"));
+            Assert.Equal(50, await CountAsync($"{_fixture.Qualify(n)}"));
     }
 
     // ──────────────────────────────────────────────
@@ -142,7 +142,7 @@ public class ParallelExecutionTests
 
         var tables = new[] { parent, child1, child2, child3 };
         var scope = new ScopeConfig(
-            tablesToInclude: tables.Select(t => new TableScope { Table = $"dbo.{t}" }).ToArray(),
+            include: tables.Select(t => new TableScope { Table = _fixture.Qualify(t) }).ToArray(),
             rowsPerTable: 30,
             seed: Seed,
             locale: "en",
@@ -152,10 +152,10 @@ public class ParallelExecutionTests
 
         Assert.All(result.Tables, t => Assert.True(t.Success, t.ErrorMessage));
 
-        Assert.Equal(30, await CountAsync($"dbo.{parent}"));
+        Assert.Equal(30, await CountAsync($"{_fixture.Qualify(parent)}"));
         foreach (var c in new[] { child1, child2, child3 })
         {
-            Assert.Equal(30, await CountAsync($"dbo.{c}"));
+            Assert.Equal(30, await CountAsync($"{_fixture.Qualify(c)}"));
             var orphans = (int)(await _fixture.ExecuteScalarAsync($"""
                 SELECT COUNT(*) FROM dbo.{c} c
                 WHERE NOT EXISTS (SELECT 1 FROM dbo.{parent} p WHERE p.Id = c.ParentId)
@@ -215,7 +215,7 @@ public class ParallelExecutionTests
 
         var tables = new[] { root, mid1, mid2, leaf };
         var scope = new ScopeConfig(
-            tablesToInclude: tables.Select(t => new TableScope { Table = $"dbo.{t}" }).ToArray(),
+            include: tables.Select(t => new TableScope { Table = _fixture.Qualify(t) }).ToArray(),
             rowsPerTable: 20,
             seed: Seed,
             locale: "en",
@@ -263,20 +263,20 @@ public class ParallelExecutionTests
 
         var validRegions = new[] { "APAC", "EMEA", "AMER", "LATAM" };
         var scope = new ScopeConfig(
-            tablesToInclude:
+            include:
             [
-                new TableScope { Table = $"dbo.{srcName}" },
-                new TableScope { Table = $"dbo.{depName}" }
+                new TableScope { Table = _fixture.Qualify(srcName) },
+                new TableScope { Table = _fixture.Qualify(depName) }
             ],
             rowsPerTable: 30,
             seed: Seed,
             locale: "en",
-            customDependencies: [$"dbo.{srcName}.Region|dbo.{depName}.RegionCode"],
+            customDependencies: [$"{_fixture.Qualify(srcName)}.Region|{_fixture.Qualify(depName)}.RegionCode"],
             customValueLists:
             [
                 new CustomValueList
                 {
-                    Column = $"dbo.{srcName}.Region",
+                    Column = $"{_fixture.Qualify(srcName)}.Region",
                     Values = validRegions.ToList()
                 }
             ],
@@ -320,11 +320,11 @@ public class ParallelExecutionTests
         }
 
         var scope = new ScopeConfig(
-            tablesToInclude:
+            include:
             [
-                new TableScope { Table = $"dbo.{t1}" },
-                new TableScope { Table = $"dbo.{t2}" },
-                new TableScope { Table = $"dbo.{t3}" }
+                new TableScope { Table = _fixture.Qualify(t1) },
+                new TableScope { Table = _fixture.Qualify(t2) },
+                new TableScope { Table = _fixture.Qualify(t3) }
             ],
             rowsPerTable: 25,
             seed: Seed,
@@ -335,7 +335,7 @@ public class ParallelExecutionTests
         var firstRun = await SnapshotAsync(t1, t2, t3);
 
         foreach (var n in new[] { t1, t2, t3 })
-            await TruncateAsync($"dbo.{n}");
+            await TruncateAsync($"{_fixture.Qualify(n)}");
 
         await RunAsync(scope, maxParallel: 8);
         var secondRun = await SnapshotAsync(t1, t2, t3);
@@ -374,23 +374,23 @@ public class ParallelExecutionTests
 
         var tablesScope = new[]
         {
-            new TableScope { Table = $"dbo.{t1}" },
-            new TableScope { Table = $"dbo.{t2}" },
-            new TableScope { Table = $"dbo.{t3}" }
+            new TableScope { Table = _fixture.Qualify(t1) },
+            new TableScope { Table = _fixture.Qualify(t2) },
+            new TableScope { Table = _fixture.Qualify(t3) }
         };
 
         var sequentialScope = new ScopeConfig(
-            tablesToInclude: tablesScope,
+            include: tablesScope,
             rowsPerTable: 25, seed: Seed, locale: "en",
             maxParallelTables: 1);
         await RunAsync(sequentialScope, maxParallel: 1);
         var sequentialData = await SnapshotAsync(t1, t2, t3);
 
         foreach (var n in new[] { t1, t2, t3 })
-            await TruncateAsync($"dbo.{n}");
+            await TruncateAsync($"{_fixture.Qualify(n)}");
 
         var parallelScope = new ScopeConfig(
-            tablesToInclude: tablesScope,
+            include: tablesScope,
             rowsPerTable: 25, seed: Seed, locale: "en",
             maxParallelTables: 8);
         await RunAsync(parallelScope, maxParallel: 8);
@@ -433,11 +433,11 @@ public class ParallelExecutionTests
         }
 
         var scope = new ScopeConfig(
-            tablesToInclude:
+            include:
             [
-                new TableScope { Table = $"dbo.{doomed}" },
-                new TableScope { Table = $"dbo.{ok1}" },
-                new TableScope { Table = $"dbo.{ok2}" }
+                new TableScope { Table = _fixture.Qualify(doomed) },
+                new TableScope { Table = _fixture.Qualify(ok1) },
+                new TableScope { Table = _fixture.Qualify(ok2) }
             ],
             rowsPerTable: 10,
             seed: Seed,
@@ -447,15 +447,15 @@ public class ParallelExecutionTests
         var (_, result) = await RunAsync(scope, maxParallel: 8);
 
         var doomedDetail = result.Tables.Single(t =>
-            t.TableName.Equals($"dbo.{doomed}", StringComparison.OrdinalIgnoreCase));
+            t.TableName.Equals($"{_fixture.Qualify(doomed)}", StringComparison.OrdinalIgnoreCase));
         Assert.False(doomedDetail.Success);
 
         foreach (var n in new[] { ok1, ok2 })
         {
             var detail = result.Tables.Single(t =>
-                t.TableName.Equals($"dbo.{n}", StringComparison.OrdinalIgnoreCase));
+                t.TableName.Equals($"{_fixture.Qualify(n)}", StringComparison.OrdinalIgnoreCase));
             Assert.True(detail.Success, detail.ErrorMessage);
-            Assert.Equal(10, await CountAsync($"dbo.{n}"));
+            Assert.Equal(10, await CountAsync($"{_fixture.Qualify(n)}"));
         }
     }
 
@@ -489,10 +489,10 @@ public class ParallelExecutionTests
             """);
 
         var scope = new ScopeConfig(
-            tablesToInclude:
+            include:
             [
-                new TableScope { Table = $"dbo.{selfRef}" },
-                new TableScope { Table = $"dbo.{sibling}" }
+                new TableScope { Table = _fixture.Qualify(selfRef) },
+                new TableScope { Table = _fixture.Qualify(sibling) }
             ],
             rowsPerTable: 20,
             seed: Seed,
@@ -502,8 +502,8 @@ public class ParallelExecutionTests
         var (_, result) = await RunAsync(scope, maxParallel: 8);
         Assert.All(result.Tables, t => Assert.True(t.Success, t.ErrorMessage));
 
-        Assert.Equal(20, await CountAsync($"dbo.{selfRef}"));
-        Assert.Equal(20, await CountAsync($"dbo.{sibling}"));
+        Assert.Equal(20, await CountAsync($"{_fixture.Qualify(selfRef)}"));
+        Assert.Equal(20, await CountAsync($"{_fixture.Qualify(sibling)}"));
 
         var orphans = (int)(await _fixture.ExecuteScalarAsync($"""
             SELECT COUNT(*) FROM dbo.{selfRef} c
@@ -544,10 +544,10 @@ public class ParallelExecutionTests
                 """);
         }
 
-        var tablesScope = names.Select(n => new TableScope { Table = $"dbo.{n}" }).ToArray();
+        var tablesScope = names.Select(n => new TableScope { Table = _fixture.Qualify(n) }).ToArray();
 
         var sequentialScope = new ScopeConfig(
-            tablesToInclude: tablesScope,
+            include: tablesScope,
             rowsPerTable: RowCount, seed: Seed, locale: "en",
             maxParallelTables: 1);
 
@@ -556,10 +556,10 @@ public class ParallelExecutionTests
         sequentialSw.Stop();
 
         foreach (var n in names)
-            await TruncateAsync($"dbo.{n}");
+            await TruncateAsync($"{_fixture.Qualify(n)}");
 
         var parallelScope = new ScopeConfig(
-            tablesToInclude: tablesScope,
+            include: tablesScope,
             rowsPerTable: RowCount, seed: Seed, locale: "en",
             maxParallelTables: 4);
 

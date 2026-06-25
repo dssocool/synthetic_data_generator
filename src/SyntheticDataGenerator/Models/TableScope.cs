@@ -22,7 +22,8 @@ public class CustomValueList
 
 public class ScopeConfig
 {
-    public TableScope[] TablesToInclude { get; }
+    public TableScope[] Include { get; }
+    public string[] Exclude { get; }
     public int RowsPerTable { get; }
     public int? Seed { get; }
     public string Locale { get; }
@@ -45,16 +46,18 @@ public class ScopeConfig
     public int MaxParallelTables { get; }
 
     public ScopeConfig(
-        TableScope[] tablesToInclude,
+        TableScope[] include,
         int rowsPerTable,
         int? seed,
         string locale,
         string[]? customDependencies = null,
         int customDependencyBufferSize = 10_000,
         CustomValueList[]? customValueLists = null,
-        int? maxParallelTables = null)
+        int? maxParallelTables = null,
+        string[]? exclude = null)
     {
-        TablesToInclude = tablesToInclude;
+        Include = include;
+        Exclude = exclude is { Length: > 0 } ? exclude : [];
         RowsPerTable = rowsPerTable;
         Seed = seed;
         Locale = locale;
@@ -70,7 +73,7 @@ public class ScopeConfig
 
     /// <summary>
     /// Parses CustomDependencies strings into structured groups.
-    /// Each string is "schema.table.col|schema.table2.col2|..." where the first entry is the source.
+    /// Each string is "database.schema.table.col|..." pipe-separated references.
     /// </summary>
     public static List<CustomDependencyGroup> ParseCustomDependencies(string[] raw)
     {
@@ -98,14 +101,14 @@ public class ScopeConfig
     }
 
     /// <summary>
-    /// Builds the per-table column scope dictionary from TablesToInclude entries that
+    /// Builds the per-table column scope dictionary from Include entries that
     /// specify explicit column lists. Returns null if no table has column restrictions.
     /// </summary>
     public Dictionary<string, HashSet<string>>? BuildColumnScope()
     {
         Dictionary<string, HashSet<string>>? scope = null;
 
-        foreach (var entry in TablesToInclude)
+        foreach (var entry in Include)
         {
             if (entry.Columns is { Count: > 0 })
             {
@@ -118,11 +121,10 @@ public class ScopeConfig
     }
 
     /// <summary>
-    /// Parses TablesToInclude from IConfiguration. Supports two forms:
-    /// simple ("- dbo.Users") and structured ("- Table: dbo.Users / Columns: [...]").
-    /// An empty list is not valid — TablesToInclude must contain at least one entry.
+    /// Parses Include from IConfiguration. Supports two forms:
+    /// simple ("- MyDb.dbo.Users") and structured ("- Table: MyDb.dbo.Users / Columns: [...]").
     /// </summary>
-    public static TableScope[] ParseTablesToInclude(IConfigurationSection section)
+    public static TableScope[] ParseInclude(IConfigurationSection section)
     {
         var children = section.GetChildren().ToList();
         if (children.Count == 0)
@@ -156,22 +158,109 @@ public class ScopeConfig
     }
 
     /// <summary>
-    /// Gets the set of table names from TablesToInclude for filtering.
+    /// Parses Exclude from IConfiguration. Each entry is db, db.schema, or db.schema.table.
+    /// </summary>
+    public static string[] ParseExclude(IConfigurationSection section)
+    {
+        var children = section.GetChildren().ToList();
+        if (children.Count == 0)
+            return [];
+
+        return children
+            .Select(c => c.Value)
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Cast<string>()
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Gets the set of table/pattern names from Include for filtering.
     /// </summary>
     public HashSet<string> GetIncludeTableNames()
     {
         return new HashSet<string>(
-            TablesToInclude.Select(t => t.Table),
+            Include.Select(t => t.Table),
             StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
+    /// Returns true when a table's full name matches any Include pattern.
+    /// When Include is empty, all tables match.
+    /// </summary>
+    public bool IsIncluded(string tableFullName)
+    {
+        if (Include.Length == 0)
+            return true;
+
+        foreach (var entry in Include)
+        {
+            if (SqlTableName.MatchesPattern(tableFullName, entry.Table))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Returns true when a table's full name matches any Exclude pattern.
+    /// </summary>
+    public bool IsExcluded(string tableFullName)
+    {
+        foreach (var pattern in Exclude)
+        {
+            if (SqlTableName.MatchesPattern(tableFullName, pattern))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Collects database names referenced by Include patterns, CustomDependencies,
+    /// and CustomValueLists column refs.
+    /// </summary>
+    public HashSet<string> CollectReferencedDatabases()
+    {
+        var dbs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in Include)
+            dbs.Add(SqlTableName.ExtractDatabase(entry.Table));
+
+        foreach (var dep in CustomDependencies)
+        {
+            foreach (var part in dep.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var lastDot = part.LastIndexOf('.');
+                if (lastDot > 0)
+                    dbs.Add(SqlTableName.ExtractDatabase(part[..lastDot]));
+            }
+        }
+
+        foreach (var cvl in CustomValueLists)
+        {
+            var lastDot = cvl.Column.LastIndexOf('.');
+            if (lastDot > 0)
+                dbs.Add(SqlTableName.ExtractDatabase(cvl.Column[..lastDot]));
+        }
+
+        dbs.RemoveWhere(string.IsNullOrWhiteSpace);
+        return dbs;
+    }
+
+    /// <summary>
+    /// Database names excluded at the whole-database level (Exclude entries with no dot).
+    /// </summary>
+    public HashSet<string> GetExcludedDatabaseNames()
+    {
+        return Exclude
+            .Where(e => !e.Contains('.'))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Parses CustomValueLists from IConfiguration. Only the structured form is
-    /// supported: each child must specify <c>Column</c> (schema.table.column)
-    /// plus exactly one of <c>File</c> (path to a flat values file, one value
-    /// per line) or <c>Values</c> (inline YAML list). The exactly-one-of rule
-    /// is enforced by the validator so users get a friendly error message
-    /// instead of silent drops.
+    /// supported: each child must specify <c>Column</c> (database.schema.table.column)
+    /// plus exactly one of <c>File</c> or <c>Values</c>.
     /// </summary>
     public static CustomValueList[] ParseCustomValueLists(IConfigurationSection section)
     {

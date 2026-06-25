@@ -271,7 +271,7 @@ public class CustomValueListsTests
             var errors = DataGenerationPlanner.CollectCustomDependencyErrors(
                 groups, allTables, allTables, columnScope: null, customValueLists);
 
-            Assert.Contains(errors, e => e.Contains("schema.table.column"));
+            Assert.Contains(errors, e => e.Contains("database.schema.table.column"));
         }
         finally
         {
@@ -396,7 +396,7 @@ public class CustomValueListsTests
     public void Validation_StandaloneCvlOnOutOfScopeColumn_Errors()
     {
         // A standalone CustomValueLists entry on a column that is NOT in
-        // TablesToInclude has no way to be applied — fail fast with a
+        // Include has no way to be applied — fail fast with a
         // descriptive error.
         var orders = MakeTable("dbo", "Orders", "LookupCode");
         var lookup = MakeTable("dbo", "Lookup", "Code");
@@ -1416,16 +1416,16 @@ public class CustomValueListsIntegrationTests
         try
         {
             var scope = new ScopeConfig(
-                tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+                include: [new TableScope { Table = _fixture.Qualify(ordersName) }],
                 rowsPerTable: 25,
                 seed: 42,
                 locale: "en",
-                customDependencies: [$"dbo.{lookupName}.Code|dbo.{ordersName}.LookupCode"],
+                customDependencies: [$"{_fixture.Qualify(lookupName)}.Code|{_fixture.Qualify(ordersName)}.LookupCode"],
                 customValueLists:
                 [
                     new CustomValueList
                     {
-                        Column = $"dbo.{lookupName}.Code",
+                        Column = $"{_fixture.Qualify(lookupName)}.Code",
                         File = file
                     }
                 ]);
@@ -1480,16 +1480,16 @@ public class CustomValueListsIntegrationTests
         try
         {
             var scope = new ScopeConfig(
-                tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+                include: [new TableScope { Table = _fixture.Qualify(ordersName) }],
                 rowsPerTable: 5,
                 seed: 42,
                 locale: "en",
-                customDependencies: [$"dbo.{lookupName}.Code|dbo.{ordersName}.LookupCode"],
+                customDependencies: [$"{_fixture.Qualify(lookupName)}.Code|{_fixture.Qualify(ordersName)}.LookupCode"],
                 customValueLists:
                 [
                     new CustomValueList
                     {
-                        Column = $"dbo.{lookupName}.Code",
+                        Column = $"{_fixture.Qualify(lookupName)}.Code",
                         File = file
                     }
                 ]);
@@ -1528,13 +1528,13 @@ public class CustomValueListsIntegrationTests
         try
         {
             var scope = new ScopeConfig(
-                tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+                include: [new TableScope { Table = _fixture.Qualify(ordersName) }],
                 rowsPerTable: 5,
                 seed: 42,
                 locale: "en",
                 customDependencies:
                 [
-                    $"dbo.NoSuchTable_{Guid.NewGuid():N}.Code|dbo.{ordersName}.LookupCode"
+                    $"{_fixture.DatabaseName}.dbo.NoSuchTable_{Guid.NewGuid():N}.Code|{_fixture.Qualify(ordersName)}.LookupCode"
                 ],
                 customValueLists:
                 [
@@ -1579,7 +1579,7 @@ public class CustomValueListsIntegrationTests
 
         var validStatuses = new[] { "Pending", "Active", "Closed" };
         var scope = new ScopeConfig(
-            tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+            include: [new TableScope { Table = _fixture.Qualify(ordersName) }],
             rowsPerTable: 25,
             seed: 42,
             locale: "en",
@@ -1587,7 +1587,7 @@ public class CustomValueListsIntegrationTests
             [
                 new CustomValueList
                 {
-                    Column = $"dbo.{ordersName}.Status",
+                    Column = $"{_fixture.Qualify(ordersName)}.Status",
                     Values = validStatuses.ToList()
                 }
             ]);
@@ -1615,7 +1615,7 @@ public class CustomValueListsIntegrationTests
     public async Task StandaloneCvl_FailsFastWhenColumnNotInScope()
     {
         // A standalone CustomValueLists entry on a column whose table is NOT
-        // in TablesToInclude must surface as a validation error before any
+        // in Include must surface as a validation error before any
         // insert is attempted.
         var ordersName = "TestStandaloneCvlMissing_" + Guid.NewGuid().ToString("N")[..8];
         var lookupName = "TestStandaloneCvlLookup_" + Guid.NewGuid().ToString("N")[..8];
@@ -1634,7 +1634,7 @@ public class CustomValueListsIntegrationTests
 
         var scope = new ScopeConfig(
             // Lookup table intentionally NOT in scope.
-            tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+            include: [new TableScope { Table = _fixture.Qualify(ordersName) }],
             rowsPerTable: 5,
             seed: 42,
             locale: "en",
@@ -1642,7 +1642,7 @@ public class CustomValueListsIntegrationTests
             [
                 new CustomValueList
                 {
-                    Column = $"dbo.{lookupName}.Region",
+                    Column = $"{_fixture.Qualify(lookupName)}.Region",
                     Values = ["APAC", "EMEA"]
                 }
             ]);
@@ -1654,7 +1654,7 @@ public class CustomValueListsIntegrationTests
 
         Assert.False(validateResult.IsValid);
         Assert.Contains(validateResult.Errors,
-            e => e.Contains($"dbo.{lookupName}")
+            e => e.Contains($"{_fixture.Qualify(lookupName)}")
                  && e.Contains("Region")
                  && e.Contains("not in scope"));
     }
@@ -1685,19 +1685,19 @@ public class CustomValueListsIntegrationTests
 
         var validRegions = new[] { "APAC", "EMEA", "AMER", "LATAM" };
         var scope = new ScopeConfig(
-            tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+            include: [new TableScope { Table = _fixture.Qualify(ordersName) }],
             rowsPerTable: 25,
             seed: 42,
             locale: "en",
             customDependencies:
             [
-                $"dbo.{lookupName}.Region|dbo.{ordersName}.RegionCode"
+                $"{_fixture.Qualify(lookupName)}.Region|{_fixture.Qualify(ordersName)}.RegionCode"
             ],
             customValueLists:
             [
                 new CustomValueList
                 {
-                    Column = $"dbo.{lookupName}.Region",
+                    Column = $"{_fixture.Qualify(lookupName)}.Region",
                     Values = validRegions.ToList()
                 }
             ]);

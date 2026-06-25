@@ -32,7 +32,7 @@ public class ExternalCustomDependencyTests
             """);
 
         await using var streamer = new ExternalSourceStreamer(
-            _fixture.ConnectionString, $"dbo.{tableName}", "Code", bufferSize: 16,
+            _fixture.ConnectionString, $"{_fixture.Qualify(tableName)}", "Code", bufferSize: 16,
             random: new Random(42));
 
         var picked = new HashSet<int>();
@@ -64,7 +64,7 @@ public class ExternalCustomDependencyTests
             """);
 
         await using var streamer = new ExternalSourceStreamer(
-            _fixture.ConnectionString, $"dbo.{tableName}", "Code", bufferSize: 100,
+            _fixture.ConnectionString, $"{_fixture.Qualify(tableName)}", "Code", bufferSize: 100,
             random: new Random(42));
 
         var seen = new HashSet<string>();
@@ -92,7 +92,7 @@ public class ExternalCustomDependencyTests
             """);
 
         await using var streamer = new ExternalSourceStreamer(
-            _fixture.ConnectionString, $"dbo.{tableName}", "Code", bufferSize: 1,
+            _fixture.ConnectionString, $"{_fixture.Qualify(tableName)}", "Code", bufferSize: 1,
             random: new Random(42));
 
         var seen = new HashSet<int>();
@@ -125,7 +125,7 @@ public class ExternalCustomDependencyTests
             """);
 
         await using var streamer = new ExternalSourceStreamer(
-            _fixture.ConnectionString, $"dbo.{tableName}", "Code", bufferSize: 10,
+            _fixture.ConnectionString, $"{_fixture.Qualify(tableName)}", "Code", bufferSize: 10,
             random: new Random(42));
 
         var seen = new HashSet<int>();
@@ -158,7 +158,7 @@ public class ExternalCustomDependencyTests
             """);
 
         await using var streamer = new ExternalSourceStreamer(
-            _fixture.ConnectionString, $"dbo.{tableName}", "Code", bufferSize: 10,
+            _fixture.ConnectionString, $"{_fixture.Qualify(tableName)}", "Code", bufferSize: 10,
             random: new Random(42));
 
         var ex = Assert.Throws<InvalidOperationException>(() => streamer.Pick());
@@ -184,7 +184,7 @@ public class ExternalCustomDependencyTests
             """);
 
         await using var streamer = new ExternalSourceStreamer(
-            _fixture.ConnectionString, $"dbo.{tableName}", "Code", bufferSize: 16,
+            _fixture.ConnectionString, $"{_fixture.Qualify(tableName)}", "Code", bufferSize: 16,
             random: new Random(42));
 
         var seen = new HashSet<int>();
@@ -229,11 +229,11 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+            include: [new TableScope { Table = _fixture.Qualify(ordersName) }],
             rowsPerTable: 25,
             seed: 42,
             locale: "en",
-            customDependencies: [$"dbo.{lookupName}.Code|dbo.{ordersName}.LookupCode"],
+            customDependencies: [$"{_fixture.Qualify(lookupName)}.Code|{_fixture.Qualify(ordersName)}.LookupCode"],
             customDependencyBufferSize: 16);
 
         var planner = new DataGenerationPlanner();
@@ -275,11 +275,11 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+            include: [new TableScope { Table = _fixture.Qualify(ordersName) }],
             rowsPerTable: 5,
             seed: 42,
             locale: "en",
-            customDependencies: [$"dbo.{lookupName}.Code|dbo.{ordersName}.LookupCode"]);
+            customDependencies: [$"{_fixture.Qualify(lookupName)}.Code|{_fixture.Qualify(ordersName)}.LookupCode"]);
 
         var planner = new DataGenerationPlanner();
         var validateResult = await planner.ValidateScopeAsync(
@@ -322,11 +322,11 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+            include: [new TableScope { Table = _fixture.Qualify(ordersName) }],
             rowsPerTable: 5,
             seed: 42,
             locale: "en",
-            customDependencies: [$"dbo.{lookupName}.Code|dbo.{ordersName}.LookupCode"]);
+            customDependencies: [$"{_fixture.Qualify(lookupName)}.Code|{_fixture.Qualify(ordersName)}.LookupCode"]);
 
         var planner = new DataGenerationPlanner();
         var validateResult = await planner.ValidateScopeAsync(
@@ -371,18 +371,18 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            tablesToInclude:
+            include:
             [
-                new TableScope { Table = $"dbo.{ordersName}" },
-                new TableScope { Table = $"dbo.{auditName}" }
+                new TableScope { Table = _fixture.Qualify(ordersName) },
+                new TableScope { Table = _fixture.Qualify(auditName) }
             ],
             rowsPerTable: 20,
             seed: 42,
             locale: "en",
             customDependencies:
             [
-                $"dbo.{lookupName}.Code|dbo.{ordersName}.LookupCode",
-                $"dbo.{lookupName}.Code|dbo.{auditName}.LookupCode"
+                $"{_fixture.Qualify(lookupName)}.Code|{_fixture.Qualify(ordersName)}.LookupCode",
+                $"{_fixture.Qualify(lookupName)}.Code|{_fixture.Qualify(auditName)}.LookupCode"
             ]);
 
         var planner = new DataGenerationPlanner();
@@ -437,14 +437,14 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+            include: [new TableScope { Table = _fixture.Qualify(ordersName) }],
             rowsPerTable: 30,
             seed: 42,
             locale: "en",
             customDependencies:
             [
-                $"dbo.{lookupAName}.Code|dbo.{ordersName}.CodeA",
-                $"dbo.{lookupBName}.Code|dbo.{ordersName}.CodeB"
+                $"{_fixture.Qualify(lookupAName)}.Code|{_fixture.Qualify(ordersName)}.CodeA",
+                $"{_fixture.Qualify(lookupBName)}.Code|{_fixture.Qualify(ordersName)}.CodeB"
             ]);
 
         var planner = new DataGenerationPlanner();
@@ -495,13 +495,13 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+            include: [new TableScope { Table = _fixture.Qualify(ordersName) }],
             rowsPerTable: 5,
             seed: 42,
             locale: "en",
             customDependencies:
             [
-                $"dbo.{lookupAName}.Code|dbo.{lookupBName}.Code|dbo.{ordersName}.Code"
+                $"{_fixture.Qualify(lookupAName)}.Code|{_fixture.Qualify(lookupBName)}.Code|{_fixture.Qualify(ordersName)}.Code"
             ]);
 
         var planner = new DataGenerationPlanner();
@@ -541,13 +541,13 @@ public class ExternalCustomDependencyTests
             """);
 
         var scope = new ScopeConfig(
-            tablesToInclude: [new TableScope { Table = $"dbo.{ordersName}" }],
+            include: [new TableScope { Table = _fixture.Qualify(ordersName) }],
             rowsPerTable: 10,
             seed: 42,
             locale: "en",
             // Dependent first, external source second — cascade should still
             // pick the external column as source.
-            customDependencies: [$"dbo.{ordersName}.LookupCode|dbo.{lookupName}.Code"]);
+            customDependencies: [$"{_fixture.Qualify(ordersName)}.LookupCode|{_fixture.Qualify(lookupName)}.Code"]);
 
         var planner = new DataGenerationPlanner();
         var executor = new DataGenerationExecutor();

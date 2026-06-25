@@ -7,17 +7,12 @@ var config = new ConfigurationBuilder()
     .AddYamlFile("appsettings.yaml", optional: false)
     .Build();
 
-var baseConnectionString = config["ConnectionString"]
+var connectionString = config["ConnectionString"]
     ?? throw new InvalidOperationException("ConnectionString is required in appsettings.yaml");
 
-var databaseName = config["DatabaseName"];
-var connectionString = string.IsNullOrWhiteSpace(databaseName)
-    ? baseConnectionString
-    : new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(baseConnectionString)
-        { InitialCatalog = databaseName }.ConnectionString;
-
 var scope = new ScopeConfig(
-    tablesToInclude: ScopeConfig.ParseTablesToInclude(config.GetSection("TablesToInclude")),
+    include: ScopeConfig.ParseInclude(config.GetSection("Include")),
+    exclude: ScopeConfig.ParseExclude(config.GetSection("Exclude")),
     rowsPerTable: int.TryParse(config["RowsPerTable"], out var r) ? r : 100,
     seed: int.TryParse(config["Seed"], out var s) ? s : null,
     locale: config["Locale"] ?? "en",
@@ -53,6 +48,6 @@ static void PrintUsage()
     Console.WriteLine("Usage:");
     Console.WriteLine("  dotnet run --                                    Insert synthetic data into the configured tables");
     Console.WriteLine();
-    Console.WriteLine("Tables to populate are configured in appsettings.yaml (TablesToInclude).");
+    Console.WriteLine("Tables to populate are configured in appsettings.yaml (Include / Exclude).");
     Console.WriteLine("Each run writes the generated plan to ./plan.yaml in the current folder for inspection.");
 }

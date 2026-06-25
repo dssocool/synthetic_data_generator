@@ -242,7 +242,7 @@ public class CustomDependencyTests
     [Fact]
     public void CollectCustomDependencyErrors_AllowsExternalRootTable()
     {
-        // Orders is in scope, Regions is in the DB but NOT in TablesToInclude.
+        // Orders is in scope, Regions is in the DB but NOT in Include.
         // Regions.Code becomes an external root.
         var allTables = new List<TableInfo>
         {

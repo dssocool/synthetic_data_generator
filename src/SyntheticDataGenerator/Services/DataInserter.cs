@@ -275,7 +275,7 @@ public class DataInserter : IAsyncDisposable
                 {
                     for (var i = 0; i < gen.DataTable.Rows.Count; i++)
                     {
-                        var sql = $"INSERT INTO [{table.Schema}].[{table.TableName}] DEFAULT VALUES";
+                        var sql = $"INSERT INTO {table.BracketedName} DEFAULT VALUES";
                         await using var cmd = new SqlCommand(sql, connection, transaction);
                         await cmd.ExecuteNonQueryAsync();
                     }
@@ -566,7 +566,7 @@ public class DataInserter : IAsyncDisposable
     {
         using var bulkCopy = new SqlBulkCopy(connection, SqlBulkCopyOptions.Default, transaction)
         {
-            DestinationTableName = $"[{table.Schema}].[{table.TableName}]",
+            DestinationTableName = $"{table.BracketedName}",
             BulkCopyTimeout = 0
         };
         foreach (var col in insertColumns)
@@ -630,7 +630,7 @@ public class DataInserter : IAsyncDisposable
             for (var i = 0; i < rowCount; i++)
             {
                 var sb = new StringBuilder();
-                sb.Append($"INSERT INTO [{table.Schema}].[{table.TableName}]");
+                sb.Append($"INSERT INTO {table.BracketedName}");
                 sb.Append(" OUTPUT ");
                 sb.Append(string.Join(", ", pkColNames.Select(pk => $"INSERTED.[{pk}]")));
                 sb.Append(" DEFAULT VALUES");
@@ -659,7 +659,7 @@ public class DataInserter : IAsyncDisposable
             .Select(c => $"INSERTED.[{c.Name}]"));
 
         var mergeSql = $"""
-            MERGE INTO [{table.Schema}].[{table.TableName}] AS tgt
+            MERGE INTO {table.BracketedName} AS tgt
             USING (SELECT * FROM {tempTableName}) AS src
             ON 1 = 0
             WHEN NOT MATCHED THEN
@@ -720,7 +720,7 @@ public class DataInserter : IAsyncDisposable
 
             for (var i = 0; i < rowCount; i++)
             {
-                var sql = $"INSERT INTO [{table.Schema}].[{table.TableName}] DEFAULT VALUES";
+                var sql = $"INSERT INTO {table.BracketedName} DEFAULT VALUES";
                 await using var cmd = new SqlCommand(sql, connection, transaction);
                 await cmd.ExecuteNonQueryAsync();
             }
@@ -728,7 +728,7 @@ public class DataInserter : IAsyncDisposable
         }
 
         var colList = string.Join(", ", insertColumns.Select(c => $"[{c.Name}]"));
-        var insertSql = $"INSERT INTO [{table.Schema}].[{table.TableName}] ({colList}) " +
+        var insertSql = $"INSERT INTO {table.BracketedName} ({colList}) " +
                         $"SELECT {colList} FROM {tempTableName} ORDER BY [Id]";
 
         try
@@ -779,7 +779,7 @@ public class DataInserter : IAsyncDisposable
                 .ToList())
             .ToList();
 
-        var targetTable = $"[{table.Schema}].[{table.TableName}]";
+        var targetTable = $"{table.BracketedName}";
         await ApplySelfRefUpdatesAsync(
             connection, transaction, targetTable, table.PrimaryKeyColumns,
             rows, fkPairGroups, updateInMemoryRows: false);
@@ -944,7 +944,7 @@ public class DataInserter : IAsyncDisposable
         return $"""
             UPDATE t
                SET {setClauses}
-              FROM [{table.Schema}].[{table.TableName}] t
+              FROM {table.BracketedName} t
              INNER JOIN {mappingTempName} tmp ON {joinClauses}
             """;
     }
@@ -1505,12 +1505,10 @@ public class DataInserter : IAsyncDisposable
         var capped = Math.Clamp(sampleSize, 100, 1000);
 
         var refColumns = group.Columns.Select(c => c.ReferencedColumn).Distinct().ToList();
-        var dotIdx = group.RefFullName.IndexOf('.');
-        var schema = dotIdx >= 0 ? group.RefFullName[..dotIdx] : "dbo";
-        var tableName = dotIdx >= 0 ? group.RefFullName[(dotIdx + 1)..] : group.RefFullName;
+        var parsed = SqlTableName.Parse(group.RefFullName);
 
         var colList = string.Join(", ", refColumns.Select(c => $"[{c}]"));
-        var sql = $"SELECT DISTINCT TOP(@SampleSize) {colList} FROM [{schema}].[{tableName}] ORDER BY NEWID()";
+        var sql = $"SELECT DISTINCT TOP(@SampleSize) {colList} FROM {parsed.Bracketed} ORDER BY NEWID()";
 
         var rows = new List<Dictionary<string, object>>();
 
@@ -1574,7 +1572,7 @@ public class DataInserter : IAsyncDisposable
     internal static string BuildSelectPkSql(TableInfo table)
     {
         var cols = string.Join(", ", table.PrimaryKeyColumns.Select(pk => $"[{pk}]"));
-        return $"SELECT {cols} FROM [{table.Schema}].[{table.TableName}]";
+        return $"SELECT {cols} FROM {table.BracketedName}";
     }
 
     internal static string BuildUpdateFromTempSql(
@@ -1592,7 +1590,7 @@ public class DataInserter : IAsyncDisposable
         return $"""
             UPDATE t
                SET {setClauses}
-              FROM [{table.Schema}].[{table.TableName}] t
+              FROM {table.BracketedName} t
              INNER JOIN {tempTableName} tmp ON {joinClauses}
             """;
     }
@@ -1646,6 +1644,7 @@ public class DataInserter : IAsyncDisposable
     {
         var table = new TableInfo
         {
+            Database = tablePlan.Database,
             Schema = tablePlan.Schema,
             TableName = tablePlan.TableName,
             Columns = tablePlan.Columns.Select(cp => new ColumnInfo
@@ -1674,15 +1673,16 @@ public class DataInserter : IAsyncDisposable
                 .Select(c =>
                 {
                     var refTable = Helpers.GetArgString(c.GeneratorArgs, "referencedTable");
-                    var dotIdx = refTable.IndexOf('.');
+                    var refParsed = SqlTableName.Parse(refTable);
                     return new ForeignKeyInfo
                     {
                         FkName = Helpers.GetArgString(c.GeneratorArgs, "compositeFkGroup"),
+                        Database = tablePlan.Database,
                         ParentSchema = tablePlan.Schema,
                         ParentTable = tablePlan.TableName,
                         ParentColumn = c.Name,
-                        ReferencedSchema = dotIdx >= 0 ? refTable[..dotIdx] : string.Empty,
-                        ReferencedTable = dotIdx >= 0 ? refTable[(dotIdx + 1)..] : refTable,
+                        ReferencedSchema = refParsed.Schema,
+                        ReferencedTable = refParsed.TableName,
                         ReferencedColumn = Helpers.GetArgString(c.GeneratorArgs, "referencedColumn"),
                     };
                 }).ToList()

@@ -1,5 +1,4 @@
 using System.Text;
-using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using SyntheticDataGenerator.Models;
 
@@ -38,7 +37,8 @@ public class AppSettingsConfigTests
     {
         var config = LoadYaml(yaml);
         return new ScopeConfig(
-            tablesToInclude: ScopeConfig.ParseTablesToInclude(config.GetSection("TablesToInclude")),
+            include: ScopeConfig.ParseInclude(config.GetSection("Include")),
+            exclude: ScopeConfig.ParseExclude(config.GetSection("Exclude")),
             rowsPerTable: int.TryParse(config["RowsPerTable"], out var r) ? r : 100,
             seed: int.TryParse(config["Seed"], out var s) ? s : null,
             locale: config["Locale"] ?? "en",
@@ -46,22 +46,6 @@ public class AppSettingsConfigTests
             customDependencyBufferSize: int.TryParse(config["CustomDependencyBufferSize"], out var b) ? b : 10_000,
             customValueLists: ScopeConfig.ParseCustomValueLists(config.GetSection("CustomValueLists")),
             maxParallelTables: int.TryParse(config["MaxParallelTables"], out var p) ? p : null);
-    }
-
-    /// <summary>
-    /// Replays the <c>ConnectionString</c> resolution in <see cref="Program"/>
-    /// lines 10-17. Used by the <c>DatabaseName</c> override tests.
-    /// </summary>
-    private static string ResolveConnectionString(IConfiguration config)
-    {
-        var baseConnectionString = config["ConnectionString"]
-            ?? throw new InvalidOperationException("ConnectionString is required in appsettings.yaml");
-
-        var databaseName = config["DatabaseName"];
-        return string.IsNullOrWhiteSpace(databaseName)
-            ? baseConnectionString
-            : new SqlConnectionStringBuilder(baseConnectionString)
-                { InitialCatalog = databaseName }.ConnectionString;
     }
 
     // ──────────────────────────────────────────────
@@ -77,9 +61,9 @@ public class AppSettingsConfigTests
         // is generic ("YOUR_DB") because the test never opens the connection.
         const string yaml = """
             ConnectionString: "Server=localhost,1433;Database=YOUR_DB;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True;Encrypt=false;"
-            TablesToInclude:
-              - dbo.Users
-              - dbo.Orders
+            Include:
+              - MyDb.dbo.Users
+              - MyDb.dbo.Orders
             RowsPerTable: 100
             """;
 
@@ -90,13 +74,14 @@ public class AppSettingsConfigTests
             "Server=localhost,1433;Database=YOUR_DB;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True;Encrypt=false;",
             config["ConnectionString"]);
 
-        Assert.Equal(2, scope.TablesToInclude.Length);
-        Assert.Equal("dbo.Users", scope.TablesToInclude[0].Table);
-        Assert.Null(scope.TablesToInclude[0].Columns);
-        Assert.Equal("dbo.Orders", scope.TablesToInclude[1].Table);
-        Assert.Null(scope.TablesToInclude[1].Columns);
+        Assert.Equal(2, scope.Include.Length);
+        Assert.Equal("MyDb.dbo.Users", scope.Include[0].Table);
+        Assert.Null(scope.Include[0].Columns);
+        Assert.Equal("MyDb.dbo.Orders", scope.Include[1].Table);
+        Assert.Null(scope.Include[1].Columns);
 
         Assert.Equal(100, scope.RowsPerTable);
+        Assert.Empty(scope.Exclude);
 
         Assert.Null(scope.Seed);
         Assert.Equal("en", scope.Locale);
@@ -110,21 +95,23 @@ public class AppSettingsConfigTests
     public void MinimalConfig_MissingConnectionString_Throws()
     {
         const string yaml = """
-            TablesToInclude:
-              - dbo.Users
+            Include:
+              - MyDb.dbo.Users
             RowsPerTable: 5
             """;
 
         var config = LoadYaml(yaml);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => ResolveConnectionString(config));
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            config["ConnectionString"]
+            ?? throw new InvalidOperationException("ConnectionString is required in appsettings.yaml"));
         Assert.Equal("ConnectionString is required in appsettings.yaml", ex.Message);
     }
 
     [Fact]
     public void MinimalConfig_OnlyConnectionString_BuildsEmptyScope()
     {
-        // TablesToInclude is omitted — the parser returns an empty array and
+        // Include is omitted — the parser returns an empty array and
         // lets the validator surface a friendlier error later in the pipeline.
         const string yaml = """
             ConnectionString: "Server=.;Database=master;Trusted_Connection=True;"
@@ -132,7 +119,8 @@ public class AppSettingsConfigTests
 
         var scope = BuildScopeFromYaml(yaml);
 
-        Assert.Empty(scope.TablesToInclude);
+        Assert.Empty(scope.Include);
+        Assert.Empty(scope.Exclude);
         Assert.Equal(100, scope.RowsPerTable);
         Assert.Equal("en", scope.Locale);
     }
@@ -140,23 +128,23 @@ public class AppSettingsConfigTests
     #endregion
 
     // ──────────────────────────────────────────────
-    // 2. TablesToInclude
+    // 2. Include
     // ──────────────────────────────────────────────
 
-    #region TablesToInclude
+    #region Include
 
     [Fact]
-    public void TablesToInclude_SimpleForm_AllColumnsNull()
+    public void Include_SimpleForm_AllColumnsNull()
     {
         const string yaml = """
-            TablesToInclude:
+            Include:
               - dbo.Users
               - dbo.Orders
               - sales.Invoices
             """;
 
-        var tables = ScopeConfig.ParseTablesToInclude(
-            LoadYaml(yaml).GetSection("TablesToInclude"));
+        var tables = ScopeConfig.ParseInclude(
+            LoadYaml(yaml).GetSection("Include"));
 
         Assert.Equal(3, tables.Length);
         Assert.Equal("dbo.Users", tables[0].Table);
@@ -166,10 +154,10 @@ public class AppSettingsConfigTests
     }
 
     [Fact]
-    public void TablesToInclude_StructuredFormWithColumns_PopulatesColumnList()
+    public void Include_StructuredFormWithColumns_PopulatesColumnList()
     {
         const string yaml = """
-            TablesToInclude:
+            Include:
               - Table: dbo.Users
                 Columns:
                   - Id
@@ -177,8 +165,8 @@ public class AppSettingsConfigTests
                   - DisplayName
             """;
 
-        var tables = ScopeConfig.ParseTablesToInclude(
-            LoadYaml(yaml).GetSection("TablesToInclude"));
+        var tables = ScopeConfig.ParseInclude(
+            LoadYaml(yaml).GetSection("Include"));
 
         var entry = Assert.Single(tables);
         Assert.Equal("dbo.Users", entry.Table);
@@ -187,10 +175,10 @@ public class AppSettingsConfigTests
     }
 
     [Fact]
-    public void TablesToInclude_MixedSimpleAndStructured()
+    public void Include_MixedSimpleAndStructured()
     {
         const string yaml = """
-            TablesToInclude:
+            Include:
               - dbo.Users
               - Table: dbo.Orders
                 Columns:
@@ -199,8 +187,8 @@ public class AppSettingsConfigTests
               - dbo.Products
             """;
 
-        var tables = ScopeConfig.ParseTablesToInclude(
-            LoadYaml(yaml).GetSection("TablesToInclude"));
+        var tables = ScopeConfig.ParseInclude(
+            LoadYaml(yaml).GetSection("Include"));
 
         Assert.Equal(3, tables.Length);
 
@@ -216,29 +204,29 @@ public class AppSettingsConfigTests
     }
 
     [Fact]
-    public void TablesToInclude_EmptyList_ReturnsEmptyArray()
+    public void Include_EmptyList_ReturnsEmptyArray()
     {
         const string yaml = """
-            TablesToInclude: []
+            Include: []
             """;
 
-        var tables = ScopeConfig.ParseTablesToInclude(
-            LoadYaml(yaml).GetSection("TablesToInclude"));
+        var tables = ScopeConfig.ParseInclude(
+            LoadYaml(yaml).GetSection("Include"));
 
         Assert.Empty(tables);
     }
 
     [Fact]
-    public void TablesToInclude_StructuredEntryWithoutColumns_KeepsColumnsNull()
+    public void Include_StructuredEntryWithoutColumns_KeepsColumnsNull()
     {
         // Structured form with only a Table: key — Columns: omitted entirely.
         const string yaml = """
-            TablesToInclude:
+            Include:
               - Table: dbo.Users
             """;
 
-        var tables = ScopeConfig.ParseTablesToInclude(
-            LoadYaml(yaml).GetSection("TablesToInclude"));
+        var tables = ScopeConfig.ParseInclude(
+            LoadYaml(yaml).GetSection("Include"));
 
         var entry = Assert.Single(tables);
         Assert.Equal("dbo.Users", entry.Table);
@@ -249,7 +237,7 @@ public class AppSettingsConfigTests
     public void BuildColumnScope_AllSimpleEntries_ReturnsNull()
     {
         var scope = new ScopeConfig(
-            tablesToInclude:
+            include:
             [
                 new TableScope { Table = "dbo.Users" },
                 new TableScope { Table = "dbo.Orders" }
@@ -265,7 +253,7 @@ public class AppSettingsConfigTests
     public void BuildColumnScope_StructuredEntries_ReturnsCaseInsensitiveDict()
     {
         var scope = new ScopeConfig(
-            tablesToInclude:
+            include:
             [
                 new TableScope { Table = "dbo.Users", Columns = ["Id", "Email"] },
                 new TableScope { Table = "dbo.Orders" },
@@ -292,7 +280,7 @@ public class AppSettingsConfigTests
     public void GetIncludeTableNames_IsCaseInsensitive()
     {
         var scope = new ScopeConfig(
-            tablesToInclude:
+            include:
             [
                 new TableScope { Table = "dbo.Users" },
                 new TableScope { Table = "dbo.Orders" }
@@ -312,6 +300,74 @@ public class AppSettingsConfigTests
     #endregion
 
     // ──────────────────────────────────────────────
+    // 3. Exclude + pattern matching
+    // ──────────────────────────────────────────────
+
+    #region Exclude
+
+    [Fact]
+    public void Exclude_ParsesFlatList()
+    {
+        const string yaml = """
+            Exclude:
+              - ArchiveDb
+              - MyDb.dbo.AuditLog
+            """;
+
+        var exclude = ScopeConfig.ParseExclude(LoadYaml(yaml).GetSection("Exclude"));
+
+        Assert.Equal(["ArchiveDb", "MyDb.dbo.AuditLog"], exclude);
+    }
+
+    [Fact]
+    public void SqlTableName_MatchesPattern_DatabaseLevel()
+    {
+        Assert.True(SqlTableName.MatchesPattern("MyDb.dbo.Orders", "MyDb"));
+        Assert.False(SqlTableName.MatchesPattern("OtherDb.dbo.Orders", "MyDb"));
+    }
+
+    [Fact]
+    public void SqlTableName_MatchesPattern_SchemaLevel()
+    {
+        Assert.True(SqlTableName.MatchesPattern("MyDb.dbo.Orders", "MyDb.dbo"));
+        Assert.False(SqlTableName.MatchesPattern("MyDb.sales.Orders", "MyDb.dbo"));
+    }
+
+    [Fact]
+    public void SqlTableName_MatchesPattern_TableLevel()
+    {
+        Assert.True(SqlTableName.MatchesPattern("MyDb.dbo.Orders", "MyDb.dbo.Orders"));
+        Assert.False(SqlTableName.MatchesPattern("MyDb.dbo.Users", "MyDb.dbo.Orders"));
+    }
+
+    [Fact]
+    public void ScopeConfig_IsIncludedAndExcluded()
+    {
+        var scope = new ScopeConfig(
+            include: [new TableScope { Table = "MyDb.dbo.Orders" }],
+            rowsPerTable: 10,
+            seed: null,
+            locale: "en",
+            exclude: ["MyDb.dbo.AuditLog", "ArchiveDb"]);
+
+        Assert.True(scope.IsIncluded("MyDb.dbo.Orders"));
+        Assert.False(scope.IsIncluded("OtherDb.dbo.Orders"));
+        Assert.True(scope.IsExcluded("MyDb.dbo.AuditLog"));
+        Assert.True(scope.IsExcluded("ArchiveDb.dbo.AnyTable"));
+        Assert.False(scope.IsExcluded("MyDb.dbo.Orders"));
+    }
+
+    [Fact]
+    public void ScopeConfig_EmptyInclude_MatchesAllTables()
+    {
+        var scope = new ScopeConfig(include: [], rowsPerTable: 10, seed: null, locale: "en");
+
+        Assert.True(scope.IsIncluded("AnyDb.dbo.Table"));
+    }
+
+    #endregion
+
+    // ──────────────────────────────────────────────
     // 4. Numeric / string defaults from Program.cs
     // ──────────────────────────────────────────────
 
@@ -322,7 +378,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             """;
 
@@ -336,7 +392,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             RowsPerTable: lots
             """;
@@ -351,7 +407,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             RowsPerTable: 250
             """;
@@ -366,7 +422,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             """;
 
@@ -380,7 +436,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             Seed: 12345
             """;
@@ -395,7 +451,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             """;
 
@@ -409,7 +465,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             Locale: fr
             """;
@@ -424,7 +480,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             """;
 
@@ -441,7 +497,7 @@ public class AppSettingsConfigTests
     {
         var yaml = $"""
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             CustomDependencyBufferSize: {value}
             """;
@@ -456,7 +512,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             CustomDependencyBufferSize: 250
             """;
@@ -471,7 +527,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             """;
 
@@ -485,7 +541,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             MaxParallelTables: 4
             """;
@@ -503,7 +559,7 @@ public class AppSettingsConfigTests
     {
         var yaml = $"""
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Users
             MaxParallelTables: {value}
             """;
@@ -526,7 +582,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Orders
             CustomDependencies:
               - dbo.Lookup.Code|dbo.Orders.LookupCode
@@ -554,7 +610,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Orders
             CustomValueLists:
               - Column: dbo.Lookup.Code
@@ -574,7 +630,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Orders
             CustomValueLists:
               - Column: dbo.Lookup.Region
@@ -598,7 +654,7 @@ public class AppSettingsConfigTests
     {
         const string yaml = """
             ConnectionString: "x"
-            TablesToInclude:
+            Include:
               - dbo.Orders
             CustomValueLists:
               - Column: dbo.Lookup.Code
@@ -639,27 +695,28 @@ public class AppSettingsConfigTests
         // ScopeConfig with the documented value.
         const string yaml = """
             ConnectionString: Server=YOUR_SERVER;Trusted_Connection=True;TrustServerCertificate=True;
-            DatabaseName: YOUR_DATABASE
-            TablesToInclude:
-              - dbo.Orders
-              - dbo.Users
+            Include:
+              - MyDb.dbo.Orders
+              - MyDb.dbo.Users
+            Exclude:
+              - ArchiveDb
             RowsPerTable: 100
             Seed: 12345
             Locale: en
             CustomDependencies:
-              - dbo.Lookup.Code|dbo.Orders.LookupCode
-              - dbo.Products.CategoryId|dbo.Categories.Id|dbo.Inventory.CategoryId
+              - MyDb.dbo.Lookup.Code|MyDb.dbo.Orders.LookupCode
+              - MyDb.dbo.Products.CategoryId|MyDb.dbo.Categories.Id|MyDb.dbo.Inventory.CategoryId
             CustomDependencyBufferSize: 10000
             MaxParallelTables: 8
             CustomValueLists:
-              - Column: dbo.Lookup.Code
+              - Column: MyDb.dbo.Lookup.Code
                 File: ./values/lookup_codes.txt
-              - Column: dbo.Lookup.Region
+              - Column: MyDb.dbo.Lookup.Region
                 Values:
                   - APAC
                   - EMEA
                   - AMER
-              - Column: dbo.Orders.Status
+              - Column: MyDb.dbo.Orders.Status
                 Values:
                   - Pending
                   - Active
@@ -672,12 +729,12 @@ public class AppSettingsConfigTests
         Assert.Equal(
             "Server=YOUR_SERVER;Trusted_Connection=True;TrustServerCertificate=True;",
             config["ConnectionString"]);
-        Assert.Equal("YOUR_DATABASE", config["DatabaseName"]);
 
-        Assert.Equal(2, scope.TablesToInclude.Length);
-        Assert.Equal("dbo.Orders", scope.TablesToInclude[0].Table);
-        Assert.Equal("dbo.Users", scope.TablesToInclude[1].Table);
-        Assert.All(scope.TablesToInclude, t => Assert.Null(t.Columns));
+        Assert.Equal(2, scope.Include.Length);
+        Assert.Equal("MyDb.dbo.Orders", scope.Include[0].Table);
+        Assert.Equal("MyDb.dbo.Users", scope.Include[1].Table);
+        Assert.All(scope.Include, t => Assert.Null(t.Columns));
+        Assert.Equal(["ArchiveDb"], scope.Exclude);
 
         Assert.Equal(100, scope.RowsPerTable);
         Assert.Equal(12345, scope.Seed);
@@ -694,71 +751,17 @@ public class AppSettingsConfigTests
 
         Assert.Equal(3, scope.CustomValueLists.Length);
 
-        Assert.Equal("dbo.Lookup.Code", scope.CustomValueLists[0].Column);
+        Assert.Equal("MyDb.dbo.Lookup.Code", scope.CustomValueLists[0].Column);
         Assert.Equal("./values/lookup_codes.txt", scope.CustomValueLists[0].File);
         Assert.Null(scope.CustomValueLists[0].Values);
 
-        Assert.Equal("dbo.Lookup.Region", scope.CustomValueLists[1].Column);
+        Assert.Equal("MyDb.dbo.Lookup.Region", scope.CustomValueLists[1].Column);
         Assert.Equal(string.Empty, scope.CustomValueLists[1].File);
         Assert.Equal(["APAC", "EMEA", "AMER"], scope.CustomValueLists[1].Values);
 
-        Assert.Equal("dbo.Orders.Status", scope.CustomValueLists[2].Column);
+        Assert.Equal("MyDb.dbo.Orders.Status", scope.CustomValueLists[2].Column);
         Assert.Equal(string.Empty, scope.CustomValueLists[2].File);
         Assert.Equal(["Pending", "Active", "Closed"], scope.CustomValueLists[2].Values);
-    }
-
-    #endregion
-
-    // ──────────────────────────────────────────────
-    // 7. DatabaseName override
-    // ──────────────────────────────────────────────
-
-    #region DatabaseName override
-
-    [Fact]
-    public void DatabaseName_OverridesInitialCatalog_WhenSet()
-    {
-        const string yaml = """
-            ConnectionString: "Server=localhost,1433;Database=master;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True;Encrypt=false;"
-            DatabaseName: AnalyticsTest
-            """;
-
-        var resolved = ResolveConnectionString(LoadYaml(yaml));
-
-        var builder = new SqlConnectionStringBuilder(resolved);
-        Assert.Equal("AnalyticsTest", builder.InitialCatalog);
-        Assert.Equal("localhost,1433", builder.DataSource);
-        Assert.Equal("sa", builder.UserID);
-        Assert.True(builder.TrustServerCertificate);
-    }
-
-    [Fact]
-    public void DatabaseName_Missing_LeavesConnectionStringUntouched()
-    {
-        const string original =
-            "Server=localhost,1433;Database=master;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True;Encrypt=false;";
-        var yaml = $"""
-            ConnectionString: "{original}"
-            """;
-
-        var resolved = ResolveConnectionString(LoadYaml(yaml));
-
-        Assert.Equal(original, resolved);
-    }
-
-    [Fact]
-    public void DatabaseName_WhitespaceOnly_LeavesConnectionStringUntouched()
-    {
-        const string original =
-            "Server=localhost,1433;Database=master;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True;Encrypt=false;";
-        var yaml = $"""
-            ConnectionString: "{original}"
-            DatabaseName: "   "
-            """;
-
-        var resolved = ResolveConnectionString(LoadYaml(yaml));
-
-        Assert.Equal(original, resolved);
     }
 
     #endregion

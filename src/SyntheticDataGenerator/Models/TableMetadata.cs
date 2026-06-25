@@ -47,6 +47,7 @@ public class ForeignKeyInfo
 {
     public string FkName { get; set; } = string.Empty;
 
+    public string Database { get; set; } = string.Empty;
     public string ParentSchema { get; set; } = string.Empty;
     public string ParentTable { get; set; } = string.Empty;
     public string ParentColumn { get; set; } = string.Empty;
@@ -55,8 +56,15 @@ public class ForeignKeyInfo
     public string ReferencedTable { get; set; } = string.Empty;
     public string ReferencedColumn { get; set; } = string.Empty;
 
-    public string FullParentTableName => $"{ParentSchema}.{ParentTable}";
-    public string FullReferencedTableName => $"{ReferencedSchema}.{ReferencedTable}";
+    public string FullParentTableName =>
+        string.IsNullOrEmpty(Database)
+            ? $"{ParentSchema}.{ParentTable}"
+            : $"{Database}.{ParentSchema}.{ParentTable}";
+
+    public string FullReferencedTableName =>
+        string.IsNullOrEmpty(Database)
+            ? $"{ReferencedSchema}.{ReferencedTable}"
+            : $"{Database}.{ReferencedSchema}.{ReferencedTable}";
 
     public bool IsSelfReferencing => FullParentTableName == FullReferencedTableName;
 }
@@ -64,14 +72,23 @@ public class ForeignKeyInfo
 public class CompositeForeignKey
 {
     public string FkName { get; set; } = string.Empty;
+    public string Database { get; set; } = string.Empty;
     public string ParentSchema { get; set; } = string.Empty;
     public string ParentTable { get; set; } = string.Empty;
     public string ReferencedSchema { get; set; } = string.Empty;
     public string ReferencedTable { get; set; } = string.Empty;
     public List<(string ParentColumn, string ReferencedColumn)> ColumnPairs { get; set; } = [];
 
-    public string FullParentTableName => $"{ParentSchema}.{ParentTable}";
-    public string FullReferencedTableName => $"{ReferencedSchema}.{ReferencedTable}";
+    public string FullParentTableName =>
+        string.IsNullOrEmpty(Database)
+            ? $"{ParentSchema}.{ParentTable}"
+            : $"{Database}.{ParentSchema}.{ParentTable}";
+
+    public string FullReferencedTableName =>
+        string.IsNullOrEmpty(Database)
+            ? $"{ReferencedSchema}.{ReferencedTable}"
+            : $"{Database}.{ReferencedSchema}.{ReferencedTable}";
+
     public bool IsSelfReferencing => FullParentTableName == FullReferencedTableName;
     public bool IsComposite => ColumnPairs.Count > 1;
 }
@@ -91,6 +108,7 @@ public class UniqueConstraintInfo
 
 public class TableInfo
 {
+    public string Database { get; set; } = string.Empty;
     public string Schema { get; set; } = string.Empty;
     public string TableName { get; set; } = string.Empty;
     public List<ColumnInfo> Columns { get; set; } = [];
@@ -99,7 +117,12 @@ public class TableInfo
     public List<CheckConstraintInfo> CheckConstraints { get; set; } = [];
     public List<UniqueConstraintInfo> UniqueConstraints { get; set; } = [];
 
-    public string FullName => $"{Schema}.{TableName}";
+    public string FullName =>
+        string.IsNullOrEmpty(Database)
+            ? $"{Schema}.{TableName}"
+            : $"{Database}.{Schema}.{TableName}";
+
+    public string BracketedName => new SqlTableName(Database, Schema, TableName).Bracketed;
 
     public bool HasIdentityPk =>
         Columns.Any(c => c.IsPrimaryKey && c.IsIdentity);
@@ -113,6 +136,7 @@ public class TableInfo
             .Select(g => new CompositeForeignKey
             {
                 FkName = g.Key,
+                Database = g.First().Database,
                 ParentSchema = g.First().ParentSchema,
                 ParentTable = g.First().ParentTable,
                 ReferencedSchema = g.First().ReferencedSchema,

@@ -22,7 +22,7 @@ public class IntegrationTests
     private async Task<Dictionary<string, int>> GenerateDataAsync(params string[] tableNames)
     {
         var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
+        var allTables = await reader.ReadSchemaAsync([_fixture.DatabaseName]);
 
         var nameSet = new HashSet<string>(tableNames, StringComparer.OrdinalIgnoreCase);
         var tables = allTables
@@ -55,7 +55,11 @@ public class IntegrationTests
         var results = await GenerateDataAsync(tableNames);
         foreach (var tableName in tableNames)
         {
-            var key = tableName.Contains('.') ? tableName : $"dbo.{tableName}";
+            var key = tableName.Contains('.') && tableName.Split('.').Length >= 3
+                ? tableName
+                : tableName.Contains('.')
+                    ? $"{_fixture.DatabaseName}.{tableName}"
+                    : _fixture.Qualify(tableName);
             Assert.Equal(RowCount, results[key]);
         }
         return results;
@@ -65,7 +69,7 @@ public class IntegrationTests
         string tableName, int rowCount)
     {
         var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
+        var allTables = await reader.ReadSchemaAsync([_fixture.DatabaseName]);
         var table = allTables.First(t => t.TableName == tableName);
 
         var graph = new DependencyGraph();
@@ -92,7 +96,7 @@ public class IntegrationTests
         string tableName, int rowCount = RowCount)
     {
         var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
+        var allTables = await reader.ReadSchemaAsync([_fixture.DatabaseName]);
         var tables = allTables.Where(t => t.TableName == tableName).ToList();
 
         var graph = new DependencyGraph();
@@ -1124,7 +1128,7 @@ public class IntegrationTests
             """);
 
         var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
+        var allTables = await reader.ReadSchemaAsync([_fixture.DatabaseName]);
 
         var nameSet = new HashSet<string>(
             ["TestJuncLeft", "TestJuncRight", "TestJuncBridge"],
@@ -1850,7 +1854,7 @@ public class IntegrationTests
             """);
 
         var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
+        var allTables = await reader.ReadSchemaAsync([_fixture.DatabaseName]);
         var table = allTables.First(t => t.TableName == "TestFilteredSchemaRead");
 
         Assert.Equal(2, table.UniqueConstraints.Count);
@@ -1925,7 +1929,7 @@ public class IntegrationTests
             """);
 
         var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
+        var allTables = await reader.ReadSchemaAsync([_fixture.DatabaseName]);
         var tables = allTables.Where(t => t.TableName == "TestSeqPK").ToList();
 
         Assert.Single(tables);
@@ -1935,7 +1939,7 @@ public class IntegrationTests
         Assert.True(tables[0].HasSequencePk, "Table should have HasSequencePk = true");
 
         var results = await GenerateDataAsync("TestSeqPK");
-        Assert.Equal(RowCount, results["dbo.TestSeqPK"]);
+        Assert.Equal(RowCount, results[_fixture.Qualify("TestSeqPK")]);
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT Id, Name FROM dbo.TestSeqPK ORDER BY Id");
         Assert.Equal(RowCount, rows.Count);
@@ -1968,7 +1972,7 @@ public class IntegrationTests
             """);
 
         var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
+        var allTables = await reader.ReadSchemaAsync([_fixture.DatabaseName]);
         var tables = allTables.Where(t => t.TableName == "TestSeqNonPK").ToList();
 
         Assert.Single(tables);
@@ -1976,7 +1980,7 @@ public class IntegrationTests
         Assert.True(seqCol.IsSequenceDefault, "SeqNum should be detected as sequence default");
 
         var results = await GenerateDataAsync("TestSeqNonPK");
-        Assert.Equal(RowCount, results["dbo.TestSeqNonPK"]);
+        Assert.Equal(RowCount, results[_fixture.Qualify("TestSeqNonPK")]);
 
         var rows = await _fixture.ExecuteQueryAsync("SELECT SeqNum FROM dbo.TestSeqNonPK ORDER BY Id");
         Assert.Equal(RowCount, rows.Count);
@@ -2150,7 +2154,7 @@ public class IntegrationTests
     private async Task<List<TableInfo>> ReadAllSchemaTablesAsync()
     {
         var reader = new SchemaReader(_fixture.ConnectionString);
-        return await reader.ReadSchemaAsync();
+        return await reader.ReadSchemaAsync([_fixture.DatabaseName]);
     }
 
     private static List<TableInfo> FilterTables(List<TableInfo> allTables, params string[] tableNames)
@@ -2180,7 +2184,7 @@ public class IntegrationTests
 
         var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["dbo.TestUpdPKReject"] = new(["Id"], StringComparer.OrdinalIgnoreCase)
+            [_fixture.Qualify("TestUpdPKReject")] = new(["Id"], StringComparer.OrdinalIgnoreCase)
         };
 
         var errors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
@@ -2220,7 +2224,7 @@ public class IntegrationTests
 
         var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["dbo.TestUpdFKChild"] = new(["ParentId"], StringComparer.OrdinalIgnoreCase)
+            [_fixture.Qualify("TestUpdFKChild")] = new(["ParentId"], StringComparer.OrdinalIgnoreCase)
         };
 
         var errors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
@@ -2263,7 +2267,7 @@ public class IntegrationTests
 
         var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["dbo.TestUpdRevParent"] = new(["Code"], StringComparer.OrdinalIgnoreCase)
+            [_fixture.Qualify("TestUpdRevParent")] = new(["Code"], StringComparer.OrdinalIgnoreCase)
         };
 
         var errors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
@@ -2306,8 +2310,8 @@ public class IntegrationTests
 
         var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["dbo.TestUpdRefParent"] = new(["Code"], StringComparer.OrdinalIgnoreCase),
-            ["dbo.TestUpdRefChild"] = new(["RefCode"], StringComparer.OrdinalIgnoreCase)
+            [_fixture.Qualify("TestUpdRefParent")] = new(["Code"], StringComparer.OrdinalIgnoreCase),
+            [_fixture.Qualify("TestUpdRefChild")] = new(["RefCode"], StringComparer.OrdinalIgnoreCase)
         };
 
         var validationErrors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
@@ -2375,7 +2379,7 @@ public class IntegrationTests
 
         var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["dbo.TestUpdBasic"] = new(["Name"], StringComparer.OrdinalIgnoreCase)
+            [_fixture.Qualify("TestUpdBasic")] = new(["Name"], StringComparer.OrdinalIgnoreCase)
         };
 
         var validationErrors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
@@ -2438,7 +2442,7 @@ public class IntegrationTests
 
         var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["dbo.TestUpdPlan"] = new(["Label"], StringComparer.OrdinalIgnoreCase)
+            [_fixture.Qualify("TestUpdPlan")] = new(["Label"], StringComparer.OrdinalIgnoreCase)
         };
 
         var validationErrors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
@@ -2511,7 +2515,7 @@ public class IntegrationTests
 
         var columnScope = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["dbo.TestUpdUnique"] = new(["Email"], StringComparer.OrdinalIgnoreCase)
+            [_fixture.Qualify("TestUpdUnique")] = new(["Email"], StringComparer.OrdinalIgnoreCase)
         };
 
         var validationErrors = DataGenerationPlanner.CollectUpdateScopeErrors(columnScope, specTables, allTables);
@@ -2551,13 +2555,13 @@ public class IntegrationTests
 
         var scope = new[]
         {
-            new TableScope { Table = "dbo.CompletelyFakeTable" }
+            new TableScope { Table = _fixture.Qualify("CompletelyFakeTable") }
         };
 
-        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope);
+        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope, [_fixture.DatabaseName]);
         Assert.NotEmpty(errors);
         Assert.Contains(errors, e => e.Contains("CompletelyFakeTable"));
-        Assert.Contains(errors, e => e.Contains("does not exist"));
+        Assert.Contains(errors, e => e.Contains("does not match"));
     }
 
     // ══════════════════════════════════════════════
@@ -2580,12 +2584,12 @@ public class IntegrationTests
         {
             new TableScope
             {
-                Table = "dbo.TestScopeCol",
+                Table = _fixture.Qualify("TestScopeCol"),
                 Columns = ["Name", "NonExistentColumn"]
             }
         };
 
-        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope);
+        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope, [_fixture.DatabaseName]);
         Assert.NotEmpty(errors);
         Assert.Contains(errors, e => e.Contains("NonExistentColumn"));
         Assert.Contains(errors, e => e.Contains("TestScopeCol"));
@@ -2609,11 +2613,11 @@ public class IntegrationTests
 
         var scope = new[]
         {
-            new TableScope { Table = "dbo.TestScopeMixTbl" },
-            new TableScope { Table = "dbo.TotallyBogusTable" }
+            new TableScope { Table = _fixture.Qualify("TestScopeMixTbl") },
+            new TableScope { Table = _fixture.Qualify("TotallyBogusTable") }
         };
 
-        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope);
+        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope, [_fixture.DatabaseName]);
         Assert.NotEmpty(errors);
         Assert.Contains(errors, e => e.Contains("TotallyBogusTable"));
     }
@@ -2639,12 +2643,12 @@ public class IntegrationTests
         {
             new TableScope
             {
-                Table = "dbo.TestScopeMixCol",
+                Table = _fixture.Qualify("TestScopeMixCol"),
                 Columns = ["Name", "FakeColumn"]
             }
         };
 
-        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope);
+        var errors = DataGenerationPlanner.CollectScopeErrors(allTables, scope, [_fixture.DatabaseName]);
         Assert.NotEmpty(errors);
         Assert.Contains(errors, e => e.Contains("FakeColumn"));
         Assert.Contains(errors, e => e.Contains("TestScopeMixCol"));
@@ -2669,25 +2673,26 @@ public class IntegrationTests
 
         var scopeTableOnly = new[]
         {
-            new TableScope { Table = "dbo.TestScopeValid" }
+            new TableScope { Table = _fixture.Qualify("TestScopeValid") }
         };
-        Assert.Empty(DataGenerationPlanner.CollectScopeErrors(allTables, scopeTableOnly));
+        Assert.Empty(DataGenerationPlanner.CollectScopeErrors(allTables, scopeTableOnly, [_fixture.DatabaseName]));
 
         var scopeWithColumns = new[]
         {
             new TableScope
             {
-                Table = "dbo.TestScopeValid",
+                Table = _fixture.Qualify("TestScopeValid"),
                 Columns = ["Name", "Email"]
             }
         };
-        Assert.Empty(DataGenerationPlanner.CollectScopeErrors(allTables, scopeWithColumns));
+        Assert.Empty(DataGenerationPlanner.CollectScopeErrors(allTables, scopeWithColumns, [_fixture.DatabaseName]));
 
         var scopeShortName = new[]
         {
             new TableScope { Table = "TestScopeValid" }
         };
-        Assert.Empty(DataGenerationPlanner.CollectScopeErrors(allTables, scopeShortName));
+        var shortNameErrors = DataGenerationPlanner.CollectScopeErrors(allTables, scopeShortName, [_fixture.DatabaseName]);
+        Assert.NotEmpty(shortNameErrors);
     }
 
     // ══════════════════════════════════════════════
@@ -2710,13 +2715,13 @@ public class IntegrationTests
             """);
 
         var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
+        var allTables = await reader.ReadSchemaAsync([_fixture.DatabaseName]);
         var tables = allTables
             .Where(t => t.TableName is "TestCDSource" or "TestCDDependent")
             .ToList();
 
         var customDepGroups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.TestCDSource.Code|dbo.TestCDDependent.CodeRef"]);
+            [$"{_fixture.Qualify("TestCDSource")}.Code|{_fixture.Qualify("TestCDDependent")}.CodeRef"]);
 
         var graph = new DependencyGraph();
         graph.Build(tables);
@@ -2779,13 +2784,13 @@ public class IntegrationTests
             """);
 
         var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
+        var allTables = await reader.ReadSchemaAsync([_fixture.DatabaseName]);
         var tables = allTables
             .Where(t => t.TableName is "TestCDSource2" or "TestCDDependent2")
             .ToList();
 
         var customDepGroups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.TestCDSource2.Code|dbo.TestCDDependent2.CodeRef"]);
+            [$"{_fixture.Qualify("TestCDSource2")}.Code|{_fixture.Qualify("TestCDDependent2")}.CodeRef"]);
 
         var graph = new DependencyGraph();
         graph.Build(tables);
@@ -2842,7 +2847,7 @@ public class IntegrationTests
             """);
 
         var reader = new SchemaReader(_fixture.ConnectionString);
-        var allTables = await reader.ReadSchemaAsync();
+        var allTables = await reader.ReadSchemaAsync([_fixture.DatabaseName]);
         var tables = allTables
             .Where(t => t.TableName is "TestCDAutoSrc" or "TestCDAutoDep")
             .ToList();
@@ -2851,7 +2856,7 @@ public class IntegrationTests
         // The validator's source-resolution cascade should pick TestCDAutoSrc.SrcId
         // (PK + identity) as the source despite its position in the YAML.
         var customDepGroups = ScopeConfig.ParseCustomDependencies(
-            ["dbo.TestCDAutoDep.SrcRef|dbo.TestCDAutoSrc.SrcId"]);
+            [$"{_fixture.Qualify("TestCDAutoDep")}.SrcRef|{_fixture.Qualify("TestCDAutoSrc")}.SrcId"]);
         var validationErrors = DataGenerationPlanner.CollectCustomDependencyErrors(
             customDepGroups, tables, allTables, columnScope: null);
         Assert.Empty(validationErrors);
@@ -2874,7 +2879,7 @@ public class IntegrationTests
         var depPlan = plan.Tables.First(t => t.TableName == "TestCDAutoDep");
         var srcRefCol = depPlan.Columns.First(c => c.Name == "SrcRef");
         Assert.Equal("customDependency", srcRefCol.Generator);
-        Assert.Equal("dbo.TestCDAutoSrc", Helpers.GetArgString(srcRefCol.GeneratorArgs, "sourceTable"));
+        Assert.Equal(_fixture.Qualify("TestCDAutoSrc"), Helpers.GetArgString(srcRefCol.GeneratorArgs, "sourceTable"));
         Assert.Equal("SrcId", Helpers.GetArgString(srcRefCol.GeneratorArgs, "sourceColumn"));
 
         var srcPlan = plan.Tables.First(t => t.TableName == "TestCDAutoSrc");
@@ -3258,5 +3263,68 @@ public class IntegrationTests
             WHERE m1.RootId <> l.RootId
             """))!;
         Assert.Equal(0, mismatch);
+    }
+
+    // ══════════════════════════════════════════════
+    // Multi-database support
+    // ══════════════════════════════════════════════
+
+    [Fact]
+    public async Task MultiDatabase_ReadsAndInsertsAcrossTwoDatabases()
+    {
+        var db2 = await _fixture.CreateSecondaryDatabaseAsync();
+        try
+        {
+            await _fixture.ExecuteSqlAsync("""
+                CREATE TABLE dbo.MultiDbT1 (
+                    Id   INT IDENTITY(1,1) PRIMARY KEY,
+                    Name NVARCHAR(50) NOT NULL
+                )
+                """);
+
+            await _fixture.ExecuteSqlAsync("""
+                CREATE TABLE dbo.MultiDbT2 (
+                    Id   INT IDENTITY(1,1) PRIMARY KEY,
+                    Name NVARCHAR(50) NOT NULL
+                )
+                """, db2);
+
+            var scope = new ScopeConfig(
+                include:
+                [
+                    new TableScope { Table = _fixture.Qualify("MultiDbT1") },
+                    new TableScope { Table = $"{db2}.dbo.MultiDbT2" }
+                ],
+                rowsPerTable: 5,
+                seed: Seed,
+                locale: "en");
+
+            var planner = new DataGenerationPlanner();
+            var validateResult = await planner.ValidateScopeAsync(
+                new ValidateScopeCommand(_fixture.ConnectionString, scope, "insert"),
+                CancellationToken.None);
+
+            Assert.True(validateResult.IsValid);
+            Assert.Equal(2, validateResult.ScopedTables.Count);
+            Assert.Contains(validateResult.ScopedTables, t => t.FullName == _fixture.Qualify("MultiDbT1"));
+            Assert.Contains(validateResult.ScopedTables, t => t.FullName == $"{db2}.dbo.MultiDbT2");
+
+            var planResult = await planner.GeneratePlanAsync(
+                new GeneratePlanCommand(validateResult, scope, null, "insert"),
+                CancellationToken.None);
+
+            var executor = new DataGenerationExecutor();
+            var execResult = await executor.ExecutePlanAsync(
+                new ExecutePlanCommand(planResult.Plan, _fixture.ConnectionString, null),
+                CancellationToken.None);
+
+            Assert.Equal(10, execResult.TotalRowsAffected);
+            Assert.Equal(5, (int)(await _fixture.ExecuteScalarAsync("SELECT COUNT(*) FROM dbo.MultiDbT1"))!);
+            Assert.Equal(5, (int)(await _fixture.ExecuteScalarAsync("SELECT COUNT(*) FROM dbo.MultiDbT2", db2))!);
+        }
+        finally
+        {
+            await _fixture.DropDatabaseAsync(db2);
+        }
     }
 }

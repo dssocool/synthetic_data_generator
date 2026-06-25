@@ -70,26 +70,73 @@ public class DatabaseFixture : IAsyncLifetime
         }
     }
 
-    public async Task ExecuteSqlAsync(string sql)
+    /// <summary>
+    /// Returns a 3-part table name: database.schema.table
+    /// </summary>
+    public string Qualify(string tableName, string schema = "dbo") =>
+        $"{DatabaseName}.{schema}.{tableName}";
+
+    public async Task<string> CreateSecondaryDatabaseAsync()
     {
-        await using var connection = new SqlConnection(ConnectionString);
+        var name = $"SyntheticDataGenTest2_{Guid.NewGuid():N}";
+        await using var connection = new SqlConnection(_masterConnectionString);
+        await connection.OpenAsync();
+        await using var createCmd = new SqlCommand($"CREATE DATABASE [{name}]", connection);
+        await createCmd.ExecuteNonQueryAsync();
+        return name;
+    }
+
+    public async Task DropDatabaseAsync(string databaseName)
+    {
+        try
+        {
+            await using var connection = new SqlConnection(_masterConnectionString);
+            await connection.OpenAsync();
+            await using var cmd = new SqlCommand($"""
+                IF DB_ID('{databaseName}') IS NOT NULL
+                BEGIN
+                    ALTER DATABASE [{databaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+                    DROP DATABASE [{databaseName}];
+                END
+                """, connection);
+            await cmd.ExecuteNonQueryAsync();
+        }
+        catch { /* best-effort */ }
+    }
+
+    public string ConnectionStringFor(string databaseName)
+    {
+        var builder = new SqlConnectionStringBuilder(
+            new SqlConnectionStringBuilder(_masterConnectionString).ConnectionString)
+        {
+            InitialCatalog = databaseName
+        };
+        return builder.ConnectionString;
+    }
+
+    public async Task ExecuteSqlAsync(string sql, string? databaseName = null)
+    {
+        await using var connection = new SqlConnection(
+            databaseName is null ? ConnectionString : ConnectionStringFor(databaseName));
         await connection.OpenAsync();
         await using var cmd = new SqlCommand(sql, connection);
         await cmd.ExecuteNonQueryAsync();
     }
 
-    public async Task<object?> ExecuteScalarAsync(string sql)
+    public async Task<object?> ExecuteScalarAsync(string sql, string? databaseName = null)
     {
-        await using var connection = new SqlConnection(ConnectionString);
+        await using var connection = new SqlConnection(
+            databaseName is null ? ConnectionString : ConnectionStringFor(databaseName));
         await connection.OpenAsync();
         await using var cmd = new SqlCommand(sql, connection);
         return await cmd.ExecuteScalarAsync();
     }
 
-    public async Task<List<Dictionary<string, object?>>> ExecuteQueryAsync(string sql)
+    public async Task<List<Dictionary<string, object?>>> ExecuteQueryAsync(string sql, string? databaseName = null)
     {
         var results = new List<Dictionary<string, object?>>();
-        await using var connection = new SqlConnection(ConnectionString);
+        await using var connection = new SqlConnection(
+            databaseName is null ? ConnectionString : ConnectionStringFor(databaseName));
         await connection.OpenAsync();
         await using var cmd = new SqlCommand(sql, connection);
         await using var reader = await cmd.ExecuteReaderAsync();
