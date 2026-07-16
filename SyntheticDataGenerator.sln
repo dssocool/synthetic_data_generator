@@ -3,6 +3,8 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SyntheticDataGenerator", "SyntheticDataGenerator.csproj", "{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}"
+EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "executor", "executor", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlServer", "executor\SqlServer\SqlServer.csproj", "{0736DEA5-319D-43F1-9E97-F68CA14541EE}"
@@ -23,6 +25,18 @@ Global
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}.Debug|x64.Build.0 = Debug|Any CPU
+		{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}.Debug|x86.Build.0 = Debug|Any CPU
+		{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}.Release|x64.ActiveCfg = Release|Any CPU
+		{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}.Release|x64.Build.0 = Release|Any CPU
+		{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}.Release|x86.ActiveCfg = Release|Any CPU
+		{B8F4E2A1-3C5D-4E7F-9A1B-2D3C4E5F6789}.Release|x86.Build.0 = Release|Any CPU
 		{0736DEA5-319D-43F1-9E97-F68CA14541EE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{0736DEA5-319D-43F1-9E97-F68CA14541EE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0736DEA5-319D-43F1-9E97-F68CA14541EE}.Debug|x64.ActiveCfg = Debug|Any CPU
