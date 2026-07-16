@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlServer.Tests", "executor
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "UI", "UI", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SyntheticDataGenerator.UI", "UI\SyntheticDataGenerator.UI\SyntheticDataGenerator.UI.csproj", "{379240D1-C205-487A-B1B5-31582E00D947}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -45,6 +47,18 @@ Global
 		{1262F743-7BAE-4EE5-BD63-884650A097D7}.Release|x64.Build.0 = Release|Any CPU
 		{1262F743-7BAE-4EE5-BD63-884650A097D7}.Release|x86.ActiveCfg = Release|Any CPU
 		{1262F743-7BAE-4EE5-BD63-884650A097D7}.Release|x86.Build.0 = Release|Any CPU
+		{379240D1-C205-487A-B1B5-31582E00D947}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{379240D1-C205-487A-B1B5-31582E00D947}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{379240D1-C205-487A-B1B5-31582E00D947}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{379240D1-C205-487A-B1B5-31582E00D947}.Debug|x64.Build.0 = Debug|Any CPU
+		{379240D1-C205-487A-B1B5-31582E00D947}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{379240D1-C205-487A-B1B5-31582E00D947}.Debug|x86.Build.0 = Debug|Any CPU
+		{379240D1-C205-487A-B1B5-31582E00D947}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{379240D1-C205-487A-B1B5-31582E00D947}.Release|Any CPU.Build.0 = Release|Any CPU
+		{379240D1-C205-487A-B1B5-31582E00D947}.Release|x64.ActiveCfg = Release|Any CPU
+		{379240D1-C205-487A-B1B5-31582E00D947}.Release|x64.Build.0 = Release|Any CPU
+		{379240D1-C205-487A-B1B5-31582E00D947}.Release|x86.ActiveCfg = Release|Any CPU
+		{379240D1-C205-487A-B1B5-31582E00D947}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -52,5 +66,6 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{0736DEA5-319D-43F1-9E97-F68CA14541EE} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{1262F743-7BAE-4EE5-BD63-884650A097D7} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{379240D1-C205-487A-B1B5-31582E00D947} = {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 	EndGlobalSection
 EndGlobal
