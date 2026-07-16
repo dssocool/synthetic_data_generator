@@ -1508,7 +1508,16 @@ public class DataInserter : IAsyncDisposable
         var parsed = SqlTableName.Parse(group.RefFullName);
 
         var colList = string.Join(", ", refColumns.Select(c => $"[{c}]"));
-        var sql = $"SELECT DISTINCT TOP(@SampleSize) {colList} FROM {parsed.Bracketed} ORDER BY NEWID()";
+        // DISTINCT and ORDER BY NEWID() cannot coexist in one SELECT in SQL Server
+        // (ORDER BY expressions must appear in the select list when DISTINCT is used).
+        var sql = $"""
+            SELECT TOP(@SampleSize) {colList}
+            FROM (
+                SELECT DISTINCT {colList}
+                FROM {parsed.Bracketed}
+            ) AS sampled
+            ORDER BY NEWID()
+            """;
 
         var rows = new List<Dictionary<string, object>>();
 
