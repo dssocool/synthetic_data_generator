@@ -9,7 +9,7 @@ A .NET console application that connects to a Microsoft SQL Server database, rea
 > user or the DBA has scrubbed all sensitive / production data from the
 > target tables. Run it against a fresh, empty, or sanitized database only.
 
-1. Drop a minimal `appsettings.yaml` into `src/SyntheticDataGenerator/`:
+1. Drop a minimal `appsettings.yaml` into `executor/SqlServer/`:
 
    ```yaml
    ConnectionString: "Server=localhost,1433;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True;Encrypt=false;"
@@ -23,7 +23,7 @@ A .NET console application that connects to a Microsoft SQL Server database, rea
 
    ```bash
    dotnet build
-   dotnet run --project src/SyntheticDataGenerator
+   dotnet run --project executor/SqlServer
    ```
 
 That's it — when `Include` is empty the tool targets every online user database
@@ -56,31 +56,33 @@ See [Configuration](#configuration) for every supported setting.
 ## Project layout
 
 ```
-src/SyntheticDataGenerator/
-  Program.cs                  # Entry point: loads config, builds scope, runs orchestrator
-  appsettings.yaml            # Per-run configuration (gitignored)
-  Models/                     # Plan / scope / command POCOs (YamlDotNet-serialized)
-  Services/
-    SchemaReader.cs           # Reads tables, columns, PKs, FKs, defaults, unique indexes
-    DependencyGraph.cs        # FK + custom-dependency topological sort (Kahn's)
-    DataGenerationPlanner.cs  # Validates scope, classifies dependencies, emits plan
-    PlanGenerator.cs          # Maps SQL types -> Bogus generators, builds plan.yaml
-    NameHeuristics.cs         # Column-name -> generator rules (email, first_name, ...)
-    ColumnValueGenerator.cs   # Bogus-backed value generation (per table, seeded)
-    ExternalSourceStreamer.cs # Bounded-memory cursor for external-root columns
-    ValueListSource.cs        # Loads file/inline value lists, picks at random
-    DataInserter.cs           # Generates rows in memory and bulk-inserts via SqlClient
-    DataGenerationExecutor.cs # Sequential or parallel table dispatch with FK-aware DAG
-    GeneratorOrchestrator.cs  # Console UX: warnings, progress, plan output
-tests/SyntheticDataGenerator.Tests/
-  *Tests.cs                   # xUnit suites covering integration, custom deps, value
-                              # lists, parallel execution, narrow-column cardinality
-  DatabaseFixture.cs          # Per-test SQL Server database (created + dropped)
+executor/
+  SqlServer/
+    Program.cs                  # Entry point: loads config, builds scope, runs orchestrator
+    appsettings.yaml            # Per-run configuration (gitignored)
+    Models/                     # Plan / scope / command POCOs (YamlDotNet-serialized)
+    Services/
+      SchemaReader.cs           # Reads tables, columns, PKs, FKs, defaults, unique indexes
+      DependencyGraph.cs        # FK + custom-dependency topological sort (Kahn's)
+      DataGenerationPlanner.cs  # Validates scope, classifies dependencies, emits plan
+      PlanGenerator.cs          # Maps SQL types -> Bogus generators, builds plan.yaml
+      NameHeuristics.cs         # Column-name -> generator rules (email, first_name, ...)
+      ColumnValueGenerator.cs   # Bogus-backed value generation (per table, seeded)
+      ExternalSourceStreamer.cs # Bounded-memory cursor for external-root columns
+      ValueListSource.cs        # Loads file/inline value lists, picks at random
+      DataInserter.cs           # Generates rows in memory and bulk-inserts via SqlClient
+      DataGenerationExecutor.cs # Sequential or parallel table dispatch with FK-aware DAG
+      GeneratorOrchestrator.cs  # Console UX: warnings, progress, plan output
+  SqlServer.Tests/
+    *Tests.cs                   # xUnit suites covering integration, custom deps, value
+                                # lists, parallel execution, narrow-column cardinality
+    DatabaseFixture.cs          # Per-test SQL Server database (created + dropped)
+UI/                             # Reserved for future UI work
 ```
 
 ## Configuration
 
-Create an `appsettings.yaml` file in `src/SyntheticDataGenerator/` (this file is gitignored). The example below shows every supported setting; comments mark which ones are optional and what they default to.
+Create an `appsettings.yaml` file in `executor/SqlServer/` (this file is gitignored). The example below shows every supported setting; comments mark which ones are optional and what they default to.
 
 ```yaml
 # Required: SQL Server connection string.
@@ -339,7 +341,7 @@ dotnet build
 Then run the tool:
 
 ```bash
-dotnet run --project src/SyntheticDataGenerator
+dotnet run --project executor/SqlServer
 ```
 
 The tool reads database schemas and inserts synthetic rows into every table
@@ -371,7 +373,7 @@ While running, the tool prints (in this order):
 ## Running Tests
 
 The test suite uses xUnit and connects to whatever SQL Server is configured
-in `src/SyntheticDataGenerator/appsettings.yaml` (the same `ConnectionString`
+in `executor/SqlServer/appsettings.yaml` (the same `ConnectionString`
 used by the app — the file is linked into the test project at build time).
 Any SQL Server instance you can reach works (LocalDB, Express, Developer, a
 containerized instance, etc.); the connecting account just needs permission

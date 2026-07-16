@@ -3,13 +3,13 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "executor", "executor", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SyntheticDataGenerator", "src\SyntheticDataGenerator\SyntheticDataGenerator.csproj", "{0736DEA5-319D-43F1-9E97-F68CA14541EE}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlServer", "executor\SqlServer\SqlServer.csproj", "{0736DEA5-319D-43F1-9E97-F68CA14541EE}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05-4346-4AA6-1389-037BE0695223}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SqlServer.Tests", "executor\SqlServer.Tests\SqlServer.Tests.csproj", "{1262F743-7BAE-4EE5-BD63-884650A097D7}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SyntheticDataGenerator.Tests", "tests\SyntheticDataGenerator.Tests\SyntheticDataGenerator.Tests.csproj", "{1262F743-7BAE-4EE5-BD63-884650A097D7}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "UI", "UI", "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -51,6 +51,6 @@ Global
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{0736DEA5-319D-43F1-9E97-F68CA14541EE} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
-		{1262F743-7BAE-4EE5-BD63-884650A097D7} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{1262F743-7BAE-4EE5-BD63-884650A097D7} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

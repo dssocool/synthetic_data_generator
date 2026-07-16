@@ -6,6 +6,8 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <VSTestLogger>console%3Bverbosity=detailed</VSTestLogger>
+    <RootNamespace>SyntheticDataGenerator.Tests</RootNamespace>
+    <AssemblyName>SqlServer.Tests</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,7 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\SyntheticDataGenerator\SyntheticDataGenerator.csproj" />
+    <ProjectReference Include="..\SqlServer\SqlServer.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -31,7 +33,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="..\..\src\SyntheticDataGenerator\appsettings.yaml" Link="appsettings.yaml">
+    <Content Include="..\SqlServer\appsettings.yaml" Link="appsettings.yaml">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
