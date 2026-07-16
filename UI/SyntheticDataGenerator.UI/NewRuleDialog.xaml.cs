@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using SyntheticDataGenerator.UI.Services;
 
 namespace SyntheticDataGenerator.UI;
 
@@ -10,6 +12,7 @@ public partial class NewRuleDialog : Window
     private const int PreviewStepIndex = 2;
 
     private int _currentStep = SelectTargetStepIndex;
+    private readonly SyntheticDataPreviewService _previewService = new();
 
     public NewRuleWizardState WizardState { get; } = new();
 
@@ -36,7 +39,7 @@ public partial class NewRuleDialog : Window
         UpdateStep();
     }
 
-    private void OnNextClick(object sender, RoutedEventArgs e)
+    private async void OnNextClick(object sender, RoutedEventArgs e)
     {
         if (!TryValidateCurrentStep())
             return;
@@ -49,7 +52,15 @@ public partial class NewRuleDialog : Window
         }
 
         if (_currentStep == OptionsStepIndex)
+        {
             CaptureOptions();
+
+            if (WizardState.RuleType == RuleType.GenerateSyntheticData)
+            {
+                if (!await TryGenerateSyntheticDataPreviewAsync())
+                    return;
+            }
+        }
 
         _currentStep++;
         UpdateStep();
@@ -59,6 +70,55 @@ public partial class NewRuleDialog : Window
     {
         DialogResult = false;
         Close();
+    }
+
+    private async Task<bool> TryGenerateSyntheticDataPreviewAsync()
+    {
+        SetWizardBusy(true, "Generating preview rows...");
+
+        try
+        {
+            var result = await _previewService.GeneratePreviewAsync(WizardState);
+            if (!result.Success)
+            {
+                MessageBox.Show(this, result.ErrorMessage, "Create New Rule",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return false;
+            }
+
+            WizardState.AppsettingsPath = result.AppsettingsPath;
+            WizardState.PreviewTables = result.Tables;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Create New Rule",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+        finally
+        {
+            SetWizardBusy(false);
+        }
+    }
+
+    private void SetWizardBusy(bool isBusy, string? message = null)
+    {
+        BackButton.IsEnabled = !isBusy;
+        CancelButton.IsEnabled = !isBusy;
+        NextButton.IsEnabled = !isBusy;
+
+        if (isBusy)
+        {
+            BusyText.Text = message ?? string.Empty;
+            BusyText.Visibility = Visibility.Visible;
+            Mouse.OverrideCursor = Cursors.Wait;
+        }
+        else
+        {
+            BusyText.Visibility = Visibility.Collapsed;
+            Mouse.OverrideCursor = null;
+        }
     }
 
     private bool TryValidateCurrentStep()
@@ -91,6 +151,22 @@ public partial class NewRuleDialog : Window
                         MessageBox.Show(this, "Enter a positive number for rows per table.", "Create New Rule",
                             MessageBoxButton.OK, MessageBoxImage.Information);
                         RowsPerTableInput.Focus();
+                        return false;
+                    }
+
+                    if (!int.TryParse(SeedInput.Text, out _))
+                    {
+                        MessageBox.Show(this, "Enter a numeric seed to continue.", "Create New Rule",
+                            MessageBoxButton.OK, MessageBoxImage.Information);
+                        SeedInput.Focus();
+                        return false;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(IncludeTablesInput.Text))
+                    {
+                        MessageBox.Show(this, "Add at least one table to Include to continue.", "Create New Rule",
+                            MessageBoxButton.OK, MessageBoxImage.Information);
+                        IncludeTablesInput.Focus();
                         return false;
                     }
                 }
@@ -126,7 +202,10 @@ public partial class NewRuleDialog : Window
         {
             WizardState.ConnectionString = ConnectionStringInput.Text.Trim();
             WizardState.RowsPerTable = int.Parse(RowsPerTableInput.Text.Trim());
+            WizardState.Seed = int.Parse(SeedInput.Text.Trim());
             WizardState.IncludeTables = IncludeTablesInput.Text.Trim();
+            WizardState.PreviewTables = null;
+            WizardState.AppsettingsPath = null;
         }
         else if (WizardState.RuleType == RuleType.SimulatedSqlQuery)
         {
@@ -155,7 +234,7 @@ public partial class NewRuleDialog : Window
             UpdateOptionsPanel();
 
         if (_currentStep == PreviewStepIndex)
-            PreviewText.Text = BuildPreviewText();
+            UpdatePreviewPanel();
     }
 
     private void UpdateOptionsPanel()
@@ -169,6 +248,7 @@ public partial class NewRuleDialog : Window
         {
             ConnectionStringInput.Text = WizardState.ConnectionString;
             RowsPerTableInput.Text = WizardState.RowsPerTable.ToString();
+            SeedInput.Text = WizardState.Seed.ToString();
             IncludeTablesInput.Text = WizardState.IncludeTables;
         }
         else
@@ -178,27 +258,48 @@ public partial class NewRuleDialog : Window
         }
     }
 
-    private string BuildPreviewText()
+    private void UpdatePreviewPanel()
     {
         if (WizardState.RuleType == RuleType.GenerateSyntheticData)
         {
-            var includeTables = string.IsNullOrWhiteSpace(WizardState.IncludeTables)
-                ? "(all tables)"
-                : WizardState.IncludeTables;
+            PreviewText.Visibility = Visibility.Collapsed;
+            PreviewTabs.Visibility = Visibility.Visible;
 
-            return $"""
-                    Target: Generate synthetic data into SQL Server
+            PreviewSummaryText.Text =
+                $"appsettings.yaml created at:{Environment.NewLine}{WizardState.AppsettingsPath}{Environment.NewLine}{Environment.NewLine}" +
+                $"Preview shows {SyntheticDataPreviewService.PreviewRowCount} generated rows per included table.";
 
-                    Connection string:
-                    {WizardState.ConnectionString}
+            PreviewTabs.Items.Clear();
+            foreach (var table in WizardState.PreviewTables ?? [])
+            {
+                var dataGrid = new DataGrid
+                {
+                    AutoGenerateColumns = true,
+                    IsReadOnly = true,
+                    CanUserAddRows = false,
+                    CanUserDeleteRows = false,
+                    ItemsSource = table.DataTable.DefaultView,
+                    Margin = new Thickness(4)
+                };
 
-                    Rows per table: {WizardState.RowsPerTable}
+                PreviewTabs.Items.Add(new TabItem
+                {
+                    Header = table.TableName,
+                    Content = dataGrid
+                });
+            }
 
-                    Include tables:
-                    {includeTables}
-                    """;
+            return;
         }
 
+        PreviewTabs.Visibility = Visibility.Collapsed;
+        PreviewText.Visibility = Visibility.Visible;
+        PreviewSummaryText.Text = "Review your rule before finishing:";
+        PreviewText.Text = BuildSimulatedSqlPreviewText();
+    }
+
+    private string BuildSimulatedSqlPreviewText()
+    {
         return $"""
                 Target: Make a query running on simulated SQL Server
 

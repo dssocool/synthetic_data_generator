@@ -13,8 +13,13 @@ public sealed class NewRuleWizardState
 
     public string ConnectionString { get; set; } = string.Empty;
     public int RowsPerTable { get; set; } = 100;
+    public int Seed { get; set; } = 12345;
+    public string Locale { get; set; } = "en";
     public string IncludeTables { get; set; } = string.Empty;
 
     public string SimulatedServerName { get; set; } = string.Empty;
     public string SqlQuery { get; set; } = string.Empty;
+
+    public string? AppsettingsPath { get; set; }
+    public IReadOnlyList<Models.TablePreviewResult>? PreviewTables { get; set; }
 }

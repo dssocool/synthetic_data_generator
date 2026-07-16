@@ -2,8 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Create New Rule"
-        Height="420"
-        Width="520"
+        Height="520"
+        Width="720"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         ShowInTaskbar="False">
@@ -35,49 +35,60 @@
                              Checked="OnRuleTypeChanged" />
             </StackPanel>
 
-            <StackPanel x:Name="OptionsStep" Visibility="Collapsed">
-                <StackPanel x:Name="GenerateSyntheticDataOptions" Visibility="Collapsed">
-                    <TextBlock Text="Connection string"
-                               Margin="0,0,0,4" />
-                    <TextBox x:Name="ConnectionStringInput"
-                             Margin="0,0,0,12"
-                             Padding="4" />
-                    <TextBlock Text="Rows per table"
-                               Margin="0,0,0,4" />
-                    <TextBox x:Name="RowsPerTableInput"
-                             Margin="0,0,0,12"
-                             Padding="4" />
-                    <TextBlock Text="Include tables (optional, one per line)"
-                               Margin="0,0,0,4" />
-                    <TextBox x:Name="IncludeTablesInput"
-                             AcceptsReturn="True"
-                             Height="80"
-                             TextWrapping="Wrap"
-                             VerticalScrollBarVisibility="Auto"
-                             Padding="4" />
-                </StackPanel>
+            <ScrollViewer x:Name="OptionsStep"
+                          Visibility="Collapsed"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <StackPanel x:Name="GenerateSyntheticDataOptions" Visibility="Collapsed">
+                        <TextBlock Text="Connection string"
+                                   Margin="0,0,0,4" />
+                        <TextBox x:Name="ConnectionStringInput"
+                                 Margin="0,0,0,12"
+                                 Padding="4" />
+                        <TextBlock Text="Rows per table"
+                                   Margin="0,0,0,4" />
+                        <TextBox x:Name="RowsPerTableInput"
+                                 Margin="0,0,0,12"
+                                 Padding="4" />
+                        <TextBlock Text="Seed"
+                                   Margin="0,0,0,4" />
+                        <TextBox x:Name="SeedInput"
+                                 Margin="0,0,0,12"
+                                 Padding="4" />
+                        <TextBlock Text="Include tables (one per line)"
+                                   Margin="0,0,0,4" />
+                        <TextBox x:Name="IncludeTablesInput"
+                                 AcceptsReturn="True"
+                                 Height="100"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 Padding="4" />
+                    </StackPanel>
 
-                <StackPanel x:Name="SimulatedSqlQueryOptions" Visibility="Collapsed">
-                    <TextBlock Text="Simulated server name"
-                               Margin="0,0,0,4" />
-                    <TextBox x:Name="SimulatedServerNameInput"
-                             Margin="0,0,0,12"
-                             Padding="4" />
-                    <TextBlock Text="SQL query"
-                               Margin="0,0,0,4" />
-                    <TextBox x:Name="SqlQueryInput"
-                             AcceptsReturn="True"
-                             Height="120"
-                             TextWrapping="Wrap"
-                             VerticalScrollBarVisibility="Auto"
-                             Padding="4" />
+                    <StackPanel x:Name="SimulatedSqlQueryOptions" Visibility="Collapsed">
+                        <TextBlock Text="Simulated server name"
+                                   Margin="0,0,0,4" />
+                        <TextBox x:Name="SimulatedServerNameInput"
+                                 Margin="0,0,0,12"
+                                 Padding="4" />
+                        <TextBlock Text="SQL query"
+                                   Margin="0,0,0,4" />
+                        <TextBox x:Name="SqlQueryInput"
+                                 AcceptsReturn="True"
+                                 Height="120"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 Padding="4" />
+                    </StackPanel>
                 </StackPanel>
-            </StackPanel>
+            </ScrollViewer>
 
             <StackPanel x:Name="PreviewStep" Visibility="Collapsed">
-                <TextBlock Text="Review your rule before finishing:"
+                <TextBlock x:Name="PreviewSummaryText"
+                           TextWrapping="Wrap"
                            Margin="0,0,0,12" />
                 <TextBox x:Name="PreviewText"
+                         Visibility="Collapsed"
                          IsReadOnly="True"
                          TextWrapping="Wrap"
                          VerticalScrollBarVisibility="Auto"
@@ -85,6 +96,9 @@
                          Padding="8"
                          Background="#F5F5F5"
                          BorderBrush="#CCCCCC" />
+                <TabControl x:Name="PreviewTabs"
+                            Visibility="Collapsed"
+                            Height="300" />
             </StackPanel>
         </Grid>
 
@@ -102,6 +116,13 @@
                     MinWidth="80"
                     Padding="12,4"
                     Click="OnBackClick" />
+
+            <TextBlock x:Name="BusyText"
+                       Grid.Column="1"
+                       VerticalAlignment="Center"
+                       Margin="12,0,0,0"
+                       Foreground="#666666"
+                       Visibility="Collapsed" />
 
             <Button x:Name="CancelButton"
                     Grid.Column="2"

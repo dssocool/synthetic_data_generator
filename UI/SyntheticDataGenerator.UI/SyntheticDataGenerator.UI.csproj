@@ -10,4 +10,8 @@
     <AssemblyName>SyntheticDataGenerator.UI</AssemblyName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\executor\SqlServer\SqlServer.csproj" />
+  </ItemGroup>
+
 </Project>
