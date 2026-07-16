@@ -4,4 +4,13 @@
         Title="Synthetic Data Generator"
         Height="600"
         Width="900">
+    <DockPanel>
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_File">
+                <MenuItem Header="_Create New Rule" Click="OnCreateNewRuleClick" />
+                <Separator />
+                <MenuItem Header="E_xit" Click="OnExitClick" />
+            </MenuItem>
+        </Menu>
+    </DockPanel>
 </Window>

@@ -1,0 +1,124 @@
+<Window x:Class="SyntheticDataGenerator.UI.NewRuleDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Create New Rule"
+        Height="420"
+        Width="520"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="StepTitleText"
+                   Grid.Row="0"
+                   FontSize="16"
+                   FontWeight="SemiBold"
+                   Margin="0,0,0,16" />
+
+        <Grid Grid.Row="1">
+            <StackPanel x:Name="SelectTargetStep" Visibility="Visible">
+                <TextBlock Text="Choose what this rule should do:"
+                           Margin="0,0,0,12" />
+                <RadioButton x:Name="GenerateSyntheticDataOption"
+                             Content="Generate synthetic data into SQL Server"
+                             Margin="0,0,0,8"
+                             GroupName="RuleType"
+                             Checked="OnRuleTypeChanged" />
+                <RadioButton x:Name="SimulatedSqlQueryOption"
+                             Content="Make a query running on simulated SQL Server"
+                             GroupName="RuleType"
+                             Checked="OnRuleTypeChanged" />
+            </StackPanel>
+
+            <StackPanel x:Name="OptionsStep" Visibility="Collapsed">
+                <StackPanel x:Name="GenerateSyntheticDataOptions" Visibility="Collapsed">
+                    <TextBlock Text="Connection string"
+                               Margin="0,0,0,4" />
+                    <TextBox x:Name="ConnectionStringInput"
+                             Margin="0,0,0,12"
+                             Padding="4" />
+                    <TextBlock Text="Rows per table"
+                               Margin="0,0,0,4" />
+                    <TextBox x:Name="RowsPerTableInput"
+                             Margin="0,0,0,12"
+                             Padding="4" />
+                    <TextBlock Text="Include tables (optional, one per line)"
+                               Margin="0,0,0,4" />
+                    <TextBox x:Name="IncludeTablesInput"
+                             AcceptsReturn="True"
+                             Height="80"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             Padding="4" />
+                </StackPanel>
+
+                <StackPanel x:Name="SimulatedSqlQueryOptions" Visibility="Collapsed">
+                    <TextBlock Text="Simulated server name"
+                               Margin="0,0,0,4" />
+                    <TextBox x:Name="SimulatedServerNameInput"
+                             Margin="0,0,0,12"
+                             Padding="4" />
+                    <TextBlock Text="SQL query"
+                               Margin="0,0,0,4" />
+                    <TextBox x:Name="SqlQueryInput"
+                             AcceptsReturn="True"
+                             Height="120"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             Padding="4" />
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel x:Name="PreviewStep" Visibility="Collapsed">
+                <TextBlock Text="Review your rule before finishing:"
+                           Margin="0,0,0,12" />
+                <TextBox x:Name="PreviewText"
+                         IsReadOnly="True"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         Height="200"
+                         Padding="8"
+                         Background="#F5F5F5"
+                         BorderBrush="#CCCCCC" />
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Button x:Name="BackButton"
+                    Grid.Column="0"
+                    Content="Back"
+                    MinWidth="80"
+                    Padding="12,4"
+                    Click="OnBackClick" />
+
+            <Button x:Name="CancelButton"
+                    Grid.Column="2"
+                    Content="Cancel"
+                    MinWidth="80"
+                    Margin="0,0,8,0"
+                    Padding="12,4"
+                    IsCancel="True"
+                    Click="OnCancelClick" />
+
+            <Button x:Name="NextButton"
+                    Grid.Column="3"
+                    Content="Next"
+                    MinWidth="80"
+                    Padding="12,4"
+                    IsDefault="True"
+                    Click="OnNextClick" />
+        </Grid>
+    </Grid>
+</Window>
