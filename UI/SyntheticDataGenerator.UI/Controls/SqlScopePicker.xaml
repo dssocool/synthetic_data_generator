@@ -1,0 +1,90 @@
+<UserControl x:Class="SyntheticDataGenerator.UI.Controls.SqlScopePicker"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </UserControl.Resources>
+    <Border BorderBrush="#CCCCCC"
+            BorderThickness="1"
+            Padding="8"
+            Background="White">
+        <StackPanel>
+            <TextBlock Text="Include databases, schemas, or tables"
+                       Margin="0,0,0,8"
+                       FontWeight="SemiBold" />
+
+            <TextBlock Text="Search"
+                       Margin="0,0,0,4"
+                       Foreground="#666666" />
+            <TextBox x:Name="SearchInput"
+                     Margin="0,0,0,8"
+                     Padding="4"
+                     TextChanged="OnSearchTextChanged" />
+
+            <Grid Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="BackButton"
+                        Grid.Column="0"
+                        Content="Back"
+                        Padding="8,2"
+                        Margin="0,0,8,0"
+                        Visibility="Collapsed"
+                        Click="OnBackClick" />
+                <TextBlock x:Name="BreadcrumbText"
+                           Grid.Column="1"
+                           VerticalAlignment="Center"
+                           TextWrapping="Wrap"
+                           Foreground="#444444" />
+            </Grid>
+
+            <CheckBox x:Name="SelectAllCheckBox"
+                      Content="Select all"
+                      Margin="0,0,0,4"
+                      Checked="OnSelectAllChanged"
+                      Unchecked="OnSelectAllChanged" />
+
+            <ListBox x:Name="ItemsList"
+                     Height="180"
+                     BorderBrush="#DDDDDD"
+                     BorderThickness="1">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Margin="2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <CheckBox Grid.Column="0"
+                                      VerticalAlignment="Center"
+                                      IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      Checked="OnItemCheckChanged"
+                                      Unchecked="OnItemCheckChanged" />
+                            <TextBlock Grid.Column="1"
+                                       VerticalAlignment="Center"
+                                       Margin="8,0,8,0"
+                                       Text="{Binding DisplayName}"
+                                       Cursor="Hand"
+                                       MouseLeftButtonUp="OnItemNavigateClick" />
+                            <TextBlock Grid.Column="2"
+                                       VerticalAlignment="Center"
+                                       Foreground="#888888"
+                                       Text=">"
+                                       Cursor="Hand"
+                                       MouseLeftButtonUp="OnItemNavigateClick"
+                                       Visibility="{Binding CanDrillDown, Converter={StaticResource BoolToVisibility}}" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <TextBlock x:Name="StatusText"
+                       Margin="0,8,0,0"
+                       Foreground="#666666"
+                       TextWrapping="Wrap" />
+        </StackPanel>
+    </Border>
+</UserControl>

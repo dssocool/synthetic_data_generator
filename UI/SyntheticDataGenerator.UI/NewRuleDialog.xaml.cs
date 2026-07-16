@@ -13,6 +13,7 @@ public partial class NewRuleDialog : Window
 
     private int _currentStep = SelectTargetStepIndex;
     private readonly SyntheticDataPreviewService _previewService = new();
+    private string _loadedConnectionString = string.Empty;
 
     public NewRuleWizardState WizardState { get; } = new();
 
@@ -28,6 +29,44 @@ public partial class NewRuleDialog : Window
             WizardState.RuleType = RuleType.GenerateSyntheticData;
         else if (SimulatedSqlQueryOption.IsChecked == true)
             WizardState.RuleType = RuleType.SimulatedSqlQuery;
+    }
+
+    private async void OnConnectionStringLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (WizardState.RuleType != RuleType.GenerateSyntheticData)
+            return;
+
+        var connectionString = ConnectionStringInput.Text.Trim();
+        if (string.Equals(connectionString, _loadedConnectionString, StringComparison.Ordinal))
+            return;
+
+        _loadedConnectionString = connectionString;
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            ScopePicker.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        SetWizardBusy(true, "Loading databases...");
+        try
+        {
+            if (string.Equals(connectionString, WizardState.ConnectionString, StringComparison.Ordinal))
+            {
+                ScopePicker.SetSelectedPatterns(
+                    AppsettingsYamlBuilder.ParseIncludeLines(WizardState.IncludeTables));
+            }
+            else
+            {
+                ScopePicker.SetSelectedPatterns([]);
+            }
+
+            await ScopePicker.LoadDatabasesAsync(connectionString);
+            WizardState.ConnectionString = connectionString;
+        }
+        finally
+        {
+            SetWizardBusy(false);
+        }
     }
 
     private void OnBackClick(object sender, RoutedEventArgs e)
@@ -146,27 +185,10 @@ public partial class NewRuleDialog : Window
                         return false;
                     }
 
-                    if (!int.TryParse(RowsPerTableInput.Text, out var rows) || rows <= 0)
+                    if (ScopePicker.SelectedPatterns.Count == 0)
                     {
-                        MessageBox.Show(this, "Enter a positive number for rows per table.", "Create New Rule",
+                        MessageBox.Show(this, "Select at least one database, schema, or table to include.", "Create New Rule",
                             MessageBoxButton.OK, MessageBoxImage.Information);
-                        RowsPerTableInput.Focus();
-                        return false;
-                    }
-
-                    if (!int.TryParse(SeedInput.Text, out _))
-                    {
-                        MessageBox.Show(this, "Enter a numeric seed to continue.", "Create New Rule",
-                            MessageBoxButton.OK, MessageBoxImage.Information);
-                        SeedInput.Focus();
-                        return false;
-                    }
-
-                    if (string.IsNullOrWhiteSpace(IncludeTablesInput.Text))
-                    {
-                        MessageBox.Show(this, "Add at least one table to Include to continue.", "Create New Rule",
-                            MessageBoxButton.OK, MessageBoxImage.Information);
-                        IncludeTablesInput.Focus();
                         return false;
                     }
                 }
@@ -201,9 +223,9 @@ public partial class NewRuleDialog : Window
         if (WizardState.RuleType == RuleType.GenerateSyntheticData)
         {
             WizardState.ConnectionString = ConnectionStringInput.Text.Trim();
-            WizardState.RowsPerTable = int.Parse(RowsPerTableInput.Text.Trim());
-            WizardState.Seed = int.Parse(SeedInput.Text.Trim());
-            WizardState.IncludeTables = IncludeTablesInput.Text.Trim();
+            WizardState.IncludeTables = string.Join(
+                Environment.NewLine,
+                ScopePicker.SelectedPatterns.OrderBy(p => p, StringComparer.OrdinalIgnoreCase));
             WizardState.PreviewTables = null;
             WizardState.AppsettingsPath = null;
         }
@@ -247,9 +269,18 @@ public partial class NewRuleDialog : Window
         if (isGenerate)
         {
             ConnectionStringInput.Text = WizardState.ConnectionString;
-            RowsPerTableInput.Text = WizardState.RowsPerTable.ToString();
-            SeedInput.Text = WizardState.Seed.ToString();
-            IncludeTablesInput.Text = WizardState.IncludeTables;
+            ScopePicker.SetSelectedPatterns(
+                AppsettingsYamlBuilder.ParseIncludeLines(WizardState.IncludeTables));
+            if (!string.IsNullOrWhiteSpace(WizardState.ConnectionString))
+            {
+                _loadedConnectionString = WizardState.ConnectionString;
+                _ = ScopePicker.LoadDatabasesAsync(WizardState.ConnectionString);
+            }
+            else
+            {
+                _loadedConnectionString = string.Empty;
+                ScopePicker.Visibility = Visibility.Collapsed;
+            }
         }
         else
         {

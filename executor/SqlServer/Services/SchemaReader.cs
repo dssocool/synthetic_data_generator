@@ -42,6 +42,69 @@ public class SchemaReader
         return databases;
     }
 
+    public async Task<List<string>> GetSchemasAsync(string database, CancellationToken ct = default)
+    {
+        var schemas = new List<string>();
+
+        var builder = new SqlConnectionStringBuilder(_connectionString)
+        {
+            InitialCatalog = database
+        };
+
+        await using var connection = new SqlConnection(builder.ConnectionString);
+        await connection.OpenAsync(ct);
+
+        const string sql = """
+            SELECT DISTINCT s.name
+            FROM sys.schemas s
+            INNER JOIN sys.tables t ON t.schema_id = s.schema_id
+            WHERE t.is_ms_shipped = 0
+              AND t.name NOT IN ('__EFMigrationsHistory', '__MigrationHistory', 'sysdiagrams')
+            ORDER BY s.name
+            """;
+
+        await using var cmd = new SqlCommand(sql, connection);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            schemas.Add(reader.GetString(0));
+
+        return schemas;
+    }
+
+    public async Task<List<string>> GetTablesAsync(
+        string database,
+        string schema,
+        CancellationToken ct = default)
+    {
+        var tables = new List<string>();
+
+        var builder = new SqlConnectionStringBuilder(_connectionString)
+        {
+            InitialCatalog = database
+        };
+
+        await using var connection = new SqlConnection(builder.ConnectionString);
+        await connection.OpenAsync(ct);
+
+        const string sql = """
+            SELECT t.name
+            FROM sys.tables t
+            INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
+            WHERE s.name = @schema
+              AND t.is_ms_shipped = 0
+              AND t.name NOT IN ('__EFMigrationsHistory', '__MigrationHistory', 'sysdiagrams')
+            ORDER BY t.name
+            """;
+
+        await using var cmd = new SqlCommand(sql, connection);
+        cmd.Parameters.AddWithValue("@schema", schema);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            tables.Add(reader.GetString(0));
+
+        return tables;
+    }
+
     /// <summary>
     /// Reads schema metadata. When <paramref name="databases"/> is null, all user
     /// databases are read. Otherwise only the listed databases are queried.
