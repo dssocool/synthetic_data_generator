@@ -21,10 +21,13 @@ public sealed class SyntheticDataPreviewService
                 "Add at least one table to Include before generating a preview.");
         }
 
-        var rulesDirectory = Path.Combine(AppContext.BaseDirectory, "rules", Guid.NewGuid().ToString("N"));
+        if (string.IsNullOrWhiteSpace(state.RuleId))
+            state.RuleId = Guid.NewGuid().ToString("N");
+
+        var rulesDirectory = RuleStorageService.GetRuleDirectory(state.RuleId);
         Directory.CreateDirectory(rulesDirectory);
 
-        var appsettingsPath = Path.Combine(rulesDirectory, "appsettings.yaml");
+        var appsettingsPath = RuleStorageService.GetAppsettingsPath(state.RuleId);
         await File.WriteAllTextAsync(appsettingsPath, AppsettingsYamlBuilder.Build(state), cancellationToken);
 
         var scope = LoadScopeConfig(appsettingsPath);

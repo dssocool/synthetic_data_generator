@@ -50,8 +50,7 @@ public sealed class RuleStorageService
 
         if (state.RuleType == RuleType.GenerateSyntheticData)
         {
-            var appsettingsPath = Path.Combine(ruleDirectory, "appsettings.yaml");
-            File.WriteAllText(appsettingsPath, AppsettingsYamlBuilder.Build(state));
+            File.WriteAllText(GetAppsettingsPath(ruleId), AppsettingsYamlBuilder.Build(state));
         }
 
         return rule;
@@ -104,8 +103,11 @@ public sealed class RuleStorageService
         }
     }
 
-    private static string GetRuleDirectory(string ruleId) =>
+    public static string GetRuleDirectory(string ruleId) =>
         Path.Combine(RulesRootDirectory, ruleId);
+
+    public static string GetAppsettingsPath(string ruleId) =>
+        Path.Combine(GetRuleDirectory(ruleId), "appsettings.yaml");
 
     private static string GetRuleJsonPath(string ruleId) =>
         Path.Combine(GetRuleDirectory(ruleId), "rule.json");
