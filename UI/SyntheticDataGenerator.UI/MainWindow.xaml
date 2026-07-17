@@ -12,5 +12,32 @@
                 <MenuItem Header="E_xit" Click="OnExitClick" />
             </MenuItem>
         </Menu>
+
+        <Grid Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0"
+                       Text="Saved Rules"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       Margin="0,0,0,12" />
+
+            <ListView x:Name="RulesList"
+                      Grid.Row="1"
+                      PreviewMouseLeftButtonUp="OnRuleClick"
+                      BorderBrush="#CCCCCC">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Name" Width="220" DisplayMemberBinding="{Binding Name}" />
+                        <GridViewColumn Header="Type" Width="180" DisplayMemberBinding="{Binding TypeDisplayName}" />
+                        <GridViewColumn Header="Summary" Width="280" DisplayMemberBinding="{Binding Summary}" />
+                        <GridViewColumn Header="Modified" Width="160" DisplayMemberBinding="{Binding ModifiedAtDisplay}" />
+                    </GridView>
+                </ListView.View>
+            </ListView>
+        </Grid>
     </DockPanel>
 </Window>

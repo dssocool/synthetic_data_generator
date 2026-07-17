@@ -17,10 +17,25 @@ public partial class NewRuleDialog : Window
 
     public NewRuleWizardState WizardState { get; } = new();
 
-    public NewRuleDialog()
+    public NewRuleDialog(Models.SavedRule? existingRule = null)
     {
         InitializeComponent();
+
+        if (existingRule is not null)
+        {
+            RuleStorageService.ApplyToWizardState(existingRule, WizardState);
+            Title = "Edit Rule";
+            _currentStep = OptionsStepIndex;
+            ApplyRuleTypeToUi();
+        }
+
         UpdateStep();
+    }
+
+    private void ApplyRuleTypeToUi()
+    {
+        GenerateSyntheticDataOption.IsChecked = WizardState.RuleType == RuleType.GenerateSyntheticData;
+        SimulatedSqlQueryOption.IsChecked = WizardState.RuleType == RuleType.SimulatedSqlQuery;
     }
 
     private void OnRuleTypeChanged(object sender, RoutedEventArgs e)

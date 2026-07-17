@@ -9,6 +9,7 @@ public enum RuleType
 
 public sealed class NewRuleWizardState
 {
+    public string? RuleId { get; set; }
     public RuleType RuleType { get; set; } = RuleType.None;
 
     public string ConnectionString { get; set; } = string.Empty;
