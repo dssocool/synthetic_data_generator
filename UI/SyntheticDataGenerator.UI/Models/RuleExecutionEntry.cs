@@ -12,6 +12,7 @@ public sealed class RuleExecutionEntry
     public bool Success { get; set; }
     public string? ErrorMessage { get; set; }
     public string? ExecutionMode { get; set; }
+    public List<TableInsertedKeys>? InsertedKeys { get; set; }
 
     public string StartedAtDisplay => StartedAt.LocalDateTime.ToString("g");
 
@@ -37,4 +38,28 @@ public sealed class RuleExecutionEntry
     }
 
     public string StatusDisplay => Success ? "Success" : "Failed";
+
+    public string InsertedKeysSummary
+    {
+        get
+        {
+            if (ExecutionMode?.Equals("update", StringComparison.OrdinalIgnoreCase) == true)
+                return "—";
+
+            if (InsertedKeys is not { Count: > 0 })
+                return "—";
+
+            var tableCount = InsertedKeys.Count;
+            var keyCount = InsertedKeys.Where(t => t.HasPrimaryKey).Sum(t => t.PrimaryKeys.Count);
+            var noPkCount = InsertedKeys.Count(t => !t.HasPrimaryKey);
+
+            if (noPkCount == tableCount)
+                return $"{tableCount} table{(tableCount == 1 ? "" : "s")}, no PK";
+
+            if (noPkCount > 0)
+                return $"{tableCount} table{(tableCount == 1 ? "" : "s")}, {keyCount} key{(keyCount == 1 ? "" : "s")}, {noPkCount} without PK";
+
+            return $"{tableCount} table{(tableCount == 1 ? "" : "s")}, {keyCount} key{(keyCount == 1 ? "" : "s")}";
+        }
+    }
 }

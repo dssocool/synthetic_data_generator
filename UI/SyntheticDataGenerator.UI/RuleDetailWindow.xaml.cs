@@ -81,6 +81,24 @@ public partial class RuleDetailWindow : Window
         LoadHistory();
     }
 
+    private void OnExecutionDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (ExecutionsList.SelectedItem is not RuleExecutionEntry entry)
+            return;
+
+        if (entry.ExecutionMode?.Equals("update", StringComparison.OrdinalIgnoreCase) == true)
+            return;
+
+        if (entry.InsertedKeys is not { Count: > 0 })
+            return;
+
+        var dialog = new ExecutionInsertedKeysDialog(entry)
+        {
+            Owner = this
+        };
+        dialog.ShowDialog();
+    }
+
     private void OnExecuteClick(object sender, RoutedEventArgs e)
     {
         var dialog = new ExecuteRuleDialog(_rule)

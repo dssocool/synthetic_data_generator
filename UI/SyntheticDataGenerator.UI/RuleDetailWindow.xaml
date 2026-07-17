@@ -66,7 +66,8 @@
             </TabItem>
             <TabItem Header="Execution History">
                 <ListView x:Name="ExecutionsList"
-                          BorderBrush="#CCCCCC">
+                          BorderBrush="#CCCCCC"
+                          MouseDoubleClick="OnExecutionDoubleClick">
                     <ListView.View>
                         <GridView>
                             <GridViewColumn Header="Started" Width="150" DisplayMemberBinding="{Binding StartedAtDisplay}" />
@@ -75,6 +76,7 @@
                             <GridViewColumn Header="Seed" Width="80" DisplayMemberBinding="{Binding Seed}" />
                             <GridViewColumn Header="Total Rows" Width="90" DisplayMemberBinding="{Binding TotalRowsAffected}" />
                             <GridViewColumn Header="Tables" Width="70" DisplayMemberBinding="{Binding TableCount}" />
+                            <GridViewColumn Header="Inserted PKs" Width="130" DisplayMemberBinding="{Binding InsertedKeysSummary}" />
                             <GridViewColumn Header="Duration" Width="80" DisplayMemberBinding="{Binding DurationDisplay}" />
                             <GridViewColumn Header="Status" Width="80" DisplayMemberBinding="{Binding StatusDisplay}" />
                         </GridView>

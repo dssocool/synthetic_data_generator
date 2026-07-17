@@ -67,7 +67,8 @@ public partial class ExecuteRuleDialog : Window
                 TableCount = result.TableCount,
                 Success = result.Success,
                 ErrorMessage = result.ErrorMessage,
-                ExecutionMode = _rule.EnableDataOverwrite ? "update" : "insert"
+                ExecutionMode = _rule.EnableDataOverwrite ? "update" : "insert",
+                InsertedKeys = _rule.EnableDataOverwrite ? null : result.InsertedKeys
             };
 
             _historyService.RecordExecution(_rule.Id, entry);

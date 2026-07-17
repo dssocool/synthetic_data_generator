@@ -47,7 +47,8 @@ public record TableExecutionDetail(
     string TableName,
     int RowsAffected,
     bool Success,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    IReadOnlyList<string>? InsertedPrimaryKeys = null);
 
 public record ExecutePlanResult(
     int TotalRowsAffected,

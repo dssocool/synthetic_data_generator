@@ -107,12 +107,25 @@ public sealed class SyntheticDataExecutionService
                 stopwatch.Elapsed);
         }
 
+        var insertedKeys = mode.Equals("insert", StringComparison.OrdinalIgnoreCase)
+            ? execResult.Tables
+                .Where(t => t.Success)
+                .Select(t => new TableInsertedKeys
+                {
+                    TableName = t.TableName,
+                    HasPrimaryKey = t.InsertedPrimaryKeys is not null,
+                    PrimaryKeys = t.InsertedPrimaryKeys?.ToList() ?? []
+                })
+                .ToList()
+            : null;
+
         return new SyntheticDataExecutionResult
         {
             Success = true,
             TotalRowsAffected = execResult.TotalRowsAffected,
             TableCount = execResult.Tables.Count,
-            Elapsed = stopwatch.Elapsed
+            Elapsed = stopwatch.Elapsed,
+            InsertedKeys = insertedKeys
         };
     }
 
@@ -161,6 +174,7 @@ public sealed class SyntheticDataExecutionResult
     public int TableCount { get; init; }
     public TimeSpan Elapsed { get; init; }
     public string? ErrorMessage { get; init; }
+    public List<TableInsertedKeys>? InsertedKeys { get; init; }
 
     public static SyntheticDataExecutionResult Failed(
         string message,

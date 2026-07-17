@@ -192,6 +192,7 @@ public class DataGenerationExecutor : IDataGenerationExecutor
                 perTableGen.SetPlanBasePath(planBasePath);
 
             int affected;
+            IReadOnlyList<string>? insertedPrimaryKeys = null;
             if (isUpdate)
             {
                 var staging = await inserter.StageToTempTableAsync(
@@ -202,9 +203,10 @@ public class DataGenerationExecutor : IDataGenerationExecutor
             {
                 var gen = inserter.GenerateRows(tp, perTableGen);
                 affected = await inserter.InsertGeneratedRowsAsync(gen, sharedConnection);
+                insertedPrimaryKeys = inserter.GetInsertedPkDisplayValues(gen.Table);
             }
 
-            return new TableExecutionDetail(tp.FullName, affected, true, null);
+            return new TableExecutionDetail(tp.FullName, affected, true, null, insertedPrimaryKeys);
         }
         catch (DataGenerationException ex)
         {

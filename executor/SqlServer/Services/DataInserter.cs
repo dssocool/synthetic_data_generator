@@ -56,6 +56,7 @@ public class DataInserter : IAsyncDisposable
 
     private const int MaxPkRetries = 100;
     private const int DefaultExternalSourceBufferSize = 10_000;
+    internal const int MaxInsertedPkDisplayCount = 10_000;
 
     public DataInserter(
         string connectionString,
@@ -79,6 +80,53 @@ public class DataInserter : IAsyncDisposable
             await streamer.DisposeAsync();
         _externalSourceStreamers.Clear();
     }
+
+    /// <summary>
+    /// Returns display strings for primary keys of rows inserted for <paramref name="table"/>.
+    /// Call immediately after <see cref="InsertGeneratedRowsAsync"/> for that table.
+    /// Returns null when the table has no primary key.
+    /// </summary>
+    public IReadOnlyList<string>? GetInsertedPkDisplayValues(TableInfo table, int maxCount = MaxInsertedPkDisplayCount)
+    {
+        if (table.PrimaryKeyColumns.Count == 0)
+            return null;
+
+        if (!_generatedKeys.TryGetValue(table.FullName, out var keys) || keys.Count == 0)
+            return [];
+
+        var pkCols = table.PrimaryKeyColumns;
+        var result = new List<string>(Math.Min(keys.Count, maxCount));
+
+        foreach (var row in keys)
+        {
+            if (result.Count >= maxCount)
+                break;
+
+            if (!pkCols.All(pk => row.TryGetValue(pk, out var v) && v is not null and not DBNull))
+                continue;
+
+            result.Add(FormatPkDisplayValue(pkCols, row));
+        }
+
+        return result;
+    }
+
+    internal static string FormatPkDisplayValue(IReadOnlyList<string> pkColumns, IReadOnlyDictionary<string, object> row)
+    {
+        if (pkColumns.Count == 1)
+            return FormatPkScalar(row[pkColumns[0]]);
+
+        return string.Join(", ", pkColumns.Select(pk => $"{pk}={FormatPkScalar(row[pk])}"));
+    }
+
+    private static string FormatPkScalar(object value) =>
+        value switch
+        {
+            byte[] bytes => $"0x{Convert.ToHexString(bytes)}",
+            DateTime dt => dt.ToString("O"),
+            DateTimeOffset dto => dto.ToString("O"),
+            _ => value.ToString() ?? "null"
+        };
 
     /// <summary>
     /// Generate rows in memory and return a preparation result.
