@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using SyntheticDataGenerator.Models;
 using SyntheticDataGenerator.UI.Services;
 
@@ -10,27 +9,18 @@ namespace SyntheticDataGenerator.UI.Controls;
 
 public partial class SqlScopePicker : UserControl
 {
-    private enum NavigationLevel
-    {
-        Database,
-        Schema,
-        Table
-    }
-
     private readonly SqlServerMetadataService _metadataService = new();
     private readonly HashSet<string> _selectedPatterns = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ObservableCollection<SqlScopePickerItem> _items = [];
+    private readonly ObservableCollection<SqlScopeTreeNode> _roots = [];
 
     private string _connectionString = string.Empty;
-    private NavigationLevel _level = NavigationLevel.Database;
-    private string? _currentDatabase;
-    private string? _currentSchema;
+    private SqlScopeTreeNode? _focusedNode;
     private bool _isUpdatingSelectAll;
 
     public SqlScopePicker()
     {
         InitializeComponent();
-        ItemsList.ItemsSource = _items;
+        ScopeTree.ItemsSource = _roots;
         Visibility = Visibility.Collapsed;
     }
 
@@ -52,9 +42,7 @@ public partial class SqlScopePicker : UserControl
     public async Task LoadDatabasesAsync(string connectionString)
     {
         _connectionString = connectionString.Trim();
-        _level = NavigationLevel.Database;
-        _currentDatabase = null;
-        _currentSchema = null;
+        _focusedNode = null;
 
         if (string.IsNullOrWhiteSpace(_connectionString))
         {
@@ -68,7 +56,7 @@ public partial class SqlScopePicker : UserControl
         try
         {
             var databases = await _metadataService.GetDatabasesAsync(_connectionString);
-            ShowDatabaseItems(databases);
+            ShowDatabaseNodes(databases);
             SetBusy(false);
             UpdateStatusText();
             if (databases.Count == 0)
@@ -76,155 +64,150 @@ public partial class SqlScopePicker : UserControl
         }
         catch (Exception ex)
         {
-            _items.Clear();
+            _roots.Clear();
             SetBusy(false);
             StatusText.Text = $"Failed to connect: {ex.Message}";
         }
     }
 
-    private async Task LoadSchemasAsync(string database)
+    private void ShowDatabaseNodes(IReadOnlyList<string> databases)
     {
-        _level = NavigationLevel.Schema;
-        _currentDatabase = database;
-        _currentSchema = null;
-
-        SetBusy(true, "Loading schemas...");
-        try
-        {
-            var schemas = await _metadataService.GetSchemasAsync(_connectionString, database);
-            ShowSchemaItems(database, schemas);
-            SetBusy(false);
-            UpdateStatusText();
-            if (schemas.Count == 0)
-                StatusText.Text = "No schemas found.";
-        }
-        catch (Exception ex)
-        {
-            _items.Clear();
-            SetBusy(false);
-            StatusText.Text = $"Failed to load schemas: {ex.Message}";
-        }
-    }
-
-    private async Task LoadTablesAsync(string database, string schema)
-    {
-        _level = NavigationLevel.Table;
-        _currentDatabase = database;
-        _currentSchema = schema;
-
-        SetBusy(true, "Loading tables...");
-        try
-        {
-            var tables = await _metadataService.GetTablesAsync(_connectionString, database, schema);
-            ShowTableItems(database, schema, tables);
-            SetBusy(false);
-            UpdateStatusText();
-            if (tables.Count == 0)
-                StatusText.Text = "No tables found.";
-        }
-        catch (Exception ex)
-        {
-            _items.Clear();
-            SetBusy(false);
-            StatusText.Text = $"Failed to load tables: {ex.Message}";
-        }
-    }
-
-    private void ShowDatabaseItems(IReadOnlyList<string> databases)
-    {
-        _items.Clear();
+        _roots.Clear();
         foreach (var database in databases)
         {
-            _items.Add(new SqlScopePickerItem
-            {
-                DisplayName = database,
-                IncludePattern = database,
-                CanDrillDown = true,
-                IsSelected = GetSelectionState(database, canDrillDown: true)
-            });
+            _roots.Add(CreateNode(database, database, SqlScopeNodeKind.Database, parent: null));
         }
 
-        UpdateNavigationUi();
+        ResetNavigationContext();
         ApplySearchFilter();
     }
 
-    private void ShowSchemaItems(string database, IReadOnlyList<string> schemas)
+    private SqlScopeTreeNode CreateNode(
+        string displayName,
+        string includePattern,
+        SqlScopeNodeKind kind,
+        SqlScopeTreeNode? parent)
     {
-        _items.Clear();
-        foreach (var schema in schemas)
+        return new SqlScopeTreeNode
         {
-            var pattern = $"{database}.{schema}";
-            _items.Add(new SqlScopePickerItem
-            {
-                DisplayName = schema,
-                IncludePattern = pattern,
-                CanDrillDown = true,
-                IsSelected = GetSelectionState(pattern, canDrillDown: true)
-            });
-        }
-
-        UpdateNavigationUi();
-        ApplySearchFilter();
-    }
-
-    private void ShowTableItems(string database, string schema, IReadOnlyList<string> tables)
-    {
-        _items.Clear();
-        foreach (var table in tables)
-        {
-            var pattern = $"{database}.{schema}.{table}";
-            _items.Add(new SqlScopePickerItem
-            {
-                DisplayName = table,
-                IncludePattern = pattern,
-                CanDrillDown = false,
-                IsSelected = GetSelectionState(pattern, canDrillDown: false)
-            });
-        }
-
-        UpdateNavigationUi();
-        ApplySearchFilter();
-    }
-
-    private void UpdateNavigationUi()
-    {
-        BackButton.Visibility = _level == NavigationLevel.Database
-            ? Visibility.Collapsed
-            : Visibility.Visible;
-
-        BreadcrumbText.Text = _level switch
-        {
-            NavigationLevel.Database => "All databases",
-            NavigationLevel.Schema => _currentDatabase ?? string.Empty,
-            NavigationLevel.Table => $"{_currentDatabase} > {_currentSchema}",
-            _ => string.Empty
+            DisplayName = displayName,
+            IncludePattern = includePattern,
+            Kind = kind,
+            Parent = parent,
+            IsSelected = GetSelectionState(includePattern, canExpand: kind != SqlScopeNodeKind.Table)
         };
+    }
 
+    private async Task EnsureChildrenLoadedAsync(SqlScopeTreeNode node)
+    {
+        if (node.ChildrenLoaded || !node.CanExpand || node.IsLoadingChildren)
+            return;
+
+        node.IsLoadingChildren = true;
+        try
+        {
+            switch (node.Kind)
+            {
+                case SqlScopeNodeKind.Database:
+                    var schemas = await _metadataService.GetSchemasAsync(_connectionString, node.DisplayName);
+                    foreach (var schema in schemas)
+                    {
+                        var pattern = $"{node.DisplayName}.{schema}";
+                        node.Children.Add(CreateNode(schema, pattern, SqlScopeNodeKind.Schema, node));
+                    }
+
+                    if (schemas.Count == 0 && _selectedPatterns.Count == 0)
+                        StatusText.Text = "No schemas found.";
+                    break;
+
+                case SqlScopeNodeKind.Schema:
+                    var database = node.Parent!.DisplayName;
+                    var tables = await _metadataService.GetTablesAsync(_connectionString, database, node.DisplayName);
+                    foreach (var table in tables)
+                    {
+                        var pattern = $"{database}.{node.DisplayName}.{table}";
+                        node.Children.Add(CreateNode(table, pattern, SqlScopeNodeKind.Table, node));
+                    }
+
+                    if (tables.Count == 0 && _selectedPatterns.Count == 0)
+                        StatusText.Text = "No tables found.";
+                    break;
+            }
+
+            node.ChildrenLoaded = true;
+            ApplySearchFilter();
+            UpdateStatusText();
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = $"Failed to load: {ex.Message}";
+        }
+        finally
+        {
+            node.IsLoadingChildren = false;
+        }
+    }
+
+    private void ResetNavigationContext()
+    {
+        _focusedNode = null;
+        BreadcrumbText.Text = "All databases";
+        BackButton.Visibility = Visibility.Collapsed;
         UpdateSelectAllState();
+    }
+
+    private void UpdateNavigationContext(SqlScopeTreeNode node)
+    {
+        _focusedNode = node;
+        BreadcrumbText.Text = BuildNodePath(node);
+        BackButton.Visibility = Visibility.Visible;
+    }
+
+    private static string BuildNodePath(SqlScopeTreeNode node)
+    {
+        var parts = new List<string>();
+        var current = node;
+        while (current is not null)
+        {
+            parts.Insert(0, current.DisplayName);
+            current = current.Parent;
+        }
+
+        return string.Join(" > ", parts);
     }
 
     private void ApplySearchFilter()
     {
         var filter = SearchInput.Text.Trim();
-        var view = System.Windows.Data.CollectionViewSource.GetDefaultView(_items);
-        if (string.IsNullOrEmpty(filter))
-        {
-            view.Filter = null;
-        }
-        else
-        {
-            view.Filter = obj =>
-                obj is SqlScopePickerItem item
-                && item.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase);
-        }
+        foreach (var root in _roots)
+            ApplyFilterToNode(root, filter);
 
         UpdateSelectAllState();
     }
 
+    private static bool ApplyFilterToNode(SqlScopeTreeNode node, string filter)
+    {
+        if (string.IsNullOrEmpty(filter))
+        {
+            node.IsVisible = true;
+            foreach (var child in node.Children)
+                ApplyFilterToNode(child, filter);
+            return true;
+        }
+
+        var matchesSelf = node.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase);
+        var childVisible = false;
+        foreach (var child in node.Children)
+            childVisible |= ApplyFilterToNode(child, filter);
+
+        node.IsVisible = matchesSelf || childVisible;
+        return node.IsVisible;
+    }
+
     private void RefreshItemSelectionState()
     {
-        foreach (var item in _items)
-            item.IsSelected = GetSelectionState(item.IncludePattern, item.CanDrillDown);
+        foreach (var node in EnumerateNodes(_roots))
+            node.IsSelected = GetSelectionState(node.IncludePattern, node.CanExpand);
 
         UpdateSelectAllState();
         UpdateStatusText();
@@ -233,7 +216,7 @@ public partial class SqlScopePicker : UserControl
     private static string NormalizePattern(string pattern) =>
         SqlTableName.NormalizeIdentifier(pattern);
 
-    private bool? GetSelectionState(string includePattern, bool canDrillDown)
+    private bool? GetSelectionState(string includePattern, bool canExpand)
     {
         var normalized = NormalizePattern(includePattern);
 
@@ -247,7 +230,7 @@ public partial class SqlScopePicker : UserControl
         if (isFullySelected)
             return true;
 
-        if (!canDrillDown)
+        if (!canExpand)
             return false;
 
         var hasPartialSelection = _selectedPatterns.Any(selected =>
@@ -263,7 +246,7 @@ public partial class SqlScopePicker : UserControl
     private void AddPatternSelection(string includePattern) =>
         _selectedPatterns.Add(NormalizePattern(includePattern));
 
-    private void RemovePatternSelection(string includePattern)
+    private void RemovePatternSelection(string includePattern, SqlScopeTreeNode node)
     {
         var normalized = NormalizePattern(includePattern);
 
@@ -274,11 +257,8 @@ public partial class SqlScopePicker : UserControl
         if (coveringPattern is not null)
         {
             _selectedPatterns.Remove(coveringPattern);
-            foreach (var sibling in _items)
-            {
-                if (!string.Equals(sibling.IncludePattern, includePattern, StringComparison.OrdinalIgnoreCase))
-                    AddPatternSelection(sibling.IncludePattern);
-            }
+            foreach (var sibling in GetSiblings(node))
+                AddPatternSelection(sibling.IncludePattern);
 
             return;
         }
@@ -288,9 +268,17 @@ public partial class SqlScopePicker : UserControl
             || SqlTableName.MatchesPattern(NormalizePattern(selected), normalized));
     }
 
+    private IEnumerable<SqlScopeTreeNode> GetSiblings(SqlScopeTreeNode node)
+    {
+        if (node.Parent is null)
+            return _roots.Where(r => !ReferenceEquals(r, node));
+
+        return node.Parent.Children.Where(c => !ReferenceEquals(c, node));
+    }
+
     private void UpdateSelectAllState()
     {
-        var visibleItems = GetVisibleItems().ToList();
+        var visibleItems = GetVisibleNodes().ToList();
         _isUpdatingSelectAll = true;
         SelectAllCheckBox.IsChecked = visibleItems.Count switch
         {
@@ -315,33 +303,81 @@ public partial class SqlScopePicker : UserControl
         SearchInput.IsEnabled = !isBusy;
         SelectAllCheckBox.IsEnabled = !isBusy;
         BackButton.IsEnabled = !isBusy;
-        ItemsList.IsEnabled = !isBusy;
+        ScopeTree.IsEnabled = !isBusy;
         if (message is not null)
             StatusText.Text = message;
     }
 
-    private IEnumerable<SqlScopePickerItem> GetVisibleItems()
+    private IEnumerable<SqlScopeTreeNode> GetVisibleNodes()
     {
-        var view = System.Windows.Data.CollectionViewSource.GetDefaultView(_items);
-        if (view.Filter is null)
-            return _items;
-
-        return _items.Where(i => view.Filter(i));
+        foreach (var node in EnumerateNodes(_roots))
+        {
+            if (node.IsVisible)
+                yield return node;
+        }
     }
 
-    private async void OnBackClick(object sender, RoutedEventArgs e)
+    private static IEnumerable<SqlScopeTreeNode> EnumerateNodes(IEnumerable<SqlScopeTreeNode> nodes)
     {
-        SearchInput.Text = string.Empty;
-
-        switch (_level)
+        foreach (var node in nodes)
         {
-            case NavigationLevel.Table:
-                await LoadSchemasAsync(_currentDatabase!);
-                break;
-            case NavigationLevel.Schema:
-                await LoadDatabasesAsync(_connectionString);
-                break;
+            yield return node;
+            foreach (var child in EnumerateNodes(node.Children))
+                yield return child;
         }
+    }
+
+    private async void OnTreeItemExpanded(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is not TreeViewItem { DataContext: SqlScopeTreeNode node })
+            return;
+
+        UpdateNavigationContext(node);
+        await EnsureChildrenLoadedAsync(node);
+    }
+
+    private void OnTreeItemCollapsed(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is not TreeViewItem { DataContext: SqlScopeTreeNode node })
+            return;
+
+        if (_focusedNode is null || !IsSameOrDescendant(_focusedNode, node))
+            return;
+
+        _focusedNode = node.Parent;
+        if (_focusedNode is not null)
+            UpdateNavigationContext(_focusedNode);
+        else
+            ResetNavigationContext();
+    }
+
+    private static bool IsSameOrDescendant(SqlScopeTreeNode node, SqlScopeTreeNode ancestor)
+    {
+        var current = node;
+        while (current is not null)
+        {
+            if (ReferenceEquals(current, ancestor))
+                return true;
+            current = current.Parent;
+        }
+
+        return false;
+    }
+
+    private void OnBackClick(object sender, RoutedEventArgs e)
+    {
+        if (_focusedNode is null)
+        {
+            ResetNavigationContext();
+            return;
+        }
+
+        _focusedNode.IsExpanded = false;
+        _focusedNode = _focusedNode.Parent;
+        if (_focusedNode is not null)
+            UpdateNavigationContext(_focusedNode);
+        else
+            ResetNavigationContext();
     }
 
     private void OnSearchTextChanged(object sender, TextChangedEventArgs e) =>
@@ -353,12 +389,12 @@ public partial class SqlScopePicker : UserControl
             return;
 
         var selectAll = SelectAllCheckBox.IsChecked == true;
-        foreach (var item in GetVisibleItems())
+        foreach (var node in GetVisibleNodes())
         {
             if (selectAll)
-                AddPatternSelection(item.IncludePattern);
+                AddPatternSelection(node.IncludePattern);
             else
-                RemovePatternSelection(item.IncludePattern);
+                RemovePatternSelection(node.IncludePattern, node);
         }
 
         RefreshItemSelectionState();
@@ -366,44 +402,81 @@ public partial class SqlScopePicker : UserControl
 
     private void OnItemCheckChanged(object sender, RoutedEventArgs e)
     {
-        if (sender is not CheckBox checkBox || checkBox.DataContext is not SqlScopePickerItem item)
+        if (sender is not CheckBox checkBox || checkBox.DataContext is not SqlScopeTreeNode node)
             return;
 
         if (checkBox.IsChecked == true)
-            AddPatternSelection(item.IncludePattern);
+            AddPatternSelection(node.IncludePattern);
         else
-            RemovePatternSelection(item.IncludePattern);
+            RemovePatternSelection(node.IncludePattern, node);
 
         RefreshItemSelectionState();
     }
-
-    private async void OnItemNavigateClick(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is not FrameworkElement element || element.DataContext is not SqlScopePickerItem item || !item.CanDrillDown)
-            return;
-
-        e.Handled = true;
-        SearchInput.Text = string.Empty;
-
-        switch (_level)
-        {
-            case NavigationLevel.Database:
-                await LoadSchemasAsync(item.DisplayName);
-                break;
-            case NavigationLevel.Schema:
-                await LoadTablesAsync(_currentDatabase!, item.DisplayName);
-                break;
-        }
-    }
 }
 
-public sealed class SqlScopePickerItem : INotifyPropertyChanged
+public enum SqlScopeNodeKind
+{
+    Database,
+    Schema,
+    Table
+}
+
+public sealed class SqlScopeTreeNode : INotifyPropertyChanged
 {
     private bool? _isSelected;
+    private bool _isExpanded;
+    private bool _isVisible = true;
+    private bool _isLoadingChildren;
+
+    public SqlScopeTreeNode? Parent { get; set; }
+    public ObservableCollection<SqlScopeTreeNode> Children { get; } = [];
 
     public required string DisplayName { get; init; }
     public required string IncludePattern { get; init; }
-    public required bool CanDrillDown { get; init; }
+    public required SqlScopeNodeKind Kind { get; init; }
+
+    public bool CanExpand => Kind != SqlScopeNodeKind.Table;
+
+    public bool ChildrenLoaded { get; set; }
+
+    public bool IsLoadingChildren
+    {
+        get => _isLoadingChildren;
+        set
+        {
+            if (_isLoadingChildren == value)
+                return;
+
+            _isLoadingChildren = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsLoadingChildren)));
+        }
+    }
+
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set
+        {
+            if (_isExpanded == value)
+                return;
+
+            _isExpanded = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsExpanded)));
+        }
+    }
+
+    public bool IsVisible
+    {
+        get => _isVisible;
+        set
+        {
+            if (_isVisible == value)
+                return;
+
+            _isVisible = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsVisible)));
+        }
+    }
 
     public bool? IsSelected
     {

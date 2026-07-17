@@ -46,40 +46,29 @@
                       Checked="OnSelectAllChanged"
                       Unchecked="OnSelectAllChanged" />
 
-            <ListBox x:Name="ItemsList"
-                     Height="180"
-                     BorderBrush="#DDDDDD"
-                     BorderThickness="1">
-                <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <Grid Margin="2">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <CheckBox Grid.Column="0"
-                                      VerticalAlignment="Center"
-                                      IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                      Checked="OnItemCheckChanged"
-                                      Unchecked="OnItemCheckChanged" />
-                            <TextBlock Grid.Column="1"
-                                       VerticalAlignment="Center"
-                                       Margin="8,0,8,0"
-                                       Text="{Binding DisplayName}"
-                                       Cursor="Hand"
-                                       MouseLeftButtonUp="OnItemNavigateClick" />
-                            <TextBlock Grid.Column="2"
-                                       VerticalAlignment="Center"
-                                       Foreground="#888888"
-                                       Text=">"
-                                       Cursor="Hand"
-                                       MouseLeftButtonUp="OnItemNavigateClick"
-                                       Visibility="{Binding CanDrillDown, Converter={StaticResource BoolToVisibility}}" />
-                        </Grid>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
+            <TreeView x:Name="ScopeTree"
+                      Height="180"
+                      BorderBrush="#DDDDDD"
+                      BorderThickness="1">
+                <TreeView.ItemContainerStyle>
+                    <Style TargetType="TreeViewItem">
+                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                        <Setter Property="Visibility" Value="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}" />
+                        <EventSetter Event="Expanded" Handler="OnTreeItemExpanded" />
+                        <EventSetter Event="Collapsed" Handler="OnTreeItemCollapsed" />
+                    </Style>
+                </TreeView.ItemContainerStyle>
+                <TreeView.ItemTemplate>
+                    <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                        <CheckBox VerticalAlignment="Center"
+                                  Content="{Binding DisplayName}"
+                                  IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  Checked="OnItemCheckChanged"
+                                  Unchecked="OnItemCheckChanged"
+                                  IsThreeState="True" />
+                    </HierarchicalDataTemplate>
+                </TreeView.ItemTemplate>
+            </TreeView>
 
             <TextBlock x:Name="StatusText"
                        Margin="0,8,0,0"
