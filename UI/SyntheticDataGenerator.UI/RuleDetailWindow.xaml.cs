@@ -62,6 +62,25 @@ public partial class RuleDetailWindow : Window
             _executions.Add(entry);
     }
 
+    private void OnModificationDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (ModificationsList.SelectedItem is not RuleModificationEntry entry)
+            return;
+
+        var dialog = new RuleModificationDiffDialog(_rule, entry, _ruleStorage)
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() != true || !dialog.RuleReverted || dialog.RevertedRule is null)
+            return;
+
+        _rule = dialog.RevertedRule;
+        RuleChanged = true;
+        LoadRuleDetails();
+        LoadHistory();
+    }
+
     private void OnExecuteClick(object sender, RoutedEventArgs e)
     {
         var dialog = new ExecuteRuleDialog(_rule)

@@ -1,0 +1,149 @@
+<Window x:Class="SyntheticDataGenerator.UI.RuleModificationDiffDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:SyntheticDataGenerator.UI.Controls"
+        Title="Compare Modification"
+        Height="560"
+        Width="900"
+        MinWidth="760"
+        MinHeight="420"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Icon="Assets/app.ico">
+    <Window.Resources>
+        <SolidColorBrush x:Key="ChangedRowBrush" Color="#FFF8E1" />
+        <SolidColorBrush x:Key="HistoricalCharBrush" Color="#FFCDD2" />
+        <SolidColorBrush x:Key="CurrentCharBrush" Color="#BBDEFB" />
+    </Window.Resources>
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="HeaderText"
+                   Grid.Row="0"
+                   FontSize="16"
+                   FontWeight="SemiBold"
+                   TextWrapping="Wrap" />
+
+        <TextBlock x:Name="SummaryText"
+                   Grid.Row="1"
+                   Margin="0,8,0,12"
+                   TextWrapping="Wrap"
+                   Foreground="#666666" />
+
+        <StackPanel Grid.Row="2"
+                    Orientation="Horizontal"
+                    Margin="0,0,0,8">
+            <Border Background="{StaticResource ChangedRowBrush}"
+                    BorderBrush="#E6C200"
+                    BorderThickness="1"
+                    Padding="8,2"
+                    Margin="0,0,12,0">
+                <TextBlock Text="Changed row"
+                           FontSize="11"
+                           Foreground="#666666" />
+            </Border>
+            <Border Background="{StaticResource HistoricalCharBrush}"
+                    BorderBrush="#E57373"
+                    BorderThickness="1"
+                    Padding="8,2"
+                    Margin="0,0,12,0">
+                <TextBlock Text="Removed/changed in historical"
+                           FontSize="11"
+                           Foreground="#666666" />
+            </Border>
+            <Border Background="{StaticResource CurrentCharBrush}"
+                    BorderBrush="#64B5F6"
+                    BorderThickness="1"
+                    Padding="8,2">
+                <TextBlock Text="Added/changed in current"
+                           FontSize="11"
+                           Foreground="#666666" />
+            </Border>
+        </StackPanel>
+
+        <Grid Grid.Row="3">
+            <TextBlock x:Name="UnavailableText"
+                       Text="This history entry has no saved snapshot. Compare and revert are only available for modifications saved after this update."
+                       TextWrapping="Wrap"
+                       Foreground="#666666"
+                       Visibility="Collapsed" />
+
+            <DataGrid x:Name="DiffGrid"
+                      AutoGenerateColumns="False"
+                      IsReadOnly="True"
+                      CanUserAddRows="False"
+                      CanUserDeleteRows="False"
+                      CanUserReorderColumns="False"
+                      HeadersVisibility="Column"
+                      GridLinesVisibility="Horizontal"
+                      BorderBrush="#CCCCCC"
+                      AlternatingRowBackground="#F8F8F8"
+                      EnableRowVirtualization="False"
+                      CanUserResizeRows="True"
+                      LoadingRow="OnDiffGridLoadingRow">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Field"
+                                        Binding="{Binding Field}"
+                                        Width="160">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="TextWrapping" Value="Wrap" />
+                                <Setter Property="VerticalAlignment" Value="Center" />
+                                <Setter Property="Padding" Value="4,2" />
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
+                    <DataGridTemplateColumn x:Name="HistoricalColumn" Width="*">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <controls:DiffTextPresenter Segments="{Binding HistoricalSegments}"
+                                                            HighlightBrush="{StaticResource HistoricalCharBrush}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTemplateColumn Header="Current" Width="*">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <controls:DiffTextPresenter Segments="{Binding CurrentSegments}"
+                                                            HighlightBrush="{StaticResource CurrentCharBrush}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+                <DataGrid.RowStyle>
+                    <Style TargetType="DataGridRow">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsChanged}" Value="True">
+                                <Setter Property="Background" Value="{StaticResource ChangedRowBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </DataGrid.RowStyle>
+            </DataGrid>
+        </Grid>
+
+        <StackPanel Grid.Row="4"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,16,0,0">
+            <Button x:Name="RevertButton"
+                    Content="Revert to This Version"
+                    MinWidth="160"
+                    Margin="0,0,8,0"
+                    Padding="12,4"
+                    Click="OnRevertClick" />
+            <Button Content="Close"
+                    MinWidth="80"
+                    Padding="12,4"
+                    IsCancel="True"
+                    Click="OnCloseClick" />
+        </StackPanel>
+    </Grid>
+</Window>

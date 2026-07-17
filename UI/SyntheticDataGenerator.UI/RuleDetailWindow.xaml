@@ -47,15 +47,22 @@
 
         <TabControl>
             <TabItem Header="Modification History">
-                <ListView x:Name="ModificationsList"
-                          BorderBrush="#CCCCCC">
-                    <ListView.View>
-                        <GridView>
-                            <GridViewColumn Header="Modified" Width="180" DisplayMemberBinding="{Binding ModifiedAt, StringFormat=g}" />
-                            <GridViewColumn Header="Summary" Width="540" DisplayMemberBinding="{Binding Summary}" />
-                        </GridView>
-                    </ListView.View>
-                </ListView>
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top"
+                               Margin="0,0,0,8"
+                               Foreground="#666666"
+                               Text="Double-click an entry to compare with the current rule." />
+                    <ListView x:Name="ModificationsList"
+                              BorderBrush="#CCCCCC"
+                              MouseDoubleClick="OnModificationDoubleClick">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="Modified" Width="180" DisplayMemberBinding="{Binding ModifiedAt, StringFormat=g}" />
+                                <GridViewColumn Header="Summary" Width="540" DisplayMemberBinding="{Binding Summary}" />
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                </DockPanel>
             </TabItem>
             <TabItem Header="Execution History">
                 <ListView x:Name="ExecutionsList"

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using SyntheticDataGenerator.UI.Models;
 
 namespace SyntheticDataGenerator.UI.Services;
@@ -9,18 +10,20 @@ public sealed class RuleHistoryService
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter() }
     };
 
-    public void RecordModification(string ruleId, SavedRule rule, bool isNew)
+    public void RecordModification(string ruleId, SavedRule rule, bool isNew, string? summaryOverride = null)
     {
         var history = LoadModificationsMutable(ruleId);
         history.Add(new RuleModificationEntry
         {
             ModifiedAt = rule.ModifiedAt,
-            Summary = isNew
+            Summary = summaryOverride ?? (isNew
                 ? $"Created — {RuleSummaryBuilder.Build(rule)}"
-                : RuleSummaryBuilder.Build(rule)
+                : RuleSummaryBuilder.Build(rule)),
+            Snapshot = RuleStorageService.CloneRule(rule)
         });
 
         SaveModifications(ruleId, history);

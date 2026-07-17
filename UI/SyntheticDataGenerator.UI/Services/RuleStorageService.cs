@@ -9,7 +9,7 @@ public sealed class RuleStorageService
 {
     private readonly RuleHistoryService _historyService = new();
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    internal static readonly JsonSerializerOptions JsonSerializerOptions = new()
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -58,7 +58,7 @@ public sealed class RuleStorageService
         };
 
         var ruleJsonPath = GetRuleJsonPath(ruleId);
-        File.WriteAllText(ruleJsonPath, JsonSerializer.Serialize(rule, JsonOptions));
+        File.WriteAllText(ruleJsonPath, JsonSerializer.Serialize(rule, JsonSerializerOptions));
 
         if (state.RuleType == RuleType.GenerateSyntheticData)
         {
@@ -69,6 +69,61 @@ public sealed class RuleStorageService
 
         return rule;
     }
+
+    public SavedRule RevertToSnapshot(string ruleId, SavedRule snapshot)
+    {
+        var existing = TryLoadRule(ruleId)
+            ?? throw new InvalidOperationException("Rule not found.");
+
+        var rule = CloneRule(snapshot);
+        rule.Id = ruleId;
+        rule.CreatedAt = existing.CreatedAt;
+        rule.ModifiedAt = DateTimeOffset.Now;
+
+        File.WriteAllText(GetRuleJsonPath(ruleId), JsonSerializer.Serialize(rule, JsonSerializerOptions));
+
+        if (rule.RuleType == RuleType.GenerateSyntheticData)
+        {
+            var state = new NewRuleWizardState();
+            ApplyToWizardState(rule, state);
+            File.WriteAllText(GetAppsettingsPath(ruleId), AppsettingsYamlBuilder.Build(state));
+        }
+
+        _historyService.RecordModification(
+            ruleId,
+            rule,
+            isNew: false,
+            summaryOverride: $"Reverted to {snapshot.ModifiedAt.LocalDateTime:g} — {RuleSummaryBuilder.Build(rule)}");
+
+        return rule;
+    }
+
+    public static SavedRule CloneRule(SavedRule rule) =>
+        new()
+        {
+            Id = rule.Id,
+            Name = rule.Name,
+            RuleType = rule.RuleType,
+            CreatedAt = rule.CreatedAt,
+            ModifiedAt = rule.ModifiedAt,
+            ConnectionString = rule.ConnectionString,
+            RowsPerTable = rule.RowsPerTable,
+            Seed = rule.Seed,
+            EnableDataOverwrite = rule.EnableDataOverwrite,
+            Locale = rule.Locale,
+            IncludeTables = rule.IncludeTables,
+            CustomDependencies = rule.CustomDependencies?.ToList() ?? [],
+            CustomValueLists = rule.CustomValueLists?
+                .Select(v => new ColumnValueListConfig
+                {
+                    Column = v.Column,
+                    File = v.File,
+                    Values = v.Values?.ToList()
+                })
+                .ToList() ?? [],
+            SimulatedServerName = rule.SimulatedServerName,
+            SqlQuery = rule.SqlQuery
+        };
 
     public IReadOnlyList<SavedRule> LoadAll()
     {
@@ -126,7 +181,7 @@ public sealed class RuleStorageService
         try
         {
             var json = File.ReadAllText(ruleJsonPath);
-            return JsonSerializer.Deserialize<SavedRule>(json, JsonOptions);
+            return JsonSerializer.Deserialize<SavedRule>(json, JsonSerializerOptions);
         }
         catch (JsonException)
         {
