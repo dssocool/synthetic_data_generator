@@ -1,4 +1,5 @@
 using System.Text;
+using SyntheticDataGenerator.Models;
 
 namespace SyntheticDataGenerator.UI.Services;
 
@@ -40,7 +41,7 @@ public static class AppsettingsYamlBuilder
         var sb = new StringBuilder();
         sb.AppendLine($"{key}:");
         foreach (var value in values)
-            sb.AppendLine($"  - {QuoteYaml(value)}");
+            sb.AppendLine($"  - {QuoteYaml(SqlTableName.ToBracketedPattern(value))}");
 
         return sb.ToString().TrimEnd();
     }
@@ -66,6 +67,7 @@ public static class AppsettingsYamlBuilder
 
         if (value.Contains(':') || value.Contains('#') || value.Contains('"')
             || value.Contains('\\') || value.Contains('\'')
+            || value.Contains('[') || value.Contains(']')
             || value.StartsWith(' ') || value.EndsWith(' '))
             return false;
 

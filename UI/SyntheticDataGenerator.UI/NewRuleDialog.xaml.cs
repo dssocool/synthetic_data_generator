@@ -206,6 +206,14 @@ public partial class NewRuleDialog : Window
                             MessageBoxButton.OK, MessageBoxImage.Information);
                         return false;
                     }
+
+                    if (!int.TryParse(SeedInput.Text.Trim(), out _))
+                    {
+                        MessageBox.Show(this, "Enter a valid seed number to continue.", "Create New Rule",
+                            MessageBoxButton.OK, MessageBoxImage.Information);
+                        SeedInput.Focus();
+                        return false;
+                    }
                 }
                 else if (WizardState.RuleType == RuleType.SimulatedSqlQuery)
                 {
@@ -241,6 +249,7 @@ public partial class NewRuleDialog : Window
             WizardState.IncludeTables = string.Join(
                 Environment.NewLine,
                 ScopePicker.SelectedPatterns.OrderBy(p => p, StringComparer.OrdinalIgnoreCase));
+            WizardState.Seed = int.Parse(SeedInput.Text.Trim());
             WizardState.PreviewTables = null;
             WizardState.AppsettingsPath = null;
         }
@@ -284,6 +293,7 @@ public partial class NewRuleDialog : Window
         if (isGenerate)
         {
             ConnectionStringInput.Text = WizardState.ConnectionString;
+            SeedInput.Text = WizardState.Seed.ToString();
             ScopePicker.SetSelectedPatterns(
                 AppsettingsYamlBuilder.ParseIncludeLines(WizardState.IncludeTables));
             if (!string.IsNullOrWhiteSpace(WizardState.ConnectionString))

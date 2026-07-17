@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using SyntheticDataGenerator.Models;
 using SyntheticDataGenerator.UI.Services;
 
 namespace SyntheticDataGenerator.UI.Controls;
@@ -41,7 +42,7 @@ public partial class SqlScopePicker : UserControl
         foreach (var pattern in patterns)
         {
             if (!string.IsNullOrWhiteSpace(pattern))
-                _selectedPatterns.Add(pattern.Trim());
+                _selectedPatterns.Add(NormalizePattern(pattern));
         }
 
         UpdateStatusText();
@@ -139,7 +140,7 @@ public partial class SqlScopePicker : UserControl
                 DisplayName = database,
                 IncludePattern = database,
                 CanDrillDown = true,
-                IsSelected = _selectedPatterns.Contains(database)
+                IsSelected = IsPatternSelected(database)
             });
         }
 
@@ -158,7 +159,7 @@ public partial class SqlScopePicker : UserControl
                 DisplayName = schema,
                 IncludePattern = pattern,
                 CanDrillDown = true,
-                IsSelected = _selectedPatterns.Contains(pattern)
+                IsSelected = IsPatternSelected(pattern)
             });
         }
 
@@ -177,7 +178,7 @@ public partial class SqlScopePicker : UserControl
                 DisplayName = table,
                 IncludePattern = pattern,
                 CanDrillDown = false,
-                IsSelected = _selectedPatterns.Contains(pattern)
+                IsSelected = IsPatternSelected(pattern)
             });
         }
 
@@ -223,10 +224,49 @@ public partial class SqlScopePicker : UserControl
     private void RefreshItemSelectionState()
     {
         foreach (var item in _items)
-            item.IsSelected = _selectedPatterns.Contains(item.IncludePattern);
+            item.IsSelected = IsPatternSelected(item.IncludePattern);
 
         UpdateSelectAllState();
         UpdateStatusText();
+    }
+
+    private static string NormalizePattern(string pattern) =>
+        SqlTableName.NormalizeIdentifier(pattern);
+
+    private bool IsPatternSelected(string includePattern)
+    {
+        var normalized = NormalizePattern(includePattern);
+        return _selectedPatterns.Any(selected =>
+            string.Equals(NormalizePattern(selected), normalized, StringComparison.OrdinalIgnoreCase)
+            || SqlTableName.MatchesPattern(normalized, NormalizePattern(selected)));
+    }
+
+    private void AddPatternSelection(string includePattern) =>
+        _selectedPatterns.Add(NormalizePattern(includePattern));
+
+    private void RemovePatternSelection(string includePattern)
+    {
+        var normalized = NormalizePattern(includePattern);
+
+        var coveringPattern = _selectedPatterns.FirstOrDefault(selected =>
+            !string.Equals(NormalizePattern(selected), normalized, StringComparison.OrdinalIgnoreCase)
+            && SqlTableName.MatchesPattern(normalized, NormalizePattern(selected)));
+
+        if (coveringPattern is not null)
+        {
+            _selectedPatterns.Remove(coveringPattern);
+            foreach (var sibling in _items)
+            {
+                if (!string.Equals(sibling.IncludePattern, includePattern, StringComparison.OrdinalIgnoreCase))
+                    AddPatternSelection(sibling.IncludePattern);
+            }
+
+            return;
+        }
+
+        _selectedPatterns.RemoveWhere(selected =>
+            string.Equals(NormalizePattern(selected), normalized, StringComparison.OrdinalIgnoreCase)
+            || SqlTableName.MatchesPattern(NormalizePattern(selected), normalized));
     }
 
     private void UpdateSelectAllState()
@@ -242,7 +282,7 @@ public partial class SqlScopePicker : UserControl
     {
         StatusText.Text = _selectedPatterns.Count == 0
             ? "Select one or more databases, schemas, or tables."
-            : $"{_selectedPatterns.Count} selected: {string.Join(", ", _selectedPatterns.OrderBy(p => p))}";
+            : $"{_selectedPatterns.Count} selected: {string.Join(", ", _selectedPatterns.OrderBy(p => p).Select(SqlTableName.ToBracketedPattern))}";
     }
 
     private void SetBusy(bool isBusy, string? message = null)
@@ -290,14 +330,13 @@ public partial class SqlScopePicker : UserControl
         var selectAll = SelectAllCheckBox.IsChecked == true;
         foreach (var item in GetVisibleItems())
         {
-            item.IsSelected = selectAll;
             if (selectAll)
-                _selectedPatterns.Add(item.IncludePattern);
+                AddPatternSelection(item.IncludePattern);
             else
-                _selectedPatterns.Remove(item.IncludePattern);
+                RemovePatternSelection(item.IncludePattern);
         }
 
-        UpdateStatusText();
+        RefreshItemSelectionState();
     }
 
     private void OnItemCheckChanged(object sender, RoutedEventArgs e)
@@ -306,12 +345,11 @@ public partial class SqlScopePicker : UserControl
             return;
 
         if (checkBox.IsChecked == true)
-            _selectedPatterns.Add(item.IncludePattern);
+            AddPatternSelection(item.IncludePattern);
         else
-            _selectedPatterns.Remove(item.IncludePattern);
+            RemovePatternSelection(item.IncludePattern);
 
-        UpdateSelectAllState();
-        UpdateStatusText();
+        RefreshItemSelectionState();
     }
 
     private async void OnItemNavigateClick(object sender, MouseButtonEventArgs e)

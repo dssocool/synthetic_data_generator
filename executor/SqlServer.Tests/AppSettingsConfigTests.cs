@@ -341,6 +341,38 @@ public class AppSettingsConfigTests
     }
 
     [Fact]
+    public void SqlTableName_BracketedPatterns_NormalizeAndMatch()
+    {
+        Assert.Equal("MyDb.dbo.Orders", SqlTableName.NormalizeIdentifier("[MyDb].[dbo].[Orders]"));
+        Assert.Equal("[MyDb]", SqlTableName.ToBracketedPattern("MyDb"));
+        Assert.Equal("[MyDb].[dbo]", SqlTableName.ToBracketedPattern("MyDb.dbo"));
+        Assert.Equal("[MyDb].[dbo].[Orders]", SqlTableName.ToBracketedPattern("MyDb.dbo.Orders"));
+
+        Assert.True(SqlTableName.MatchesPattern("MyDb.dbo.Orders", "[MyDb].[dbo].[Orders]"));
+        Assert.True(SqlTableName.MatchesPattern("MyDb.dbo.Orders", "[MyDb].[dbo]"));
+        Assert.True(SqlTableName.MatchesPattern("MyDb.dbo.Orders", "[MyDb]"));
+    }
+
+    [Fact]
+    public void Include_BracketedTableNames_ParseAndMatch()
+    {
+        const string yaml = """
+            Include:
+              - '[MyDb].[dbo].[Orders]'
+              - '[MyDb].[sales]'
+            """;
+
+        var tables = ScopeConfig.ParseInclude(LoadYaml(yaml).GetSection("Include"));
+        var scope = new ScopeConfig(tables, rowsPerTable: 10, seed: null, locale: "en");
+
+        Assert.Equal("[MyDb].[dbo].[Orders]", tables[0].Table);
+        Assert.Equal("[MyDb].[sales]", tables[1].Table);
+        Assert.True(scope.IsIncluded("MyDb.dbo.Orders"));
+        Assert.True(scope.IsIncluded("MyDb.sales.Regions"));
+        Assert.False(scope.IsIncluded("OtherDb.dbo.Orders"));
+    }
+
+    [Fact]
     public void ScopeConfig_IsIncludedAndExcluded()
     {
         var scope = new ScopeConfig(

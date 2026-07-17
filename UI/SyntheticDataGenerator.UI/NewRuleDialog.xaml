@@ -7,7 +7,8 @@
         Width="720"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
-        ShowInTaskbar="False">
+        ShowInTaskbar="False"
+        Icon="Assets/app.ico">
     <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -48,7 +49,14 @@
                                  Padding="4"
                                  LostFocus="OnConnectionStringLostFocus" />
                         <controls:SqlScopePicker x:Name="ScopePicker"
-                                                 Margin="0,0,0,4" />
+                                                 Margin="0,0,0,12" />
+                        <TextBlock Text="Seed"
+                                   Margin="0,0,0,4" />
+                        <TextBox x:Name="SeedInput"
+                                 Margin="0,0,0,4"
+                                 Padding="4"
+                                 MaxWidth="200"
+                                 HorizontalAlignment="Left" />
                     </StackPanel>
 
                     <StackPanel x:Name="SimulatedSqlQueryOptions" Visibility="Collapsed">

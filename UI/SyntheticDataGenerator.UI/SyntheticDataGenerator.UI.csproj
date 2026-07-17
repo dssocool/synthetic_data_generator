@@ -8,7 +8,12 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>SyntheticDataGenerator.UI</RootNamespace>
     <AssemblyName>SyntheticDataGenerator.UI</AssemblyName>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\executor\SqlServer\SqlServer.csproj" />

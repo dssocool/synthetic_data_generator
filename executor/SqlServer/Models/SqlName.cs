@@ -20,6 +20,41 @@ public readonly record struct SqlTableName(string Database, string Schema, strin
             : $"[{Database}].[{Schema}].[{TableName}]";
 
     /// <summary>
+    /// Strips bracket quoting from a pattern or identifier, e.g. [MyDb].[dbo].[Orders] -> MyDb.dbo.Orders.
+    /// </summary>
+    public static string NormalizeIdentifier(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return string.Empty;
+
+        return name.Replace("[", string.Empty, StringComparison.Ordinal)
+            .Replace("]", string.Empty, StringComparison.Ordinal)
+            .Trim();
+    }
+
+    /// <summary>
+    /// Formats a scope pattern as bracket-quoted segments: [db], [db].[schema], or [db].[schema].[table].
+    /// </summary>
+    public static string ToBracketedPattern(string pattern)
+    {
+        var normalized = NormalizeIdentifier(pattern);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return pattern;
+
+        var (db, schema, tableName) = ParsePattern(normalized);
+        if (string.IsNullOrEmpty(db))
+            return pattern;
+
+        if (tableName is not null)
+            return $"[{db}].[{schema}].[{tableName}]";
+
+        if (schema is not null)
+            return $"[{db}].[{schema}]";
+
+        return $"[{db}]";
+    }
+
+    /// <summary>
     /// Parses a table identifier with 1, 2, or 3 dot-separated segments.
     /// One segment -> table only (schema defaults to dbo).
     /// Two segments -> schema.table.
@@ -27,6 +62,7 @@ public readonly record struct SqlTableName(string Database, string Schema, strin
     /// </summary>
     public static SqlTableName Parse(string? name)
     {
+        name = NormalizeIdentifier(name);
         if (string.IsNullOrWhiteSpace(name))
             return new SqlTableName(string.Empty, string.Empty, string.Empty);
 
@@ -44,6 +80,7 @@ public readonly record struct SqlTableName(string Database, string Schema, strin
     /// </summary>
     public static (string Database, string? Schema, string? TableName) ParsePattern(string pattern)
     {
+        pattern = NormalizeIdentifier(pattern);
         if (string.IsNullOrWhiteSpace(pattern))
             return (string.Empty, null, null);
 
@@ -99,6 +136,7 @@ public readonly record struct SqlTableName(string Database, string Schema, strin
     /// </summary>
     public static string ExtractDatabase(string name)
     {
+        name = NormalizeIdentifier(name);
         if (string.IsNullOrWhiteSpace(name))
             return string.Empty;
 

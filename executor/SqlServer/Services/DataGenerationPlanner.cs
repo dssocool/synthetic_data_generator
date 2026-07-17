@@ -171,7 +171,8 @@ public class DataGenerationPlanner : IDataGenerationPlanner
 
             if (tableName is not null)
             {
-                if (!tableByFullName.TryGetValue(entry.Table, out var matched))
+                var tableKey = SqlTableName.Parse(entry.Table).FullName;
+                if (!tableByFullName.TryGetValue(tableKey, out var matched))
                 {
                     missingEntries.Add(entry.Table);
                     continue;
