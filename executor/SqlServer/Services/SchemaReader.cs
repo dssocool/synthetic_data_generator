@@ -106,6 +106,36 @@ public class SchemaReader
     }
 
     /// <summary>
+    /// Reads columns, primary keys, and foreign keys for a single table.
+    /// Returns null when the table does not exist or is not accessible.
+    /// </summary>
+    public async Task<TableInfo?> GetTableInfoAsync(
+        string database,
+        string schema,
+        string table,
+        CancellationToken ct = default)
+    {
+        var tables = new Dictionary<string, TableInfo>(StringComparer.OrdinalIgnoreCase);
+
+        var builder = new SqlConnectionStringBuilder(_connectionString)
+        {
+            InitialCatalog = database
+        };
+
+        await using var connection = new SqlConnection(builder.ConnectionString);
+        await connection.OpenAsync(ct);
+
+        await ReadTablesAndColumns(connection, database, tables, schema, table);
+        if (tables.Count == 0)
+            return null;
+
+        await ReadPrimaryKeys(connection, database, tables, schema, table);
+        await ReadForeignKeys(connection, database, tables, schema, table);
+
+        return tables.Values.First();
+    }
+
+    /// <summary>
     /// Reads schema metadata. When <paramref name="databases"/> is null, all user
     /// databases are read. Otherwise only the listed databases are queried.
     /// </summary>
@@ -156,9 +186,11 @@ public class SchemaReader
     private static async Task ReadTablesAndColumns(
         SqlConnection connection,
         string database,
-        Dictionary<string, TableInfo> tables)
+        Dictionary<string, TableInfo> tables,
+        string? schemaFilter = null,
+        string? tableFilter = null)
     {
-        const string sql = """
+        var sql = """
             SELECT
                 s.name       AS SchemaName,
                 t.name       AS TableName,
@@ -178,10 +210,20 @@ public class SchemaReader
             INNER JOIN sys.types tp  ON tp.user_type_id = c.user_type_id
             WHERE t.is_ms_shipped = 0
               AND t.name NOT IN ('__EFMigrationsHistory', '__MigrationHistory', 'sysdiagrams')
-            ORDER BY s.name, t.name, c.column_id
             """;
 
+        if (schemaFilter is not null)
+            sql += "\n  AND s.name = @schema";
+        if (tableFilter is not null)
+            sql += "\n  AND t.name = @table";
+
+        sql += "\nORDER BY s.name, t.name, c.column_id";
+
         await using var cmd = new SqlCommand(sql, connection);
+        if (schemaFilter is not null)
+            cmd.Parameters.AddWithValue("@schema", schemaFilter);
+        if (tableFilter is not null)
+            cmd.Parameters.AddWithValue("@table", tableFilter);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -221,9 +263,11 @@ public class SchemaReader
     private static async Task ReadPrimaryKeys(
         SqlConnection connection,
         string database,
-        Dictionary<string, TableInfo> tables)
+        Dictionary<string, TableInfo> tables,
+        string? schemaFilter = null,
+        string? tableFilter = null)
     {
-        const string sql = """
+        var sql = """
             SELECT
                 s.name  AS SchemaName,
                 t.name  AS TableName,
@@ -237,10 +281,20 @@ public class SchemaReader
                                            AND c.column_id = ic.column_id
             WHERE kc.type = 'PK'
               AND t.is_ms_shipped = 0
-            ORDER BY s.name, t.name, ic.key_ordinal
             """;
 
+        if (schemaFilter is not null)
+            sql += "\n  AND s.name = @schema";
+        if (tableFilter is not null)
+            sql += "\n  AND t.name = @table";
+
+        sql += "\nORDER BY s.name, t.name, ic.key_ordinal";
+
         await using var cmd = new SqlCommand(sql, connection);
+        if (schemaFilter is not null)
+            cmd.Parameters.AddWithValue("@schema", schemaFilter);
+        if (tableFilter is not null)
+            cmd.Parameters.AddWithValue("@table", tableFilter);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -264,9 +318,11 @@ public class SchemaReader
     private static async Task ReadForeignKeys(
         SqlConnection connection,
         string database,
-        Dictionary<string, TableInfo> tables)
+        Dictionary<string, TableInfo> tables,
+        string? schemaFilter = null,
+        string? tableFilter = null)
     {
-        const string sql = """
+        var sql = """
             SELECT
                 fk.name            AS FkName,
                 s_parent.name      AS ParentSchema,
@@ -286,10 +342,20 @@ public class SchemaReader
             INNER JOIN sys.columns c_ref           ON c_ref.object_id = fkc.referenced_object_id
                                                    AND c_ref.column_id = fkc.referenced_column_id
             WHERE t_parent.is_ms_shipped = 0
-            ORDER BY fk.name, fkc.constraint_column_id
             """;
 
+        if (schemaFilter is not null)
+            sql += "\n  AND s_parent.name = @schema";
+        if (tableFilter is not null)
+            sql += "\n  AND t_parent.name = @table";
+
+        sql += "\nORDER BY fk.name, fkc.constraint_column_id";
+
         await using var cmd = new SqlCommand(sql, connection);
+        if (schemaFilter is not null)
+            cmd.Parameters.AddWithValue("@schema", schemaFilter);
+        if (tableFilter is not null)
+            cmd.Parameters.AddWithValue("@table", tableFilter);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         while (await reader.ReadAsync())

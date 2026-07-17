@@ -8,72 +8,196 @@
             BorderThickness="1"
             Padding="8"
             Background="White">
-        <StackPanel>
-            <TextBlock Text="Include databases, schemas, or tables"
-                       Margin="0,0,0,8"
-                       FontWeight="SemiBold" />
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.2*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
 
-            <TextBlock Text="Search"
-                       Margin="0,0,0,4"
-                       Foreground="#666666" />
-            <TextBox x:Name="SearchInput"
-                     Margin="0,0,0,8"
-                     Padding="4"
-                     TextChanged="OnSearchTextChanged" />
+            <!-- Left: scope tree -->
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="Include databases, schemas, or tables"
+                           Margin="0,0,0,8"
+                           FontWeight="SemiBold" />
 
-            <Grid Margin="0,0,0,8">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Button x:Name="BackButton"
-                        Grid.Column="0"
-                        Content="Back"
-                        Padding="8,2"
-                        Margin="0,0,8,0"
-                        Visibility="Collapsed"
-                        Click="OnBackClick" />
-                <TextBlock x:Name="BreadcrumbText"
-                           Grid.Column="1"
-                           VerticalAlignment="Center"
-                           TextWrapping="Wrap"
-                           Foreground="#444444" />
-            </Grid>
+                <TextBlock Text="Search"
+                           Margin="0,0,0,4"
+                           Foreground="#666666" />
+                <TextBox x:Name="SearchInput"
+                         Margin="0,0,0,8"
+                         Padding="4"
+                         TextChanged="OnSearchTextChanged" />
 
-            <CheckBox x:Name="SelectAllCheckBox"
-                      Content="Select all"
-                      Margin="0,0,0,4"
-                      Checked="OnSelectAllChanged"
-                      Unchecked="OnSelectAllChanged" />
+                <Grid Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="BackButton"
+                            Grid.Column="0"
+                            Content="Back"
+                            Padding="8,2"
+                            Margin="0,0,8,0"
+                            Visibility="Collapsed"
+                            Click="OnBackClick" />
+                    <TextBlock x:Name="BreadcrumbText"
+                               Grid.Column="1"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap"
+                               Foreground="#444444" />
+                </Grid>
 
-            <TreeView x:Name="ScopeTree"
-                      Height="180"
-                      BorderBrush="#DDDDDD"
-                      BorderThickness="1">
-                <TreeView.ItemContainerStyle>
-                    <Style TargetType="TreeViewItem">
-                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
-                        <Setter Property="Visibility" Value="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}" />
-                        <EventSetter Event="Expanded" Handler="OnTreeItemExpanded" />
-                        <EventSetter Event="Collapsed" Handler="OnTreeItemCollapsed" />
-                    </Style>
-                </TreeView.ItemContainerStyle>
-                <TreeView.ItemTemplate>
-                    <HierarchicalDataTemplate ItemsSource="{Binding Children}">
-                        <CheckBox VerticalAlignment="Center"
-                                  Content="{Binding DisplayName}"
-                                  IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                  Checked="OnItemCheckChanged"
-                                  Unchecked="OnItemCheckChanged"
-                                  IsThreeState="True" />
-                    </HierarchicalDataTemplate>
-                </TreeView.ItemTemplate>
-            </TreeView>
+                <CheckBox x:Name="SelectAllCheckBox"
+                          Content="Select all"
+                          Margin="0,0,0,4"
+                          Checked="OnSelectAllChanged"
+                          Unchecked="OnSelectAllChanged" />
 
-            <TextBlock x:Name="StatusText"
-                       Margin="0,8,0,0"
-                       Foreground="#666666"
-                       TextWrapping="Wrap" />
-        </StackPanel>
+                <TreeView x:Name="ScopeTree"
+                          Height="220"
+                          BorderBrush="#DDDDDD"
+                          BorderThickness="1">
+                    <TreeView.ItemContainerStyle>
+                        <Style TargetType="TreeViewItem">
+                            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                            <Setter Property="IsSelected" Value="{Binding IsTreeSelected, Mode=TwoWay}" />
+                            <Setter Property="Visibility" Value="{Binding IsVisible, Converter={StaticResource BoolToVisibility}}" />
+                            <EventSetter Event="Expanded" Handler="OnTreeItemExpanded" />
+                            <EventSetter Event="Collapsed" Handler="OnTreeItemCollapsed" />
+                        </Style>
+                    </TreeView.ItemContainerStyle>
+                    <TreeView.ItemTemplate>
+                        <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                            <Grid Margin="2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <CheckBox Grid.Column="0"
+                                          VerticalAlignment="Center"
+                                          IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          Checked="OnItemCheckChanged"
+                                          Unchecked="OnItemCheckChanged"
+                                          IsThreeState="True">
+                                    <CheckBox.Style>
+                                        <Style TargetType="CheckBox">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Kind}" Value="Column">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </CheckBox.Style>
+                                </CheckBox>
+                                <TextBlock Grid.Column="1"
+                                           VerticalAlignment="Center"
+                                           Margin="8,0,8,0"
+                                           Text="{Binding DisplayName}"
+                                           Cursor="Hand"
+                                           MouseLeftButtonUp="OnItemLabelClick">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#222222" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsColumnHighlighted}" Value="True">
+                                                    <Setter Property="Background" Value="#E8F0FE" />
+                                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Grid.Column="2"
+                                           VerticalAlignment="Center"
+                                           Foreground="#888888"
+                                           Text=">"
+                                           Cursor="Hand"
+                                           MouseLeftButtonUp="OnItemLabelClick"
+                                           Visibility="{Binding CanExpand, Converter={StaticResource BoolToVisibility}}" />
+                            </Grid>
+                        </HierarchicalDataTemplate>
+                    </TreeView.ItemTemplate>
+                </TreeView>
+
+                <TextBlock x:Name="StatusText"
+                           Margin="0,8,0,0"
+                           Foreground="#666666"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <GridSplitter Grid.Column="1"
+                          Width="8"
+                          HorizontalAlignment="Stretch"
+                          Background="Transparent" />
+
+            <!-- Right: column FK detail -->
+            <Border Grid.Column="2"
+                    BorderBrush="#DDDDDD"
+                    BorderThickness="1"
+                    Padding="12"
+                    Background="#FAFAFA">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="Column details"
+                                   FontWeight="SemiBold"
+                                   Margin="0,0,0,12" />
+
+                        <TextBlock x:Name="ColumnDetailPlaceholder"
+                                   Text="Expand a table and click a column to view foreign key relationships."
+                                   TextWrapping="Wrap"
+                                   Foreground="#888888" />
+
+                        <StackPanel x:Name="ColumnDetailPanel"
+                                    Visibility="Collapsed">
+                            <TextBlock Text="Column"
+                                       Foreground="#666666"
+                                       Margin="0,0,0,2" />
+                            <TextBlock x:Name="ColumnNameText"
+                                       TextWrapping="Wrap"
+                                       FontWeight="SemiBold"
+                                       Margin="0,0,0,12" />
+
+                            <TextBlock Text="Type"
+                                       Foreground="#666666"
+                                       Margin="0,0,0,2" />
+                            <TextBlock x:Name="ColumnTypeText"
+                                       TextWrapping="Wrap"
+                                       Margin="0,0,0,12" />
+
+                            <StackPanel x:Name="FkDetailPanel"
+                                        Visibility="Collapsed">
+                                <TextBlock Text="Foreign key"
+                                           Foreground="#666666"
+                                           Margin="0,0,0,2" />
+                                <TextBlock x:Name="FkNameText"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,8" />
+
+                                <TextBlock Text="References"
+                                           Foreground="#666666"
+                                           Margin="0,0,0,2" />
+                                <TextBlock x:Name="FkReferenceText"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,8" />
+
+                                <TextBlock x:Name="FkSelfRefText"
+                                           Text="Self-referencing foreign key"
+                                           Foreground="#666666"
+                                           FontStyle="Italic"
+                                           Visibility="Collapsed" />
+                            </StackPanel>
+
+                            <TextBlock x:Name="NoFkText"
+                                       Text="No foreign key relationship."
+                                       Foreground="#888888"
+                                       Visibility="Collapsed" />
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
     </Border>
 </UserControl>

@@ -1,3 +1,4 @@
+using SyntheticDataGenerator.Models;
 using SyntheticDataGenerator.Services;
 
 namespace SyntheticDataGenerator.UI.Services;
@@ -29,5 +30,16 @@ public sealed class SqlServerMetadataService
     {
         var reader = new SchemaReader(connectionString);
         return await reader.GetTablesAsync(database, schema, ct);
+    }
+
+    public async Task<TableInfo?> GetTableInfoAsync(
+        string connectionString,
+        string database,
+        string schema,
+        string table,
+        CancellationToken ct = default)
+    {
+        var reader = new SchemaReader(connectionString);
+        return await reader.GetTableInfoAsync(database, schema, table, ct);
     }
 }

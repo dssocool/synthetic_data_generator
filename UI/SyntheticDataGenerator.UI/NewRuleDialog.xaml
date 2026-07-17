@@ -4,7 +4,7 @@
         xmlns:controls="clr-namespace:SyntheticDataGenerator.UI.Controls"
         Title="Create New Rule"
         Height="580"
-        Width="720"
+        Width="900"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
