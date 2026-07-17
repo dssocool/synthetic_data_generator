@@ -34,7 +34,7 @@ public sealed class RuleStorageService
         var rule = new SavedRule
         {
             Id = ruleId,
-            Name = existing?.Name ?? GenerateDefaultName(state),
+            Name = ResolveRuleName(state, existing),
             RuleType = state.RuleType,
             CreatedAt = existing?.CreatedAt ?? now,
             ModifiedAt = now,
@@ -151,6 +151,7 @@ public sealed class RuleStorageService
     {
         state.RuleId = rule.Id;
         state.RuleType = rule.RuleType;
+        state.Name = rule.Name;
         state.ConnectionString = rule.ConnectionString;
         state.RowsPerTable = rule.RowsPerTable;
         state.Seed = rule.Seed;
@@ -197,6 +198,14 @@ public sealed class RuleStorageService
 
     private static string GetRuleJsonPath(string ruleId) =>
         Path.Combine(GetRuleDirectory(ruleId), "rule.json");
+
+    private static string ResolveRuleName(NewRuleWizardState state, SavedRule? existing)
+    {
+        if (!string.IsNullOrWhiteSpace(state.Name))
+            return state.Name.Trim();
+
+        return existing?.Name ?? GenerateDefaultName(state);
+    }
 
     private static string GenerateDefaultName(NewRuleWizardState state) =>
         state.RuleType switch

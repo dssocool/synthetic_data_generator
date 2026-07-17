@@ -11,6 +11,7 @@ public sealed class NewRuleWizardState
 {
     public string? RuleId { get; set; }
     public RuleType RuleType { get; set; } = RuleType.None;
+    public string Name { get; set; } = string.Empty;
 
     public string ConnectionString { get; set; } = string.Empty;
     public int RowsPerTable { get; set; } = 100;

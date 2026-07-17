@@ -196,6 +196,14 @@ public partial class NewRuleDialog : Window
             case OptionsStepIndex:
                 if (WizardState.RuleType == RuleType.GenerateSyntheticData)
                 {
+                    if (string.IsNullOrWhiteSpace(RuleNameInput.Text))
+                    {
+                        MessageBox.Show(this, "Enter a rule name to continue.", "Create New Rule",
+                            MessageBoxButton.OK, MessageBoxImage.Information);
+                        RuleNameInput.Focus();
+                        return false;
+                    }
+
                     if (string.IsNullOrWhiteSpace(ConnectionStringInput.Text))
                     {
                         MessageBox.Show(this, "Enter a connection string to continue.", "Create New Rule",
@@ -248,6 +256,7 @@ public partial class NewRuleDialog : Window
     {
         if (WizardState.RuleType == RuleType.GenerateSyntheticData)
         {
+            WizardState.Name = RuleNameInput.Text.Trim();
             WizardState.ConnectionString = ConnectionStringInput.Text.Trim();
             WizardState.IncludeTables = string.Join(
                 Environment.NewLine,
@@ -308,6 +317,7 @@ public partial class NewRuleDialog : Window
 
         if (isGenerate)
         {
+            RuleNameInput.Text = WizardState.Name;
             ConnectionStringInput.Text = WizardState.ConnectionString;
             ScopePicker.AllowColumnSelection = WizardState.EnableDataOverwrite;
             ScopePicker.SetSelectedPatterns(

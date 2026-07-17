@@ -52,6 +52,11 @@
                           VerticalScrollBarVisibility="Auto">
                 <StackPanel>
                     <StackPanel x:Name="GenerateSyntheticDataOptions" Visibility="Collapsed">
+                        <TextBlock Text="Rule name"
+                                   Margin="0,0,0,4" />
+                        <TextBox x:Name="RuleNameInput"
+                                 Margin="0,0,0,12"
+                                 Padding="4" />
                         <TextBlock Text="Connection string"
                                    Margin="0,0,0,4" />
                         <TextBox x:Name="ConnectionStringInput"
