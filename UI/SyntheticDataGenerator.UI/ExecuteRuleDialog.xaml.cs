@@ -66,7 +66,8 @@ public partial class ExecuteRuleDialog : Window
                 TotalRowsAffected = result.TotalRowsAffected,
                 TableCount = result.TableCount,
                 Success = result.Success,
-                ErrorMessage = result.ErrorMessage
+                ErrorMessage = result.ErrorMessage,
+                ExecutionMode = _rule.EnableDataOverwrite ? "update" : "insert"
             };
 
             _historyService.RecordExecution(_rule.Id, entry);
@@ -106,7 +107,8 @@ public partial class ExecuteRuleDialog : Window
                 RowsPerTable = rowsPerTable,
                 Seed = seed,
                 Success = false,
-                ErrorMessage = ex.Message
+                ErrorMessage = ex.Message,
+                ExecutionMode = _rule.EnableDataOverwrite ? "update" : "insert"
             };
             _historyService.RecordExecution(_rule.Id, entry);
 

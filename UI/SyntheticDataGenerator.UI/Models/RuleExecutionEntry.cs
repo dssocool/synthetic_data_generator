@@ -11,8 +11,16 @@ public sealed class RuleExecutionEntry
     public int TableCount { get; set; }
     public bool Success { get; set; }
     public string? ErrorMessage { get; set; }
+    public string? ExecutionMode { get; set; }
 
     public string StartedAtDisplay => StartedAt.LocalDateTime.ToString("g");
+
+    public string ExecutionModeDisplay =>
+        ExecutionMode?.Equals("update", StringComparison.OrdinalIgnoreCase) == true
+            ? "Update"
+            : ExecutionMode?.Equals("insert", StringComparison.OrdinalIgnoreCase) == true
+                ? "Insert/Append"
+                : "—";
 
     public string DurationDisplay
     {

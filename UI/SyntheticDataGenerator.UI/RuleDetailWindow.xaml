@@ -70,6 +70,7 @@
                     <ListView.View>
                         <GridView>
                             <GridViewColumn Header="Started" Width="150" DisplayMemberBinding="{Binding StartedAtDisplay}" />
+                            <GridViewColumn Header="Mode" Width="100" DisplayMemberBinding="{Binding ExecutionModeDisplay}" />
                             <GridViewColumn Header="Rows/Table" Width="90" DisplayMemberBinding="{Binding RowsPerTable}" />
                             <GridViewColumn Header="Seed" Width="80" DisplayMemberBinding="{Binding Seed}" />
                             <GridViewColumn Header="Total Rows" Width="90" DisplayMemberBinding="{Binding TotalRowsAffected}" />
