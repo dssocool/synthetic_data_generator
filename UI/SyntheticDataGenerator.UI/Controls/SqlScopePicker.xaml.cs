@@ -233,30 +233,11 @@ public partial class SqlScopePicker : UserControl
     private void ResetNavigationContext()
     {
         _focusedNode = null;
-        BreadcrumbText.Text = "All databases";
-        BackButton.Visibility = Visibility.Collapsed;
         UpdateSelectAllState();
     }
 
-    private void UpdateNavigationContext(SqlScopeTreeNode node)
-    {
+    private void UpdateNavigationContext(SqlScopeTreeNode node) =>
         _focusedNode = node;
-        BreadcrumbText.Text = BuildNodePath(node);
-        BackButton.Visibility = Visibility.Visible;
-    }
-
-    private static string BuildNodePath(SqlScopeTreeNode node)
-    {
-        var parts = new List<string>();
-        var current = node;
-        while (current is not null)
-        {
-            parts.Insert(0, current.DisplayName);
-            current = current.Parent;
-        }
-
-        return string.Join(" > ", parts);
-    }
 
     private void ApplySearchFilter()
     {
@@ -390,7 +371,6 @@ public partial class SqlScopePicker : UserControl
     {
         SearchInput.IsEnabled = !isBusy;
         SelectAllCheckBox.IsEnabled = !isBusy;
-        BackButton.IsEnabled = !isBusy;
         ScopeTree.IsEnabled = !isBusy;
         if (message is not null)
             StatusText.Text = message;
@@ -557,22 +537,6 @@ public partial class SqlScopePicker : UserControl
         }
 
         return false;
-    }
-
-    private void OnBackClick(object sender, RoutedEventArgs e)
-    {
-        if (_focusedNode is null)
-        {
-            ResetNavigationContext();
-            return;
-        }
-
-        _focusedNode.IsExpanded = false;
-        _focusedNode = _focusedNode.Parent;
-        if (_focusedNode is not null)
-            UpdateNavigationContext(_focusedNode);
-        else
-            ResetNavigationContext();
     }
 
     private void OnSearchTextChanged(object sender, TextChangedEventArgs e) =>

@@ -29,25 +29,6 @@
                          Padding="4"
                          TextChanged="OnSearchTextChanged" />
 
-                <Grid Margin="0,0,0,8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Button x:Name="BackButton"
-                            Grid.Column="0"
-                            Content="Back"
-                            Padding="8,2"
-                            Margin="0,0,8,0"
-                            Visibility="Collapsed"
-                            Click="OnBackClick" />
-                    <TextBlock x:Name="BreadcrumbText"
-                               Grid.Column="1"
-                               VerticalAlignment="Center"
-                               TextWrapping="Wrap"
-                               Foreground="#444444" />
-                </Grid>
-
                 <CheckBox x:Name="SelectAllCheckBox"
                           Content="Select all"
                           Margin="0,0,0,4"
