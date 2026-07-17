@@ -1,6 +1,8 @@
 ﻿using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using SyntheticDataGenerator.UI.Models;
 using SyntheticDataGenerator.UI.Services;
 
@@ -52,6 +54,57 @@ public partial class MainWindow : Window
             return;
 
         OpenRuleDialog(rule);
+    }
+
+    private void OnRuleRowClick(object sender, MouseButtonEventArgs e)
+    {
+        if (IsClickOnActionButton(e.OriginalSource as DependencyObject))
+            return;
+
+        var rule = GetClickedRule(e.OriginalSource as DependencyObject);
+        if (rule is null)
+            return;
+
+        OpenRuleDetail(rule);
+    }
+
+    private void OpenRuleDetail(SavedRule rule)
+    {
+        var detail = new RuleDetailWindow(rule, _ruleStorage)
+        {
+            Owner = this
+        };
+
+        detail.ShowDialog();
+
+        if (detail.RuleChanged)
+            LoadRules();
+    }
+
+    private static bool IsClickOnActionButton(DependencyObject? source)
+    {
+        while (source is not null)
+        {
+            if (source is Button)
+                return true;
+
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return false;
+    }
+
+    private static SavedRule? GetClickedRule(DependencyObject? source)
+    {
+        while (source is not null)
+        {
+            if (source is ListViewItem { Content: SavedRule rule })
+                return rule;
+
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return null;
     }
 
     private void OnDeleteRuleClick(object sender, RoutedEventArgs e)

@@ -3,10 +3,12 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:SyntheticDataGenerator.UI.Controls"
         Title="Create New Rule"
-        Height="580"
-        Width="900"
+        Height="620"
+        Width="1100"
+        MinWidth="900"
+        MinHeight="580"
         WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize"
+        ResizeMode="CanResize"
         ShowInTaskbar="False"
         Icon="Assets/app.ico">
     <Grid Margin="24">

@@ -71,7 +71,8 @@
 
             <ListView x:Name="RulesList"
                       Grid.Row="1"
-                      BorderBrush="#CCCCCC">
+                      BorderBrush="#CCCCCC"
+                      PreviewMouseLeftButtonUp="OnRuleRowClick">
                 <ListView.View>
                     <GridView>
                         <GridViewColumn Header="Name" Width="320" DisplayMemberBinding="{Binding Name}" />

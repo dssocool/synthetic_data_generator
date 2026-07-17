@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using SyntheticDataGenerator.Models;
+using SyntheticDataGenerator.Services;
 using SyntheticDataGenerator.UI.Models;
 using SyntheticDataGenerator.UI.Services;
 
@@ -29,6 +30,7 @@ public partial class SqlScopePicker : UserControl
 
     private string _connectionString = string.Empty;
     private SqlScopeTreeNode? _focusedNode;
+    private SqlScopeTreeNode? _selectedColumnNode;
     private bool _isUpdatingSelectAll;
 
     public SqlScopePicker()
@@ -145,7 +147,9 @@ public partial class SqlScopePicker : UserControl
     {
         _connectionString = connectionString.Trim();
         _focusedNode = null;
+        _selectedColumnNode = null;
         _tableMetadataCache.Clear();
+        UpdateColumnDetailsPanel(null);
 
         if (string.IsNullOrWhiteSpace(_connectionString))
         {
@@ -724,6 +728,179 @@ public partial class SqlScopePicker : UserControl
         }
     }
 
+    private void OnScopeTreeSelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+    {
+        if (e.NewValue is SqlScopeTreeNode { Kind: SqlScopeNodeKind.Column, IsPlaceholder: false } node)
+            UpdateColumnDetailsPanel(node);
+        else if (_selectedColumnNode is not null && !ReferenceEquals(e.NewValue, _selectedColumnNode))
+            UpdateColumnDetailsPanel(null);
+    }
+
+    private void UpdateColumnDetailsPanel(SqlScopeTreeNode? node)
+    {
+        _selectedColumnNode = node?.Kind == SqlScopeNodeKind.Column ? node : null;
+
+        if (_selectedColumnNode?.ColumnInfo is not { } column)
+        {
+            ColumnDetailsPanel.Visibility = Visibility.Collapsed;
+            ColumnDetailsEmpty.Visibility = Visibility.Visible;
+            return;
+        }
+
+        ColumnDetailsPanel.Visibility = Visibility.Visible;
+        ColumnDetailsEmpty.Visibility = Visibility.Collapsed;
+
+        var columnRef = GetColumnRef(_selectedColumnNode);
+        var tableInfo = GetTableInfoForNode(_selectedColumnNode);
+
+        DetailColumnNameText.Text = _selectedColumnNode.DisplayName;
+        DetailTableNameText.Text = _selectedColumnNode.TableFullName ?? _selectedColumnNode.IncludePattern;
+        DetailDataTypeText.Text = FormatColumnType(column);
+        DetailNullableText.Text = column.IsNullable ? "Yes" : "No";
+        DetailKeysText.Text = BuildKeysAndRelationshipsText(column, tableInfo);
+        DetailCustomDepsText.Text = BuildCustomDependenciesText(columnRef);
+        DetailValueListText.Text = BuildValueListText(columnRef);
+    }
+
+    private TableInfo? GetTableInfoForNode(SqlScopeTreeNode columnNode)
+    {
+        if (columnNode.TableFullName is not null
+            && _tableMetadataCache.TryGetValue(columnNode.TableFullName, out var cached))
+        {
+            return cached;
+        }
+
+        return null;
+    }
+
+    private static string FormatColumnType(ColumnInfo column)
+    {
+        var formatted = SqlTypeInfo.FormatSqlColumnType(column);
+        var extras = new List<string>();
+
+        if (column.IsIdentity)
+            extras.Add("IDENTITY");
+        if (column.IsComputed)
+            extras.Add("COMPUTED");
+        if (column.IsRowVersion)
+            extras.Add("ROWVERSION");
+        if (column.IsUnique)
+            extras.Add("UNIQUE");
+        if (column.HasDefault)
+            extras.Add($"DEFAULT {column.DefaultDefinition}");
+
+        return extras.Count == 0 ? formatted : $"{formatted} ({string.Join(", ", extras)})";
+    }
+
+    private static string BuildKeysAndRelationshipsText(ColumnInfo column, TableInfo? tableInfo)
+    {
+        var lines = new List<string>();
+
+        if (column.IsPrimaryKey)
+            lines.Add("Primary key");
+
+        if (tableInfo is not null)
+        {
+            foreach (var foreignKey in tableInfo.GetGroupedForeignKeys())
+            {
+                var relatedPairs = foreignKey.ColumnPairs
+                    .Where(pair => pair.ParentColumn.Equals(column.Name, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (relatedPairs.Count == 0)
+                    continue;
+
+                var referencedTable = SqlTableName.ToBracketedPattern(foreignKey.FullReferencedTableName);
+                foreach (var pair in relatedPairs)
+                {
+                    lines.Add($"Foreign key → {referencedTable}.{pair.ReferencedColumn}");
+                }
+
+                if (foreignKey.IsComposite)
+                {
+                    var compositeColumns = foreignKey.ColumnPairs
+                        .Select(pair => pair.ParentColumn)
+                        .Distinct(StringComparer.OrdinalIgnoreCase);
+
+                    lines.Add($"Composite FK with: {string.Join(", ", compositeColumns)}");
+                }
+            }
+        }
+
+        return lines.Count == 0 ? "None" : string.Join(Environment.NewLine, lines);
+    }
+
+    private string BuildCustomDependenciesText(string columnRef)
+    {
+        var groupColumns = GetDependencyGroupColumns(columnRef).ToList();
+        if (groupColumns.Count == 0)
+            return "None";
+
+        var related = groupColumns
+            .Where(c => !string.Equals(c, columnRef, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (related.Count == 0)
+            return "None";
+
+        return string.Join(Environment.NewLine, related.Select(FormatColumnRefForDisplay));
+    }
+
+    private string BuildValueListText(string columnRef)
+    {
+        var valueList = _customValueLists.FirstOrDefault(v =>
+            string.Equals(v.Column, columnRef, StringComparison.OrdinalIgnoreCase));
+
+        if (valueList is null)
+            return "None";
+
+        if (valueList.HasFile)
+            return $"File: {valueList.File}";
+
+        if (valueList.HasInlineValues)
+        {
+            var preview = valueList.Values!
+                .Take(5)
+                .Select(v => $"'{v}'");
+
+            var summary = string.Join(", ", preview);
+            if (valueList.Values!.Count > 5)
+                summary += $", … ({valueList.Values.Count} values)";
+
+            return $"Inline values: {summary}";
+        }
+
+        return "None";
+    }
+
+    private static string FormatColumnRefForDisplay(string columnRef)
+    {
+        var lastDot = columnRef.LastIndexOf('.');
+        if (lastDot < 0)
+            return columnRef;
+
+        var tablePattern = columnRef[..lastDot];
+        var columnName = columnRef[(lastDot + 1)..];
+        return $"{SqlTableName.ToBracketedPattern(tablePattern)}.{columnName}";
+    }
+
+    private void OnDetailCustomDepClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedColumnNode is null || string.IsNullOrWhiteSpace(_connectionString))
+            return;
+
+        ShowCustomDependencyDialog(_selectedColumnNode, GetColumnRef(_selectedColumnNode));
+    }
+
+    private void OnDetailValueListClick(object sender, RoutedEventArgs e)
+    {
+        if (_selectedColumnNode is null)
+            return;
+
+        ShowValueListDialog(GetColumnRef(_selectedColumnNode));
+    }
+
     private async void OnTreeItemExpanded(object sender, RoutedEventArgs e)
     {
         if (e.OriginalSource is not TreeViewItem { DataContext: SqlScopeTreeNode node } || node.IsPlaceholder)
@@ -739,7 +916,14 @@ public partial class SqlScopePicker : UserControl
 
         e.Handled = true;
 
-        if (node.Kind == SqlScopeNodeKind.Column || !node.CanExpand)
+        if (node.Kind == SqlScopeNodeKind.Column)
+        {
+            node.IsTreeSelected = true;
+            UpdateColumnDetailsPanel(node);
+            return;
+        }
+
+        if (!node.CanExpand)
             return;
 
         await ExpandNodeAsync(node);
@@ -1004,6 +1188,9 @@ public partial class SqlScopePicker : UserControl
 
             node.ConfigurationHint = hints.Count == 0 ? string.Empty : string.Join(", ", hints);
         }
+
+        if (_selectedColumnNode is not null)
+            UpdateColumnDetailsPanel(_selectedColumnNode);
     }
 
     private void UpdateStatusText()

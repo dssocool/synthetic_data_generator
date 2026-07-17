@@ -11,31 +11,48 @@
             Padding="8"
             Background="White">
         <Grid>
-            <!-- Scope tree with inline column metadata -->
-            <StackPanel>
-                <TextBlock x:Name="ScopeHeaderText"
-                           Text="Include databases, schemas, or tables"
-                           Margin="0,0,0,8"
-                           FontWeight="SemiBold" />
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" MinHeight="280" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
+            <TextBlock x:Name="ScopeHeaderText"
+                       Grid.Row="0"
+                       Text="Include databases, schemas, or tables"
+                       Margin="0,0,0,8"
+                       FontWeight="SemiBold" />
+
+            <StackPanel Grid.Row="1" Margin="0,0,0,8">
                 <TextBlock Text="Search"
                            Margin="0,0,0,4"
                            Foreground="#666666" />
                 <TextBox x:Name="SearchInput"
-                         Margin="0,0,0,8"
                          Padding="4"
                          TextChanged="OnSearchTextChanged" />
+            </StackPanel>
 
-                <CheckBox x:Name="SelectAllCheckBox"
-                          Content="Select all"
-                          Margin="0,0,0,4"
-                          Checked="OnSelectAllChanged"
-                          Unchecked="OnSelectAllChanged" />
+            <CheckBox x:Name="SelectAllCheckBox"
+                      Grid.Row="2"
+                      Content="Select all"
+                      Margin="0,0,0,4"
+                      Checked="OnSelectAllChanged"
+                      Unchecked="OnSelectAllChanged" />
+
+            <Grid Grid.Row="3">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" MinWidth="240" />
+                    <ColumnDefinition Width="8" />
+                    <ColumnDefinition Width="300" MinWidth="220" />
+                </Grid.ColumnDefinitions>
 
                 <TreeView x:Name="ScopeTree"
-                          Height="280"
+                          Grid.Column="0"
                           BorderBrush="#DDDDDD"
-                          BorderThickness="1">
+                          BorderThickness="1"
+                          SelectedItemChanged="OnScopeTreeSelectedItemChanged">
                     <TreeView.ItemContainerStyle>
                         <Style TargetType="TreeViewItem">
                             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
@@ -101,11 +118,96 @@
                     </TreeView.ItemTemplate>
                 </TreeView>
 
-                <TextBlock x:Name="StatusText"
-                           Margin="0,8,0,0"
-                           Foreground="#666666"
-                           TextWrapping="Wrap" />
-            </StackPanel>
+                <Border Grid.Column="2"
+                        BorderBrush="#DDDDDD"
+                        BorderThickness="1"
+                        Background="#FAFAFA"
+                        Padding="12">
+                    <Grid>
+                        <TextBlock x:Name="ColumnDetailsEmpty"
+                                   Text="Select a column to view details."
+                                   Foreground="#888888"
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Center"
+                                   TextAlignment="Center" />
+
+                        <ScrollViewer x:Name="ColumnDetailsPanel"
+                                      Visibility="Collapsed"
+                                      VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock x:Name="DetailColumnNameText"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="#1A5276"
+                                           TextWrapping="Wrap" />
+                                <TextBlock x:Name="DetailTableNameText"
+                                           Margin="0,2,0,12"
+                                           Foreground="#666666"
+                                           FontSize="11"
+                                           TextWrapping="Wrap" />
+
+                                <TextBlock Text="Data type"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,2" />
+                                <TextBlock x:Name="DetailDataTypeText"
+                                           Foreground="#444444"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,10" />
+
+                                <TextBlock Text="Nullable"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,2" />
+                                <TextBlock x:Name="DetailNullableText"
+                                           Foreground="#444444"
+                                           Margin="0,0,0,10" />
+
+                                <TextBlock Text="Keys &amp; relationships"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,2" />
+                                <TextBlock x:Name="DetailKeysText"
+                                           Foreground="#444444"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,10" />
+
+                                <TextBlock Text="Custom dependencies"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,2" />
+                                <TextBlock x:Name="DetailCustomDepsText"
+                                           Foreground="#444444"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,10" />
+
+                                <TextBlock Text="Value list / file"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,2" />
+                                <TextBlock x:Name="DetailValueListText"
+                                           Foreground="#444444"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,12" />
+
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="DetailCustomDepButton"
+                                            Content="Custom dependency..."
+                                            Padding="8,4"
+                                            Margin="0,0,8,0"
+                                            Click="OnDetailCustomDepClick" />
+                                    <Button x:Name="DetailValueListButton"
+                                            Content="Value list or file..."
+                                            Padding="8,4"
+                                            Click="OnDetailValueListClick" />
+                                </StackPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <TextBlock x:Name="StatusText"
+                       Grid.Row="4"
+                       Margin="0,8,0,0"
+                       Foreground="#666666"
+                       TextWrapping="Wrap" />
         </Grid>
     </Border>
 </UserControl>
