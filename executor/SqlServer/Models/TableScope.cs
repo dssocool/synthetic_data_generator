@@ -113,7 +113,8 @@ public class ScopeConfig
             if (entry.Columns is { Count: > 0 })
             {
                 scope ??= new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-                scope[entry.Table] = new HashSet<string>(entry.Columns, StringComparer.OrdinalIgnoreCase);
+                scope[SqlTableName.NormalizeIdentifier(entry.Table)] =
+                    new HashSet<string>(entry.Columns, StringComparer.OrdinalIgnoreCase);
             }
         }
 

@@ -16,11 +16,19 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <TextBlock x:Name="StepTitleText"
-                   Grid.Row="0"
-                   FontSize="16"
-                   FontWeight="SemiBold"
-                   Margin="0,0,0,16" />
+        <Grid Grid.Row="0" Margin="0,0,0,16">
+            <TextBlock x:Name="StepTitleText"
+                       FontSize="16"
+                       FontWeight="SemiBold"
+                       VerticalAlignment="Center" />
+            <Button x:Name="AdvancedButton"
+                    Content="Advanced"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Center"
+                    Padding="12,4"
+                    Visibility="Collapsed"
+                    Click="OnAdvancedClick" />
+        </Grid>
 
         <Grid Grid.Row="1">
             <StackPanel x:Name="SelectTargetStep" Visibility="Visible">
@@ -50,13 +58,6 @@
                                  LostFocus="OnConnectionStringLostFocus" />
                         <controls:SqlScopePicker x:Name="ScopePicker"
                                                  Margin="0,0,0,12" />
-                        <TextBlock Text="Seed"
-                                   Margin="0,0,0,4" />
-                        <TextBox x:Name="SeedInput"
-                                 Margin="0,0,0,4"
-                                 Padding="4"
-                                 MaxWidth="200"
-                                 HorizontalAlignment="Left" />
                     </StackPanel>
 
                     <StackPanel x:Name="SimulatedSqlQueryOptions" Visibility="Collapsed">

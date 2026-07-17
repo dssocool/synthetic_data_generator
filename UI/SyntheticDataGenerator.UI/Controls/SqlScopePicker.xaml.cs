@@ -1,8 +1,9 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Text;
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using SyntheticDataGenerator.Models;
 using SyntheticDataGenerator.UI.Services;
@@ -11,6 +12,13 @@ namespace SyntheticDataGenerator.UI.Controls;
 
 public partial class SqlScopePicker : UserControl
 {
+    public static readonly DependencyProperty AllowColumnSelectionProperty =
+        DependencyProperty.Register(
+            nameof(AllowColumnSelection),
+            typeof(bool),
+            typeof(SqlScopePicker),
+            new PropertyMetadata(false, OnAllowColumnSelectionChanged));
+
     private readonly SqlServerMetadataService _metadataService = new();
     private readonly HashSet<string> _selectedPatterns = new(StringComparer.OrdinalIgnoreCase);
     private readonly ObservableCollection<SqlScopeTreeNode> _roots = [];
@@ -18,7 +26,6 @@ public partial class SqlScopePicker : UserControl
 
     private string _connectionString = string.Empty;
     private SqlScopeTreeNode? _focusedNode;
-    private SqlScopeTreeNode? _selectedColumnNode;
     private bool _isUpdatingSelectAll;
 
     public SqlScopePicker()
@@ -26,30 +33,80 @@ public partial class SqlScopePicker : UserControl
         InitializeComponent();
         ScopeTree.ItemsSource = _roots;
         Visibility = Visibility.Collapsed;
+        UpdateScopeHeaderText();
     }
 
     public IReadOnlyCollection<string> SelectedPatterns => _selectedPatterns;
+
+    public bool AllowColumnSelection
+    {
+        get => (bool)GetValue(AllowColumnSelectionProperty);
+        set => SetValue(AllowColumnSelectionProperty, value);
+    }
+
+    private static void OnAllowColumnSelectionChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not SqlScopePicker picker)
+            return;
+
+        picker.UpdateScopeHeaderText();
+        if (e.NewValue is false)
+            picker.StripColumnSelections();
+    }
 
     public void SetSelectedPatterns(IEnumerable<string> patterns)
     {
         _selectedPatterns.Clear();
         foreach (var pattern in patterns)
         {
-            if (!string.IsNullOrWhiteSpace(pattern))
-                _selectedPatterns.Add(NormalizePattern(pattern));
+            if (string.IsNullOrWhiteSpace(pattern))
+                continue;
+
+            var parsed = IncludeScopePattern.Parse(pattern);
+            if (string.IsNullOrWhiteSpace(parsed.TablePattern))
+                continue;
+
+            if (!AllowColumnSelection && parsed.HasColumnSelection)
+            {
+                _selectedPatterns.Add(parsed.TablePattern);
+                continue;
+            }
+
+            _selectedPatterns.Add(parsed.ToIncludeLine());
         }
 
         UpdateStatusText();
         RefreshItemSelectionState();
     }
 
+    private void StripColumnSelections()
+    {
+        var tableOnlyPatterns = _selectedPatterns
+            .Select(p => IncludeScopePattern.Parse(p))
+            .Select(p => p.HasColumnSelection ? p.TablePattern : p.ToIncludeLine())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        _selectedPatterns.Clear();
+        foreach (var pattern in tableOnlyPatterns)
+            _selectedPatterns.Add(pattern);
+
+        RefreshItemSelectionState();
+        UpdateStatusText();
+    }
+
+    private void UpdateScopeHeaderText()
+    {
+        ScopeHeaderText.Text = AllowColumnSelection
+            ? "Include databases, schemas, tables, or columns"
+            : "Include databases, schemas, or tables";
+    }
+
     public async Task LoadDatabasesAsync(string connectionString)
     {
         _connectionString = connectionString.Trim();
         _focusedNode = null;
-        _selectedColumnNode = null;
         _tableMetadataCache.Clear();
-        ClearColumnDetailPanel();
 
         if (string.IsNullOrWhiteSpace(_connectionString))
         {
@@ -101,9 +158,7 @@ public partial class SqlScopePicker : UserControl
             IncludePattern = includePattern,
             Kind = kind,
             Parent = parent,
-            IsSelected = kind == SqlScopeNodeKind.Column
-                ? false
-                : GetSelectionState(includePattern, CanExpand(kind))
+            IsSelected = GetNodeSelectionState(kind, includePattern, parent, childrenLoaded: false)
         };
 
         if (CanExpand(kind))
@@ -193,11 +248,14 @@ public partial class SqlScopePicker : UserControl
 
                     if (tableInfo.Columns.Count == 0 && _selectedPatterns.Count == 0)
                         StatusText.Text = "No columns found.";
+
+                    TryNormalizeFullTableSelection(node);
                     break;
             }
 
             node.ChildrenLoaded = true;
             ApplySearchFilter();
+            RefreshItemSelectionState();
             UpdateStatusText();
         }
         catch (Exception ex)
@@ -226,8 +284,34 @@ public partial class SqlScopePicker : UserControl
             Parent = tableNode,
             TableFullName = tableInfo.FullName,
             ColumnInfo = column,
+            ColumnMetadataText = BuildColumnMetadataText(column, tableInfo),
             IsSelected = false
         };
+    }
+
+    private static string BuildColumnMetadataText(ColumnInfo column, TableInfo tableInfo)
+    {
+        var nullability = column.IsNullable ? "NULL" : "NOT NULL";
+        var parts = new List<string> { $"{column.SqlType} ({nullability})" };
+
+        if (column.IsPrimaryKey)
+            parts.Add("PK");
+
+        var foreignKey = tableInfo.GetGroupedForeignKeys()
+            .FirstOrDefault(fk => fk.ColumnPairs.Any(pair =>
+                pair.ParentColumn.Equals(column.Name, StringComparison.OrdinalIgnoreCase)));
+
+        if (foreignKey is not null)
+        {
+            var references = foreignKey.ColumnPairs
+                .Where(pair => pair.ParentColumn.Equals(column.Name, StringComparison.OrdinalIgnoreCase))
+                .Select(pair =>
+                    $"{SqlTableName.ToBracketedPattern(foreignKey.FullReferencedTableName)}.{pair.ReferencedColumn}");
+
+            parts.Add($"FK → {string.Join(", ", references)}");
+        }
+
+        return string.Join(" · ", parts);
     }
 
     private void ResetNavigationContext()
@@ -271,8 +355,12 @@ public partial class SqlScopePicker : UserControl
     {
         foreach (var node in EnumerateNodes(_roots))
         {
-            if (node.Kind != SqlScopeNodeKind.Column)
-                node.IsSelected = GetSelectionState(node.IncludePattern, node.CanExpand);
+            node.IsSelected = node.Kind switch
+            {
+                SqlScopeNodeKind.Column => GetColumnSelectionState(node),
+                SqlScopeNodeKind.Table => GetTableSelectionState(node),
+                _ => GetSelectionState(node.IncludePattern, node.CanExpand)
+            };
         }
 
         UpdateSelectAllState();
@@ -280,20 +368,75 @@ public partial class SqlScopePicker : UserControl
     }
 
     private static string NormalizePattern(string pattern) =>
-        SqlTableName.NormalizeIdentifier(pattern);
+        IncludeScopePattern.Parse(pattern).TablePattern;
+
+    private bool? GetNodeSelectionState(
+        SqlScopeNodeKind kind,
+        string includePattern,
+        SqlScopeTreeNode? parent,
+        bool childrenLoaded) =>
+        kind switch
+        {
+            SqlScopeNodeKind.Column when parent is not null =>
+                GetColumnSelectionState(includePattern, parent.DisplayName, childrenLoaded: false),
+            SqlScopeNodeKind.Table => GetTableSelectionState(includePattern, childrenLoaded),
+            _ => GetSelectionState(includePattern, canExpand: true)
+        };
+
+    private bool? GetColumnSelectionState(SqlScopeTreeNode columnNode) =>
+        GetColumnSelectionState(columnNode.IncludePattern, columnNode.DisplayName, columnNode.Parent?.ChildrenLoaded == true);
+
+    private bool? GetColumnSelectionState(string tablePattern, string columnName, bool childrenLoaded)
+    {
+        if (IsPatternFullySelected(tablePattern))
+            return true;
+
+        var columnSelection = GetColumnSelectionForTable(tablePattern);
+        if (columnSelection is not null)
+            return columnSelection.Contains(columnName);
+
+        var ancestorState = GetSelectionState(tablePattern, canExpand: true);
+        return ancestorState == true ? true : false;
+    }
+
+    private bool? GetTableSelectionState(SqlScopeTreeNode tableNode) =>
+        GetTableSelectionState(tableNode.IncludePattern, tableNode.ChildrenLoaded, tableNode);
+
+    private bool? GetTableSelectionState(string tablePattern, bool childrenLoaded, SqlScopeTreeNode? tableNode = null)
+    {
+        if (IsPatternFullySelected(tablePattern))
+            return true;
+
+        var columnSelection = GetColumnSelectionForTable(tablePattern);
+        if (columnSelection is not null)
+        {
+            if (!childrenLoaded || tableNode is null)
+                return null;
+
+            var columnNodes = tableNode.Children
+                .Where(c => c.Kind == SqlScopeNodeKind.Column && !c.IsPlaceholder)
+                .ToList();
+
+            if (columnNodes.Count == 0)
+                return null;
+
+            var selectedCount = columnNodes.Count(c => columnSelection.Contains(c.DisplayName));
+            return selectedCount switch
+            {
+                0 => false,
+                _ when selectedCount == columnNodes.Count => true,
+                _ => null
+            };
+        }
+
+        return GetSelectionState(tablePattern, canExpand: true);
+    }
 
     private bool? GetSelectionState(string includePattern, bool canExpand)
     {
         var normalized = NormalizePattern(includePattern);
 
-        var isFullySelected = _selectedPatterns.Any(selected =>
-        {
-            var selectedNormalized = NormalizePattern(selected);
-            return string.Equals(selectedNormalized, normalized, StringComparison.OrdinalIgnoreCase)
-                || SqlTableName.MatchesPattern(normalized, selectedNormalized);
-        });
-
-        if (isFullySelected)
+        if (IsPatternFullySelected(normalized))
             return true;
 
         if (!canExpand)
@@ -301,7 +444,8 @@ public partial class SqlScopePicker : UserControl
 
         var hasPartialSelection = _selectedPatterns.Any(selected =>
         {
-            var selectedNormalized = NormalizePattern(selected);
+            var parsed = IncludeScopePattern.Parse(selected);
+            var selectedNormalized = NormalizePattern(parsed.TablePattern);
             return !string.Equals(selectedNormalized, normalized, StringComparison.OrdinalIgnoreCase)
                 && SqlTableName.MatchesPattern(selectedNormalized, normalized);
         });
@@ -309,16 +453,81 @@ public partial class SqlScopePicker : UserControl
         return hasPartialSelection ? null : false;
     }
 
+    private bool IsPatternFullySelected(string includePattern)
+    {
+        var normalized = NormalizePattern(includePattern);
+
+        return _selectedPatterns.Any(selected =>
+        {
+            var parsed = IncludeScopePattern.Parse(selected);
+            if (parsed.HasColumnSelection)
+                return false;
+
+            var selectedNormalized = NormalizePattern(parsed.TablePattern);
+            return string.Equals(selectedNormalized, normalized, StringComparison.OrdinalIgnoreCase)
+                || SqlTableName.MatchesPattern(normalized, selectedNormalized);
+        });
+    }
+
+    private HashSet<string>? GetColumnSelectionForTable(string tablePattern)
+    {
+        var normalized = NormalizePattern(tablePattern);
+
+        foreach (var selected in _selectedPatterns)
+        {
+            var parsed = IncludeScopePattern.Parse(selected);
+            if (!parsed.HasColumnSelection)
+                continue;
+
+            if (string.Equals(parsed.TablePattern, normalized, StringComparison.OrdinalIgnoreCase))
+                return new HashSet<string>(parsed.Columns!, StringComparer.OrdinalIgnoreCase);
+        }
+
+        return null;
+    }
+
     private void AddPatternSelection(string includePattern) =>
         _selectedPatterns.Add(NormalizePattern(includePattern));
+
+    private void SetColumnSelectionForTable(string tablePattern, IEnumerable<string> columns)
+    {
+        RemoveTablePatterns(tablePattern);
+        var columnList = columns
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (columnList.Count == 0)
+            return;
+
+        _selectedPatterns.Add(new IncludeScopePattern(NormalizePattern(tablePattern), columnList).ToIncludeLine());
+    }
+
+    private void RemoveTablePatterns(string tablePattern)
+    {
+        var normalized = NormalizePattern(tablePattern);
+        _selectedPatterns.RemoveWhere(selected =>
+            string.Equals(
+                NormalizePattern(IncludeScopePattern.Parse(selected).TablePattern),
+                normalized,
+                StringComparison.OrdinalIgnoreCase));
+    }
 
     private void RemovePatternSelection(string includePattern, SqlScopeTreeNode node)
     {
         var normalized = NormalizePattern(includePattern);
 
         var coveringPattern = _selectedPatterns.FirstOrDefault(selected =>
-            !string.Equals(NormalizePattern(selected), normalized, StringComparison.OrdinalIgnoreCase)
-            && SqlTableName.MatchesPattern(normalized, NormalizePattern(selected)));
+        {
+            var parsed = IncludeScopePattern.Parse(selected);
+            if (parsed.HasColumnSelection)
+                return false;
+
+            var selectedNormalized = NormalizePattern(parsed.TablePattern);
+            return !string.Equals(selectedNormalized, normalized, StringComparison.OrdinalIgnoreCase)
+                && SqlTableName.MatchesPattern(normalized, selectedNormalized);
+        });
 
         if (coveringPattern is not null)
         {
@@ -330,8 +539,13 @@ public partial class SqlScopePicker : UserControl
         }
 
         _selectedPatterns.RemoveWhere(selected =>
-            string.Equals(NormalizePattern(selected), normalized, StringComparison.OrdinalIgnoreCase)
-            || SqlTableName.MatchesPattern(NormalizePattern(selected), normalized));
+        {
+            var parsed = IncludeScopePattern.Parse(selected);
+            var selectedNormalized = NormalizePattern(parsed.TablePattern);
+            return string.Equals(selectedNormalized, normalized, StringComparison.OrdinalIgnoreCase)
+                || SqlTableName.MatchesPattern(selectedNormalized, normalized)
+                || SqlTableName.MatchesPattern(normalized, selectedNormalized);
+        });
     }
 
     private IEnumerable<SqlScopeTreeNode> GetSiblings(SqlScopeTreeNode node)
@@ -340,6 +554,88 @@ public partial class SqlScopePicker : UserControl
             return _roots.Where(r => !ReferenceEquals(r, node));
 
         return node.Parent.Children.Where(c => !ReferenceEquals(c, node));
+    }
+
+    private void SelectColumn(SqlScopeTreeNode columnNode)
+    {
+        var tablePattern = columnNode.IncludePattern;
+        var columnName = columnNode.DisplayName;
+
+        if (IsPatternFullySelected(tablePattern))
+            return;
+
+        var existing = GetColumnSelectionForTable(tablePattern);
+        if (existing is null)
+        {
+            SetColumnSelectionForTable(tablePattern, [columnName]);
+            return;
+        }
+
+        existing.Add(columnName);
+        SetColumnSelectionForTable(tablePattern, existing);
+    }
+
+    private void UnselectColumn(SqlScopeTreeNode columnNode)
+    {
+        var tablePattern = columnNode.IncludePattern;
+        var columnName = columnNode.DisplayName;
+
+        if (IsPatternFullySelected(tablePattern))
+        {
+            var tableNode = columnNode.Parent!;
+            var remainingColumns = tableNode.Children
+                .Where(c => c.Kind == SqlScopeNodeKind.Column
+                    && !c.IsPlaceholder
+                    && !string.Equals(c.DisplayName, columnName, StringComparison.OrdinalIgnoreCase))
+                .Select(c => c.DisplayName)
+                .ToList();
+
+            RemoveTablePatterns(tablePattern);
+            if (remainingColumns.Count > 0)
+                SetColumnSelectionForTable(tablePattern, remainingColumns);
+
+            return;
+        }
+
+        var existing = GetColumnSelectionForTable(tablePattern);
+        if (existing is null)
+            return;
+
+        existing.Remove(columnName);
+        if (existing.Count == 0)
+            RemoveTablePatterns(tablePattern);
+        else
+            SetColumnSelectionForTable(tablePattern, existing);
+    }
+
+    private void TryNormalizeFullTableSelection(SqlScopeTreeNode tableNode)
+    {
+        var tablePattern = tableNode.IncludePattern;
+        var columnSelection = GetColumnSelectionForTable(tablePattern);
+        if (columnSelection is null)
+            return;
+
+        var columnNodes = tableNode.Children
+            .Where(c => c.Kind == SqlScopeNodeKind.Column && !c.IsPlaceholder)
+            .ToList();
+
+        if (columnNodes.Count == 0)
+            return;
+
+        if (columnNodes.All(c => columnSelection.Contains(c.DisplayName)))
+        {
+            RemoveTablePatterns(tablePattern);
+            AddPatternSelection(tablePattern);
+        }
+    }
+
+    private IEnumerable<SqlScopeTreeNode> GetVisibleNodes()
+    {
+        foreach (var node in EnumerateNodes(_roots))
+        {
+            if (node.IsVisible && !node.IsPlaceholder)
+                yield return node;
+        }
     }
 
     private void UpdateSelectAllState()
@@ -363,8 +659,17 @@ public partial class SqlScopePicker : UserControl
     private void UpdateStatusText()
     {
         StatusText.Text = _selectedPatterns.Count == 0
-            ? "Select one or more databases, schemas, or tables."
-            : $"{_selectedPatterns.Count} selected: {string.Join(", ", _selectedPatterns.OrderBy(p => p).Select(SqlTableName.ToBracketedPattern))}";
+            ? "Select one or more databases, schemas, tables, or columns."
+            : $"{_selectedPatterns.Count} selected: {string.Join(", ", _selectedPatterns.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).Select(FormatPatternForDisplay))}";
+    }
+
+    private static string FormatPatternForDisplay(string pattern)
+    {
+        var parsed = IncludeScopePattern.Parse(pattern);
+        var bracketed = SqlTableName.ToBracketedPattern(parsed.TablePattern);
+        return parsed.HasColumnSelection
+            ? $"{bracketed}({string.Join(", ", parsed.Columns!)})"
+            : bracketed;
     }
 
     private void SetBusy(bool isBusy, string? message = null)
@@ -374,15 +679,6 @@ public partial class SqlScopePicker : UserControl
         ScopeTree.IsEnabled = !isBusy;
         if (message is not null)
             StatusText.Text = message;
-    }
-
-    private IEnumerable<SqlScopeTreeNode> GetVisibleNodes()
-    {
-        foreach (var node in EnumerateNodes(_roots))
-        {
-            if (node.IsVisible && !node.IsPlaceholder)
-                yield return node;
-        }
     }
 
     private static IEnumerable<SqlScopeTreeNode> EnumerateNodes(IEnumerable<SqlScopeTreeNode> nodes)
@@ -410,13 +706,7 @@ public partial class SqlScopePicker : UserControl
 
         e.Handled = true;
 
-        if (node.Kind == SqlScopeNodeKind.Column)
-        {
-            SelectColumnNode(node);
-            return;
-        }
-
-        if (!node.CanExpand)
+        if (node.Kind == SqlScopeNodeKind.Column || !node.CanExpand)
             return;
 
         await ExpandNodeAsync(node);
@@ -429,86 +719,6 @@ public partial class SqlScopePicker : UserControl
 
         UpdateNavigationContext(node);
         await EnsureChildrenLoadedAsync(node);
-    }
-
-    private void SelectColumnNode(SqlScopeTreeNode node)
-    {
-        if (node.Kind != SqlScopeNodeKind.Column || node.ColumnInfo is null)
-            return;
-
-        if (_selectedColumnNode is not null)
-            _selectedColumnNode.IsColumnHighlighted = false;
-
-        _selectedColumnNode = node;
-        node.IsColumnHighlighted = true;
-        node.IsTreeSelected = true;
-        UpdateNavigationContext(node);
-        UpdateColumnDetailPanel(node);
-    }
-
-    private void ClearColumnDetailPanel()
-    {
-        ColumnDetailPlaceholder.Visibility = Visibility.Visible;
-        ColumnDetailPanel.Visibility = Visibility.Collapsed;
-        FkDetailPanel.Visibility = Visibility.Collapsed;
-        NoFkText.Visibility = Visibility.Collapsed;
-        FkSelfRefText.Visibility = Visibility.Collapsed;
-    }
-
-    private void UpdateColumnDetailPanel(SqlScopeTreeNode node)
-    {
-        if (node.ColumnInfo is null || node.TableFullName is null)
-        {
-            ClearColumnDetailPanel();
-            return;
-        }
-
-        ColumnDetailPlaceholder.Visibility = Visibility.Collapsed;
-        ColumnDetailPanel.Visibility = Visibility.Visible;
-
-        ColumnNameText.Text = $"{SqlTableName.ToBracketedPattern(node.TableFullName)}.{node.ColumnInfo.Name}";
-
-        var nullability = node.ColumnInfo.IsNullable ? "NULL" : "NOT NULL";
-        ColumnTypeText.Text = $"{node.ColumnInfo.SqlType} ({nullability})";
-
-        if (!_tableMetadataCache.TryGetValue(node.TableFullName, out var tableInfo))
-        {
-            FkDetailPanel.Visibility = Visibility.Collapsed;
-            NoFkText.Visibility = Visibility.Visible;
-            return;
-        }
-
-        var compositeFk = tableInfo.GetGroupedForeignKeys()
-            .FirstOrDefault(fk => fk.ColumnPairs.Any(pair =>
-                pair.ParentColumn.Equals(node.ColumnInfo.Name, StringComparison.OrdinalIgnoreCase)));
-
-        if (compositeFk is null)
-        {
-            FkDetailPanel.Visibility = Visibility.Collapsed;
-            FkSelfRefText.Visibility = Visibility.Collapsed;
-            NoFkText.Visibility = Visibility.Visible;
-            return;
-        }
-
-        NoFkText.Visibility = Visibility.Collapsed;
-        FkDetailPanel.Visibility = Visibility.Visible;
-        FkNameText.Text = compositeFk.FkName;
-
-        var referenceLines = new StringBuilder();
-        foreach (var (parentColumn, referencedColumn) in compositeFk.ColumnPairs)
-        {
-            if (referenceLines.Length > 0)
-                referenceLines.AppendLine();
-
-            var refTable = compositeFk.FullReferencedTableName;
-            referenceLines.Append(
-                $"{parentColumn} → {SqlTableName.ToBracketedPattern(refTable)}.{referencedColumn}");
-        }
-
-        FkReferenceText.Text = referenceLines.ToString();
-        FkSelfRefText.Visibility = compositeFk.IsSelfReferencing
-            ? Visibility.Visible
-            : Visibility.Collapsed;
     }
 
     private void OnTreeItemCollapsed(object sender, RoutedEventArgs e)
@@ -563,17 +773,57 @@ public partial class SqlScopePicker : UserControl
     {
         if (sender is not CheckBox checkBox
             || checkBox.DataContext is not SqlScopeTreeNode node
-            || node.IsPlaceholder
-            || node.Kind == SqlScopeNodeKind.Column)
+            || node.IsPlaceholder)
             return;
 
-        if (checkBox.IsChecked == true)
-            AddPatternSelection(node.IncludePattern);
+        if (node.Kind == SqlScopeNodeKind.Column)
+        {
+            if (!AllowColumnSelection)
+                return;
+
+            if (checkBox.IsChecked == true)
+                SelectColumn(node);
+            else
+                UnselectColumn(node);
+
+            if (node.Parent is not null)
+                TryNormalizeFullTableSelection(node.Parent);
+        }
         else
-            RemovePatternSelection(node.IncludePattern, node);
+        {
+            if (checkBox.IsChecked == true)
+            {
+                RemoveTablePatterns(node.IncludePattern);
+                AddPatternSelection(node.IncludePattern);
+            }
+            else
+            {
+                RemovePatternSelection(node.IncludePattern, node);
+            }
+        }
 
         RefreshItemSelectionState();
     }
+}
+
+public sealed class ColumnSelectionCheckboxVisibilityConverter : IMultiValueConverter
+{
+    public object Convert(object[] values, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (values.Length < 2)
+            return Visibility.Visible;
+
+        if (values[0] is SqlScopeNodeKind kind && kind == SqlScopeNodeKind.Column)
+        {
+            var allowColumnSelection = values[1] is true;
+            return allowColumnSelection ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        return Visibility.Visible;
+    }
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
 }
 
 public enum SqlScopeNodeKind
@@ -590,7 +840,6 @@ public sealed class SqlScopeTreeNode : INotifyPropertyChanged
     private bool _isExpanded;
     private bool _isVisible = true;
     private bool _isLoadingChildren;
-    private bool _isColumnHighlighted;
     private bool _isTreeSelected;
 
     public SqlScopeTreeNode? Parent { get; set; }
@@ -602,6 +851,7 @@ public sealed class SqlScopeTreeNode : INotifyPropertyChanged
 
     public string? TableFullName { get; init; }
     public ColumnInfo? ColumnInfo { get; init; }
+    public string ColumnMetadataText { get; init; } = string.Empty;
 
     public bool CanExpand => Kind is SqlScopeNodeKind.Database or SqlScopeNodeKind.Schema or SqlScopeNodeKind.Table
         && !IsPlaceholder;
@@ -659,19 +909,6 @@ public sealed class SqlScopeTreeNode : INotifyPropertyChanged
 
             _isSelected = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
-        }
-    }
-
-    public bool IsColumnHighlighted
-    {
-        get => _isColumnHighlighted;
-        set
-        {
-            if (_isColumnHighlighted == value)
-                return;
-
-            _isColumnHighlighted = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsColumnHighlighted)));
         }
     }
 

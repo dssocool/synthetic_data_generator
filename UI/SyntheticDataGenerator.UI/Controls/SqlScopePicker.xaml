@@ -1,23 +1,20 @@
 <UserControl x:Class="SyntheticDataGenerator.UI.Controls.SqlScopePicker"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:SyntheticDataGenerator.UI.Controls">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <local:ColumnSelectionCheckboxVisibilityConverter x:Key="ColumnCheckboxVisibility" />
     </UserControl.Resources>
     <Border BorderBrush="#CCCCCC"
             BorderThickness="1"
             Padding="8"
             Background="White">
         <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="1.2*" />
-                <ColumnDefinition Width="8" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-
-            <!-- Left: scope tree -->
-            <StackPanel Grid.Column="0">
-                <TextBlock Text="Include databases, schemas, or tables"
+            <!-- Scope tree with inline column metadata -->
+            <StackPanel>
+                <TextBlock x:Name="ScopeHeaderText"
+                           Text="Include databases, schemas, or tables"
                            Margin="0,0,0,8"
                            FontWeight="SemiBold" />
 
@@ -36,7 +33,7 @@
                           Unchecked="OnSelectAllChanged" />
 
                 <TreeView x:Name="ScopeTree"
-                          Height="220"
+                          Height="280"
                           BorderBrush="#DDDDDD"
                           BorderThickness="1">
                     <TreeView.ItemContainerStyle>
@@ -62,35 +59,35 @@
                                           Checked="OnItemCheckChanged"
                                           Unchecked="OnItemCheckChanged"
                                           IsThreeState="True">
-                                    <CheckBox.Style>
-                                        <Style TargetType="CheckBox">
-                                            <Setter Property="Visibility" Value="Visible" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Kind}" Value="Column">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </CheckBox.Style>
+                                    <CheckBox.Visibility>
+                                        <MultiBinding Converter="{StaticResource ColumnCheckboxVisibility}">
+                                            <Binding Path="Kind" />
+                                            <Binding Path="AllowColumnSelection"
+                                                     RelativeSource="{RelativeSource AncestorType=local:SqlScopePicker}" />
+                                        </MultiBinding>
+                                    </CheckBox.Visibility>
                                 </CheckBox>
-                                <TextBlock Grid.Column="1"
-                                           VerticalAlignment="Center"
-                                           Margin="8,0,8,0"
-                                           Text="{Binding DisplayName}"
-                                           Cursor="Hand"
-                                           MouseLeftButtonUp="OnItemLabelClick">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Foreground" Value="#222222" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsColumnHighlighted}" Value="True">
-                                                    <Setter Property="Background" Value="#E8F0FE" />
-                                                    <Setter Property="FontWeight" Value="SemiBold" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
+                                <Grid Grid.Column="1"
+                                      Margin="8,0,8,0"
+                                      Cursor="Hand"
+                                      MouseLeftButtonUp="OnItemLabelClick">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" MinWidth="80" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               VerticalAlignment="Center"
+                                               Text="{Binding DisplayName}"
+                                               Foreground="#222222" />
+                                    <TextBlock Grid.Column="1"
+                                               VerticalAlignment="Center"
+                                               Margin="16,0,0,0"
+                                               Text="{Binding ColumnMetadataText}"
+                                               Foreground="#666666"
+                                               FontSize="11"
+                                               TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding ColumnMetadataText}" />
+                                </Grid>
                                 <TextBlock Grid.Column="2"
                                            VerticalAlignment="Center"
                                            Foreground="#888888"
@@ -108,77 +105,6 @@
                            Foreground="#666666"
                            TextWrapping="Wrap" />
             </StackPanel>
-
-            <GridSplitter Grid.Column="1"
-                          Width="8"
-                          HorizontalAlignment="Stretch"
-                          Background="Transparent" />
-
-            <!-- Right: column FK detail -->
-            <Border Grid.Column="2"
-                    BorderBrush="#DDDDDD"
-                    BorderThickness="1"
-                    Padding="12"
-                    Background="#FAFAFA">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel>
-                        <TextBlock Text="Column details"
-                                   FontWeight="SemiBold"
-                                   Margin="0,0,0,12" />
-
-                        <TextBlock x:Name="ColumnDetailPlaceholder"
-                                   Text="Expand a table and click a column to view foreign key relationships."
-                                   TextWrapping="Wrap"
-                                   Foreground="#888888" />
-
-                        <StackPanel x:Name="ColumnDetailPanel"
-                                    Visibility="Collapsed">
-                            <TextBlock Text="Column"
-                                       Foreground="#666666"
-                                       Margin="0,0,0,2" />
-                            <TextBlock x:Name="ColumnNameText"
-                                       TextWrapping="Wrap"
-                                       FontWeight="SemiBold"
-                                       Margin="0,0,0,12" />
-
-                            <TextBlock Text="Type"
-                                       Foreground="#666666"
-                                       Margin="0,0,0,2" />
-                            <TextBlock x:Name="ColumnTypeText"
-                                       TextWrapping="Wrap"
-                                       Margin="0,0,0,12" />
-
-                            <StackPanel x:Name="FkDetailPanel"
-                                        Visibility="Collapsed">
-                                <TextBlock Text="Foreign key"
-                                           Foreground="#666666"
-                                           Margin="0,0,0,2" />
-                                <TextBlock x:Name="FkNameText"
-                                           TextWrapping="Wrap"
-                                           Margin="0,0,0,8" />
-
-                                <TextBlock Text="References"
-                                           Foreground="#666666"
-                                           Margin="0,0,0,2" />
-                                <TextBlock x:Name="FkReferenceText"
-                                           TextWrapping="Wrap"
-                                           Margin="0,0,0,8" />
-
-                                <TextBlock x:Name="FkSelfRefText"
-                                           Text="Self-referencing foreign key"
-                                           Foreground="#666666"
-                                           FontStyle="Italic"
-                                           Visibility="Collapsed" />
-                            </StackPanel>
-
-                            <TextBlock x:Name="NoFkText"
-                                       Text="No foreign key relationship."
-                                       Foreground="#888888"
-                                       Visibility="Collapsed" />
-                        </StackPanel>
-                    </StackPanel>
-                </ScrollViewer>
-            </Border>
         </Grid>
     </Border>
 </UserControl>

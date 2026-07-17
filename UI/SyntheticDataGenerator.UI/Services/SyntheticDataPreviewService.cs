@@ -31,6 +31,7 @@ public sealed class SyntheticDataPreviewService
         await File.WriteAllTextAsync(appsettingsPath, AppsettingsYamlBuilder.Build(state), cancellationToken);
 
         var scope = LoadScopeConfig(appsettingsPath);
+        var mode = LoadMode(appsettingsPath, state.EnableDataOverwrite);
         var previewScope = new ScopeConfig(
             scope.Include,
             PreviewRowCount,
@@ -44,7 +45,7 @@ public sealed class SyntheticDataPreviewService
 
         var planner = new DataGenerationPlanner();
         var validateResult = await planner.ValidateScopeAsync(
-            new ValidateScopeCommand(state.ConnectionString, previewScope, "insert"),
+            new ValidateScopeCommand(state.ConnectionString, previewScope, mode),
             cancellationToken);
 
         if (!validateResult.IsValid)
@@ -53,7 +54,7 @@ public sealed class SyntheticDataPreviewService
         }
 
         var planResult = await planner.GeneratePlanAsync(
-            new GeneratePlanCommand(validateResult, previewScope, null, "insert"),
+            new GeneratePlanCommand(validateResult, previewScope, null, mode),
             cancellationToken);
 
         var plan = planResult.Plan;
@@ -136,6 +137,20 @@ public sealed class SyntheticDataPreviewService
             customValueLists: ScopeConfig.ParseCustomValueLists(config.GetSection("CustomValueLists")),
             maxParallelTables: 1,
             exclude: ScopeConfig.ParseExclude(config.GetSection("Exclude")));
+    }
+
+    private static string LoadMode(string appsettingsPath, bool enableDataOverwrite)
+    {
+        var config = new ConfigurationBuilder()
+            .SetBasePath(Path.GetDirectoryName(appsettingsPath)!)
+            .AddYamlFile(Path.GetFileName(appsettingsPath), optional: false)
+            .Build();
+
+        var mode = config["Mode"];
+        if (!string.IsNullOrWhiteSpace(mode))
+            return mode;
+
+        return enableDataOverwrite ? "update" : "insert";
     }
 
     private static int? DeriveTableSeed(int? planSeed, string tableFullName)

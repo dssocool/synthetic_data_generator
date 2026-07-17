@@ -13,6 +13,7 @@ public sealed class SavedRule
     public string ConnectionString { get; set; } = string.Empty;
     public int RowsPerTable { get; set; } = 100;
     public int Seed { get; set; } = 12345;
+    public bool EnableDataOverwrite { get; set; }
     public string Locale { get; set; } = "en";
     public string IncludeTables { get; set; } = string.Empty;
 

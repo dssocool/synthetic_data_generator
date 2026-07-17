@@ -12,7 +12,8 @@ public static class AppsettingsYamlBuilder
             state.IncludeTables,
             state.RowsPerTable,
             state.Seed,
-            state.Locale);
+            state.Locale,
+            state.EnableDataOverwrite);
 
     public static string Build(SavedRule rule, int? rowsPerTable = null, int? seed = null) =>
         Build(
@@ -20,24 +21,28 @@ public static class AppsettingsYamlBuilder
             rule.IncludeTables,
             rowsPerTable ?? rule.RowsPerTable,
             seed ?? rule.Seed,
-            rule.Locale);
+            rule.Locale,
+            rule.EnableDataOverwrite);
 
     private static string Build(
         string connectionString,
         string includeTablesText,
         int rowsPerTable,
         int seed,
-        string locale)
+        string locale,
+        bool enableDataOverwrite)
     {
         var includeTables = ParseIncludeLines(includeTablesText);
         var sb = new StringBuilder();
 
         sb.AppendLine($"ConnectionString: {QuoteYaml(connectionString)}");
-        sb.AppendLine(FormatYamlSequence("Include", includeTables));
+        sb.AppendLine(FormatIncludeSection(includeTables));
         sb.AppendLine("Exclude: []");
         sb.AppendLine($"RowsPerTable: {rowsPerTable}");
         sb.AppendLine($"Seed: {seed}");
         sb.AppendLine($"Locale: {locale}");
+        if (enableDataOverwrite)
+            sb.AppendLine("Mode: update");
         sb.AppendLine("CustomDependencies: []");
         sb.AppendLine();
 
@@ -55,17 +60,32 @@ public static class AppsettingsYamlBuilder
             .ToList();
     }
 
-    private static string FormatYamlSequence(string key, IReadOnlyList<string> values)
+    private static string FormatIncludeSection(IReadOnlyList<string> values)
     {
         if (values.Count == 0)
-            return $"{key}: []";
+            return "Include: []";
 
         var sb = new StringBuilder();
-        sb.AppendLine($"{key}:");
+        sb.AppendLine("Include:");
         foreach (var value in values)
-            sb.AppendLine($"  - {QuoteYaml(SqlTableName.ToBracketedPattern(value))}");
+            sb.AppendLine(FormatIncludeEntry(value));
 
         return sb.ToString().TrimEnd();
+    }
+
+    private static string FormatIncludeEntry(string line)
+    {
+        var parsed = IncludeScopePattern.Parse(line);
+        if (!parsed.HasColumnSelection)
+            return $"  - {QuoteYaml(SqlTableName.ToBracketedPattern(parsed.TablePattern))}";
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"  - Table: {QuoteYaml(SqlTableName.ToBracketedPattern(parsed.TablePattern))}");
+        sb.Append("    Columns:");
+        foreach (var column in parsed.Columns!)
+            sb.Append($"\n      - {QuoteYaml(column)}");
+
+        return sb.ToString();
     }
 
     private static string QuoteYaml(string value)

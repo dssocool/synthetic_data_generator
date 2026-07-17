@@ -41,6 +41,7 @@ public sealed class RuleStorageService
             ConnectionString = state.ConnectionString,
             RowsPerTable = state.RowsPerTable,
             Seed = state.Seed,
+            EnableDataOverwrite = state.EnableDataOverwrite,
             Locale = state.Locale,
             IncludeTables = state.IncludeTables,
             SimulatedServerName = state.SimulatedServerName,
@@ -89,6 +90,7 @@ public sealed class RuleStorageService
         state.ConnectionString = rule.ConnectionString;
         state.RowsPerTable = rule.RowsPerTable;
         state.Seed = rule.Seed;
+        state.EnableDataOverwrite = rule.EnableDataOverwrite;
         state.Locale = rule.Locale;
         state.IncludeTables = rule.IncludeTables;
         state.SimulatedServerName = rule.SimulatedServerName;

@@ -277,6 +277,31 @@ public class AppSettingsConfigTests
     }
 
     [Fact]
+    public void BuildColumnScope_BracketedTableEntry_UsesPlainFullNameKey()
+    {
+        var scope = new ScopeConfig(
+            include:
+            [
+                new TableScope
+                {
+                    Table = "[MyDb].[dbo].[Orders]",
+                    Columns = ["Id", "Email"]
+                }
+            ],
+            rowsPerTable: 10,
+            seed: null,
+            locale: "en");
+
+        var columnScope = scope.BuildColumnScope();
+
+        Assert.NotNull(columnScope);
+        Assert.True(columnScope.ContainsKey("MyDb.dbo.Orders"));
+        Assert.Contains("Id", columnScope["MyDb.dbo.Orders"]);
+        Assert.Contains("Email", columnScope["MyDb.dbo.Orders"]);
+        Assert.False(columnScope.ContainsKey("[MyDb].[dbo].[Orders]"));
+    }
+
+    [Fact]
     public void GetIncludeTableNames_IsCaseInsensitive()
     {
         var scope = new ScopeConfig(

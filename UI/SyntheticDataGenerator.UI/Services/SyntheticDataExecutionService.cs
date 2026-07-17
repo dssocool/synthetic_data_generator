@@ -39,12 +39,13 @@ public sealed class SyntheticDataExecutionService
             cancellationToken);
 
         var scope = LoadScopeConfig(appsettingsPath);
+        var mode = LoadMode(appsettingsPath, rule.EnableDataOverwrite);
         var planner = new DataGenerationPlanner();
 
         progress?.Report(new SyntheticDataExecutionProgress("Validating scope..."));
 
         var validateResult = await planner.ValidateScopeAsync(
-            new ValidateScopeCommand(rule.ConnectionString, scope, "insert"),
+            new ValidateScopeCommand(rule.ConnectionString, scope, mode),
             cancellationToken);
 
         if (!validateResult.IsValid)
@@ -57,7 +58,7 @@ public sealed class SyntheticDataExecutionService
 
         var planPath = Path.Combine(ruleDirectory, "plan.yaml");
         var planResult = await planner.GeneratePlanAsync(
-            new GeneratePlanCommand(validateResult, scope, planPath, "insert"),
+            new GeneratePlanCommand(validateResult, scope, planPath, mode),
             cancellationToken);
 
         var sortedTables = planResult.Plan.Tables.OrderBy(t => t.Order).ToList();
@@ -136,6 +137,20 @@ public sealed class SyntheticDataExecutionService
                 ? parallel
                 : Environment.ProcessorCount,
             exclude: ScopeConfig.ParseExclude(config.GetSection("Exclude")));
+    }
+
+    private static string LoadMode(string appsettingsPath, bool enableDataOverwrite)
+    {
+        var config = new ConfigurationBuilder()
+            .SetBasePath(Path.GetDirectoryName(appsettingsPath)!)
+            .AddYamlFile(Path.GetFileName(appsettingsPath), optional: false)
+            .Build();
+
+        var mode = config["Mode"];
+        if (!string.IsNullOrWhiteSpace(mode))
+            return mode;
+
+        return enableDataOverwrite ? "update" : "insert";
     }
 }
 

@@ -207,11 +207,10 @@ public partial class NewRuleDialog : Window
                         return false;
                     }
 
-                    if (!int.TryParse(SeedInput.Text.Trim(), out _))
+                    if (!int.TryParse(WizardState.Seed.ToString(), out _))
                     {
-                        MessageBox.Show(this, "Enter a valid seed number to continue.", "Create New Rule",
+                        MessageBox.Show(this, "Open Advanced and enter a valid seed number to continue.", "Create New Rule",
                             MessageBoxButton.OK, MessageBoxImage.Information);
-                        SeedInput.Focus();
                         return false;
                     }
                 }
@@ -249,7 +248,7 @@ public partial class NewRuleDialog : Window
             WizardState.IncludeTables = string.Join(
                 Environment.NewLine,
                 ScopePicker.SelectedPatterns.OrderBy(p => p, StringComparer.OrdinalIgnoreCase));
-            WizardState.Seed = int.Parse(SeedInput.Text.Trim());
+            WizardState.EnableDataOverwrite = ScopePicker.AllowColumnSelection;
             WizardState.PreviewTables = null;
             WizardState.AppsettingsPath = null;
         }
@@ -279,6 +278,10 @@ public partial class NewRuleDialog : Window
         if (_currentStep == OptionsStepIndex)
             UpdateOptionsPanel();
 
+        var showAdvanced = _currentStep == OptionsStepIndex
+            && WizardState.RuleType == RuleType.GenerateSyntheticData;
+        AdvancedButton.Visibility = showAdvanced ? Visibility.Visible : Visibility.Collapsed;
+
         if (_currentStep == PreviewStepIndex)
             UpdatePreviewPanel();
     }
@@ -293,7 +296,7 @@ public partial class NewRuleDialog : Window
         if (isGenerate)
         {
             ConnectionStringInput.Text = WizardState.ConnectionString;
-            SeedInput.Text = WizardState.Seed.ToString();
+            ScopePicker.AllowColumnSelection = WizardState.EnableDataOverwrite;
             ScopePicker.SetSelectedPatterns(
                 AppsettingsYamlBuilder.ParseIncludeLines(WizardState.IncludeTables));
             if (!string.IsNullOrWhiteSpace(WizardState.ConnectionString))
@@ -352,6 +355,21 @@ public partial class NewRuleDialog : Window
         PreviewText.Visibility = Visibility.Visible;
         PreviewSummaryText.Text = "Review your rule before finishing:";
         PreviewText.Text = BuildSimulatedSqlPreviewText();
+    }
+
+    private void OnAdvancedClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new AdvancedOptionsDialog(WizardState.Seed, WizardState.EnableDataOverwrite)
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() != true)
+            return;
+
+        WizardState.Seed = dialog.Seed;
+        WizardState.EnableDataOverwrite = dialog.EnableDataOverwrite;
+        ScopePicker.AllowColumnSelection = dialog.EnableDataOverwrite;
     }
 
     private string BuildSimulatedSqlPreviewText()
