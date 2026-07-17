@@ -50,7 +50,7 @@ See [Configuration](#configuration) for every supported setting.
 
 ## Prerequisites
 
-- [.NET 8 SDK or higher](https://dotnet.microsoft.com/en-us/download)
+- [.NET 10 SDK or higher](https://dotnet.microsoft.com/en-us/download)
 - A SQL Server instance you can connect to (the tool needs permission to read schema metadata and insert rows)
 
 ## Project layout
