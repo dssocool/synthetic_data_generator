@@ -140,7 +140,7 @@ public partial class SqlScopePicker : UserControl
                 DisplayName = database,
                 IncludePattern = database,
                 CanDrillDown = true,
-                IsSelected = IsPatternSelected(database)
+                IsSelected = GetSelectionState(database, canDrillDown: true)
             });
         }
 
@@ -159,7 +159,7 @@ public partial class SqlScopePicker : UserControl
                 DisplayName = schema,
                 IncludePattern = pattern,
                 CanDrillDown = true,
-                IsSelected = IsPatternSelected(pattern)
+                IsSelected = GetSelectionState(pattern, canDrillDown: true)
             });
         }
 
@@ -178,7 +178,7 @@ public partial class SqlScopePicker : UserControl
                 DisplayName = table,
                 IncludePattern = pattern,
                 CanDrillDown = false,
-                IsSelected = IsPatternSelected(pattern)
+                IsSelected = GetSelectionState(pattern, canDrillDown: false)
             });
         }
 
@@ -224,7 +224,7 @@ public partial class SqlScopePicker : UserControl
     private void RefreshItemSelectionState()
     {
         foreach (var item in _items)
-            item.IsSelected = IsPatternSelected(item.IncludePattern);
+            item.IsSelected = GetSelectionState(item.IncludePattern, item.CanDrillDown);
 
         UpdateSelectAllState();
         UpdateStatusText();
@@ -233,12 +233,31 @@ public partial class SqlScopePicker : UserControl
     private static string NormalizePattern(string pattern) =>
         SqlTableName.NormalizeIdentifier(pattern);
 
-    private bool IsPatternSelected(string includePattern)
+    private bool? GetSelectionState(string includePattern, bool canDrillDown)
     {
         var normalized = NormalizePattern(includePattern);
-        return _selectedPatterns.Any(selected =>
-            string.Equals(NormalizePattern(selected), normalized, StringComparison.OrdinalIgnoreCase)
-            || SqlTableName.MatchesPattern(normalized, NormalizePattern(selected)));
+
+        var isFullySelected = _selectedPatterns.Any(selected =>
+        {
+            var selectedNormalized = NormalizePattern(selected);
+            return string.Equals(selectedNormalized, normalized, StringComparison.OrdinalIgnoreCase)
+                || SqlTableName.MatchesPattern(normalized, selectedNormalized);
+        });
+
+        if (isFullySelected)
+            return true;
+
+        if (!canDrillDown)
+            return false;
+
+        var hasPartialSelection = _selectedPatterns.Any(selected =>
+        {
+            var selectedNormalized = NormalizePattern(selected);
+            return !string.Equals(selectedNormalized, normalized, StringComparison.OrdinalIgnoreCase)
+                && SqlTableName.MatchesPattern(selectedNormalized, normalized);
+        });
+
+        return hasPartialSelection ? null : false;
     }
 
     private void AddPatternSelection(string includePattern) =>
@@ -273,7 +292,13 @@ public partial class SqlScopePicker : UserControl
     {
         var visibleItems = GetVisibleItems().ToList();
         _isUpdatingSelectAll = true;
-        SelectAllCheckBox.IsChecked = visibleItems.Count > 0 && visibleItems.All(i => i.IsSelected);
+        SelectAllCheckBox.IsChecked = visibleItems.Count switch
+        {
+            0 => false,
+            _ when visibleItems.All(i => i.IsSelected == true) => true,
+            _ when visibleItems.Any(i => i.IsSelected == true || i.IsSelected == null) => null,
+            _ => false
+        };
         SelectAllCheckBox.IsEnabled = visibleItems.Count > 0;
         _isUpdatingSelectAll = false;
     }
@@ -374,13 +399,13 @@ public partial class SqlScopePicker : UserControl
 
 public sealed class SqlScopePickerItem : INotifyPropertyChanged
 {
-    private bool _isSelected;
+    private bool? _isSelected;
 
     public required string DisplayName { get; init; }
     public required string IncludePattern { get; init; }
     public required bool CanDrillDown { get; init; }
 
-    public bool IsSelected
+    public bool? IsSelected
     {
         get => _isSelected;
         set

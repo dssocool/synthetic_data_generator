@@ -35,6 +35,8 @@ public sealed class SavedRule
 
     public string ModifiedAtDisplay => ModifiedAt.LocalDateTime.ToString("g");
 
+    public bool CanExecute => RuleType == RuleType.GenerateSyntheticData;
+
     private string BuildIncludeSummary()
     {
         var patterns = AppsettingsYamlBuilder.ParseIncludeLines(IncludeTables);

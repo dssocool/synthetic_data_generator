@@ -1,21 +1,43 @@
 using System.Text;
 using SyntheticDataGenerator.Models;
+using SyntheticDataGenerator.UI.Models;
 
 namespace SyntheticDataGenerator.UI.Services;
 
 public static class AppsettingsYamlBuilder
 {
-    public static string Build(NewRuleWizardState state)
+    public static string Build(NewRuleWizardState state) =>
+        Build(
+            state.ConnectionString,
+            state.IncludeTables,
+            state.RowsPerTable,
+            state.Seed,
+            state.Locale);
+
+    public static string Build(SavedRule rule, int? rowsPerTable = null, int? seed = null) =>
+        Build(
+            rule.ConnectionString,
+            rule.IncludeTables,
+            rowsPerTable ?? rule.RowsPerTable,
+            seed ?? rule.Seed,
+            rule.Locale);
+
+    private static string Build(
+        string connectionString,
+        string includeTablesText,
+        int rowsPerTable,
+        int seed,
+        string locale)
     {
-        var includeTables = ParseIncludeLines(state.IncludeTables);
+        var includeTables = ParseIncludeLines(includeTablesText);
         var sb = new StringBuilder();
 
-        sb.AppendLine($"ConnectionString: {QuoteYaml(state.ConnectionString)}");
+        sb.AppendLine($"ConnectionString: {QuoteYaml(connectionString)}");
         sb.AppendLine(FormatYamlSequence("Include", includeTables));
         sb.AppendLine("Exclude: []");
-        sb.AppendLine($"RowsPerTable: {state.RowsPerTable}");
-        sb.AppendLine($"Seed: {state.Seed}");
-        sb.AppendLine($"Locale: {state.Locale}");
+        sb.AppendLine($"RowsPerTable: {rowsPerTable}");
+        sb.AppendLine($"Seed: {seed}");
+        sb.AppendLine($"Locale: {locale}");
         sb.AppendLine("CustomDependencies: []");
         sb.AppendLine();
 

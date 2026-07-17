@@ -1,8 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
-using System.Windows.Media;
 using SyntheticDataGenerator.UI.Models;
 using SyntheticDataGenerator.UI.Services;
 
@@ -32,16 +30,54 @@ public partial class MainWindow : Window
         OpenRuleDialog();
     }
 
-    private void OnRuleClick(object sender, MouseButtonEventArgs e)
+    private void OnRunRuleClick(object sender, RoutedEventArgs e)
     {
-        var element = e.OriginalSource as DependencyObject;
-        while (element is not null && element is not ListViewItem)
-            element = VisualTreeHelper.GetParent(element);
+        if (sender is not Button { Tag: SavedRule rule })
+            return;
 
-        if (element is not ListViewItem { Content: SavedRule rule })
+        if (!rule.CanExecute)
+            return;
+
+        var dialog = new ExecuteRuleDialog(rule)
+        {
+            Owner = this
+        };
+
+        dialog.ShowDialog();
+    }
+
+    private void OnModifyRuleClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: SavedRule rule })
             return;
 
         OpenRuleDialog(rule);
+    }
+
+    private void OnDeleteRuleClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: SavedRule rule })
+            return;
+
+        var result = MessageBox.Show(this,
+            $"Delete rule \"{rule.Name}\"? This cannot be undone.",
+            "Delete Rule",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result != MessageBoxResult.Yes)
+            return;
+
+        try
+        {
+            _ruleStorage.Delete(rule.Id);
+            LoadRules();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Delete Rule",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private void OpenRuleDialog(SavedRule? existingRule = null)

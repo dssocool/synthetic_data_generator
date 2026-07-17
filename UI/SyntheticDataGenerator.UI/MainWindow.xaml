@@ -5,6 +5,49 @@
         Height="600"
         Width="900"
         Icon="Assets/app.ico">
+    <Window.Resources>
+        <Style x:Key="RuleActionButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Border"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#11000000" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#22000000" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.35" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="RuleActionIconStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
+    </Window.Resources>
+
     <DockPanel>
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="_File">
@@ -28,14 +71,41 @@
 
             <ListView x:Name="RulesList"
                       Grid.Row="1"
-                      PreviewMouseLeftButtonUp="OnRuleClick"
                       BorderBrush="#CCCCCC">
                 <ListView.View>
                     <GridView>
-                        <GridViewColumn Header="Name" Width="220" DisplayMemberBinding="{Binding Name}" />
-                        <GridViewColumn Header="Type" Width="180" DisplayMemberBinding="{Binding TypeDisplayName}" />
-                        <GridViewColumn Header="Summary" Width="280" DisplayMemberBinding="{Binding Summary}" />
-                        <GridViewColumn Header="Modified" Width="160" DisplayMemberBinding="{Binding ModifiedAtDisplay}" />
+                        <GridViewColumn Header="Name" Width="320" DisplayMemberBinding="{Binding Name}" />
+                        <GridViewColumn Header="Type" Width="280" DisplayMemberBinding="{Binding TypeDisplayName}" />
+                        <GridViewColumn Header="Actions" Width="120">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Style="{StaticResource RuleActionButtonStyle}"
+                                                ToolTip="Run"
+                                                Tag="{Binding}"
+                                                IsEnabled="{Binding CanExecute}"
+                                                Click="OnRunRuleClick">
+                                            <TextBlock Style="{StaticResource RuleActionIconStyle}"
+                                                       Text="&#xE768;" />
+                                        </Button>
+                                        <Button Style="{StaticResource RuleActionButtonStyle}"
+                                                ToolTip="Modify"
+                                                Tag="{Binding}"
+                                                Click="OnModifyRuleClick">
+                                            <TextBlock Style="{StaticResource RuleActionIconStyle}"
+                                                       Text="&#xE70F;" />
+                                        </Button>
+                                        <Button Style="{StaticResource RuleActionButtonStyle}"
+                                                ToolTip="Delete"
+                                                Tag="{Binding}"
+                                                Click="OnDeleteRuleClick">
+                                            <TextBlock Style="{StaticResource RuleActionIconStyle}"
+                                                       Text="&#xE74D;" />
+                                        </Button>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
                     </GridView>
                 </ListView.View>
             </ListView>

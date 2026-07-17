@@ -1,0 +1,78 @@
+<Window x:Class="SyntheticDataGenerator.UI.RuleDetailWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Rule Details"
+        Height="560"
+        Width="820"
+        WindowStartupLocation="CenterOwner"
+        Icon="Assets/app.ico">
+    <DockPanel Margin="16">
+        <StackPanel DockPanel.Dock="Bottom"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,16,0,0">
+            <Button x:Name="ExecuteButton"
+                    Content="Execute"
+                    MinWidth="90"
+                    Margin="0,0,8,0"
+                    Padding="12,4"
+                    Click="OnExecuteClick" />
+            <Button x:Name="ModifyButton"
+                    Content="Modify"
+                    MinWidth="90"
+                    Margin="0,0,8,0"
+                    Padding="12,4"
+                    Click="OnModifyClick" />
+            <Button Content="Close"
+                    MinWidth="90"
+                    Padding="12,4"
+                    IsCancel="True"
+                    Click="OnCloseClick" />
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
+            <TextBlock x:Name="RuleNameText"
+                       FontSize="18"
+                       FontWeight="SemiBold" />
+            <TextBlock x:Name="RuleTypeText"
+                       Margin="0,4,0,0"
+                       Foreground="#666666" />
+            <TextBlock x:Name="RuleSummaryText"
+                       Margin="0,4,0,0"
+                       TextWrapping="Wrap" />
+            <TextBlock x:Name="RuleDatesText"
+                       Margin="0,8,0,0"
+                       Foreground="#666666" />
+        </StackPanel>
+
+        <TabControl>
+            <TabItem Header="Modification History">
+                <ListView x:Name="ModificationsList"
+                          BorderBrush="#CCCCCC">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="Modified" Width="180" DisplayMemberBinding="{Binding ModifiedAt, StringFormat=g}" />
+                            <GridViewColumn Header="Summary" Width="540" DisplayMemberBinding="{Binding Summary}" />
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+            </TabItem>
+            <TabItem Header="Execution History">
+                <ListView x:Name="ExecutionsList"
+                          BorderBrush="#CCCCCC">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="Started" Width="150" DisplayMemberBinding="{Binding StartedAtDisplay}" />
+                            <GridViewColumn Header="Rows/Table" Width="90" DisplayMemberBinding="{Binding RowsPerTable}" />
+                            <GridViewColumn Header="Seed" Width="80" DisplayMemberBinding="{Binding Seed}" />
+                            <GridViewColumn Header="Total Rows" Width="90" DisplayMemberBinding="{Binding TotalRowsAffected}" />
+                            <GridViewColumn Header="Tables" Width="70" DisplayMemberBinding="{Binding TableCount}" />
+                            <GridViewColumn Header="Duration" Width="80" DisplayMemberBinding="{Binding DurationDisplay}" />
+                            <GridViewColumn Header="Status" Width="80" DisplayMemberBinding="{Binding StatusDisplay}" />
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

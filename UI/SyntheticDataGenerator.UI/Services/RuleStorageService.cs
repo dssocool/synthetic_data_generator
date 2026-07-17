@@ -7,6 +7,8 @@ namespace SyntheticDataGenerator.UI.Services;
 
 public sealed class RuleStorageService
 {
+    private readonly RuleHistoryService _historyService = new();
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -53,6 +55,8 @@ public sealed class RuleStorageService
             File.WriteAllText(GetAppsettingsPath(ruleId), AppsettingsYamlBuilder.Build(state));
         }
 
+        _historyService.RecordModification(ruleId, rule, isNew);
+
         return rule;
     }
 
@@ -70,6 +74,13 @@ public sealed class RuleStorageService
     }
 
     public SavedRule? LoadById(string ruleId) => TryLoadRule(ruleId);
+
+    public void Delete(string ruleId)
+    {
+        var ruleDirectory = GetRuleDirectory(ruleId);
+        if (Directory.Exists(ruleDirectory))
+            Directory.Delete(ruleDirectory, recursive: true);
+    }
 
     public static void ApplyToWizardState(SavedRule rule, NewRuleWizardState state)
     {
