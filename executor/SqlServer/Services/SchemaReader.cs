@@ -551,4 +551,74 @@ public class SchemaReader
             }
         }
     }
+
+    /// <summary>
+    /// Searches columns across user databases. Matches database, schema, table,
+    /// or column name (case-insensitive). Returns at most <paramref name="maxResults"/>.
+    /// </summary>
+    public async Task<List<string>> SearchColumnsAsync(
+        string filter,
+        int maxResults = 200,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(filter))
+            return [];
+
+        var results = new List<string>();
+        var likePattern = $"%{filter.Trim()}%";
+        var databases = await GetUserDatabasesAsync(ct);
+
+        foreach (var database in databases)
+        {
+            if (results.Count >= maxResults)
+                break;
+
+            var builder = new SqlConnectionStringBuilder(_connectionString)
+            {
+                InitialCatalog = database
+            };
+
+            await using var connection = new SqlConnection(builder.ConnectionString);
+            await connection.OpenAsync(ct);
+
+            const string sql = """
+                SELECT TOP (@maxResults)
+                    s.name AS SchemaName,
+                    t.name AS TableName,
+                    c.name AS ColumnName
+                FROM sys.tables t
+                INNER JOIN sys.schemas s ON s.schema_id = t.schema_id
+                INNER JOIN sys.columns c ON c.object_id = t.object_id
+                WHERE t.is_ms_shipped = 0
+                  AND t.name NOT IN ('__EFMigrationsHistory', '__MigrationHistory', 'sysdiagrams')
+                  AND (
+                    c.name LIKE @filter OR
+                    t.name LIKE @filter OR
+                    s.name LIKE @filter OR
+                    @database LIKE @filter
+                  )
+                ORDER BY s.name, t.name, c.column_id
+                """;
+
+            await using var cmd = new SqlCommand(sql, connection);
+            cmd.Parameters.AddWithValue("@maxResults", maxResults - results.Count);
+            cmd.Parameters.AddWithValue("@filter", likePattern);
+            cmd.Parameters.AddWithValue("@database", database);
+
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                var schema = reader.GetString(0);
+                var table = reader.GetString(1);
+                var column = reader.GetString(2);
+                results.Add($"{database}.{schema}.{table}.{column}");
+            }
+        }
+
+        return results
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(maxResults)
+            .OrderBy(r => r, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
 }

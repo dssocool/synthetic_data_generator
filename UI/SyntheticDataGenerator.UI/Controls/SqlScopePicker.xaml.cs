@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using SyntheticDataGenerator.Models;
+using SyntheticDataGenerator.UI.Models;
 using SyntheticDataGenerator.UI.Services;
 
 namespace SyntheticDataGenerator.UI.Controls;
@@ -23,6 +24,8 @@ public partial class SqlScopePicker : UserControl
     private readonly HashSet<string> _selectedPatterns = new(StringComparer.OrdinalIgnoreCase);
     private readonly ObservableCollection<SqlScopeTreeNode> _roots = [];
     private readonly Dictionary<string, TableInfo> _tableMetadataCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _customDependencies = [];
+    private readonly List<ColumnValueListConfig> _customValueLists = [];
 
     private string _connectionString = string.Empty;
     private SqlScopeTreeNode? _focusedNode;
@@ -37,6 +40,8 @@ public partial class SqlScopePicker : UserControl
     }
 
     public IReadOnlyCollection<string> SelectedPatterns => _selectedPatterns;
+    public IReadOnlyList<string> CustomDependencies => _customDependencies;
+    public IReadOnlyList<ColumnValueListConfig> CustomValueLists => _customValueLists;
 
     public bool AllowColumnSelection
     {
@@ -77,6 +82,40 @@ public partial class SqlScopePicker : UserControl
 
         UpdateStatusText();
         RefreshItemSelectionState();
+    }
+
+    public void SetColumnConfiguration(
+        IEnumerable<string>? customDependencies,
+        IEnumerable<ColumnValueListConfig>? customValueLists)
+    {
+        _customDependencies.Clear();
+        if (customDependencies is not null)
+        {
+            foreach (var entry in customDependencies)
+            {
+                if (!string.IsNullOrWhiteSpace(entry))
+                    _customDependencies.Add(entry);
+            }
+        }
+
+        _customValueLists.Clear();
+        if (customValueLists is not null)
+        {
+            foreach (var entry in customValueLists)
+            {
+                if (string.IsNullOrWhiteSpace(entry.Column))
+                    continue;
+
+                _customValueLists.Add(new ColumnValueListConfig
+                {
+                    Column = entry.Column,
+                    File = entry.File,
+                    Values = entry.Values?.ToList()
+                });
+            }
+        }
+
+        RefreshColumnConfigurationIndicators();
     }
 
     private void StripColumnSelections()
@@ -250,6 +289,7 @@ public partial class SqlScopePicker : UserControl
                         StatusText.Text = "No columns found.";
 
                     TryNormalizeFullTableSelection(node);
+                    RefreshColumnConfigurationIndicators();
                     break;
             }
 
@@ -284,7 +324,7 @@ public partial class SqlScopePicker : UserControl
             Parent = tableNode,
             TableFullName = tableInfo.FullName,
             ColumnInfo = column,
-            ColumnMetadataText = BuildColumnMetadataText(column, tableInfo),
+            BaseColumnMetadataText = BuildColumnMetadataText(column, tableInfo),
             IsSelected = false
         };
     }
@@ -656,13 +696,6 @@ public partial class SqlScopePicker : UserControl
         _isUpdatingSelectAll = false;
     }
 
-    private void UpdateStatusText()
-    {
-        StatusText.Text = _selectedPatterns.Count == 0
-            ? "Select one or more databases, schemas, tables, or columns."
-            : $"{_selectedPatterns.Count} selected: {string.Join(", ", _selectedPatterns.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).Select(FormatPatternForDisplay))}";
-    }
-
     private static string FormatPatternForDisplay(string pattern)
     {
         var parsed = IncludeScopePattern.Parse(pattern);
@@ -804,6 +837,195 @@ public partial class SqlScopePicker : UserControl
 
         RefreshItemSelectionState();
     }
+
+    private void OnItemRightClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: SqlScopeTreeNode node }
+            || node.IsPlaceholder
+            || node.Kind != SqlScopeNodeKind.Column)
+            return;
+
+        e.Handled = true;
+
+        if (string.IsNullOrWhiteSpace(_connectionString))
+            return;
+
+        var columnRef = GetColumnRef(node);
+        var menu = new ContextMenu();
+
+        var header = new MenuItem
+        {
+            Header = new Border
+            {
+                Background = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0xE8, 0xF4, 0xFC)),
+                Padding = new Thickness(6, 4, 6, 4),
+                Child = new TextBlock
+                {
+                    Text = node.DisplayName,
+                    FontWeight = FontWeights.Bold,
+                    Foreground = System.Windows.Media.Brushes.DarkSlateGray
+                }
+            },
+            IsHitTestVisible = false,
+            Focusable = false
+        };
+        menu.Items.Add(header);
+        menu.Items.Add(new Separator());
+
+        var dependencyItem = new MenuItem { Header = "Add custom dependency..." };
+        dependencyItem.Click += (_, _) =>
+            Dispatcher.BeginInvoke(() => ShowCustomDependencyDialog(node, columnRef));
+        menu.Items.Add(dependencyItem);
+
+        var valueListItem = new MenuItem { Header = "Set value list or file..." };
+        valueListItem.Click += (_, _) =>
+            Dispatcher.BeginInvoke(() => ShowValueListDialog(columnRef));
+        menu.Items.Add(valueListItem);
+
+        menu.PlacementTarget = sender as UIElement;
+        menu.IsOpen = true;
+    }
+
+    private void ShowCustomDependencyDialog(SqlScopeTreeNode node, string columnRef)
+    {
+        var existingGroup = GetDependencyGroupColumns(columnRef);
+        var dialog = new CustomDependencyDialog(_connectionString, columnRef, existingGroup)
+        {
+            Owner = Window.GetWindow(this)
+        };
+
+        if (dialog.ShowDialog() != true)
+            return;
+
+        UpdateCustomDependencyGroup(columnRef, dialog.SelectedColumnRefs);
+    }
+
+    private void ShowValueListDialog(string columnRef)
+    {
+        var existing = _customValueLists
+            .FirstOrDefault(v => string.Equals(v.Column, columnRef, StringComparison.OrdinalIgnoreCase));
+
+        var dialog = new ValueListDialog(columnRef, existing)
+        {
+            Owner = Window.GetWindow(this)
+        };
+
+        if (dialog.ShowDialog() != true)
+            return;
+
+        if (dialog.Result == ValueListDialog.ValueListDialogResult.Cleared)
+            RemoveValueList(columnRef);
+        else if (dialog.Result == ValueListDialog.ValueListDialogResult.Saved && dialog.ValueListConfig is not null)
+            SetValueList(dialog.ValueListConfig);
+    }
+
+    private static string GetColumnRef(SqlScopeTreeNode node) =>
+        $"{node.IncludePattern}.{node.DisplayName}";
+
+    private IEnumerable<string> GetDependencyGroupColumns(string columnRef)
+    {
+        foreach (var group in _customDependencies)
+        {
+            var columns = ParseDependencyGroup(group);
+            if (columns.Any(c => string.Equals(c, columnRef, StringComparison.OrdinalIgnoreCase)))
+                return columns;
+        }
+
+        return [];
+    }
+
+    private static List<string> ParseDependencyGroup(string group) =>
+        group.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    private void UpdateCustomDependencyGroup(string sourceColumnRef, IReadOnlyList<string> relatedColumnRefs)
+    {
+        var allColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { sourceColumnRef };
+        foreach (var column in relatedColumnRefs)
+            allColumns.Add(column);
+
+        _customDependencies.RemoveAll(group =>
+            ParseDependencyGroup(group).Any(c =>
+                string.Equals(c, sourceColumnRef, StringComparison.OrdinalIgnoreCase)));
+
+        if (allColumns.Count >= 2)
+        {
+            var line = string.Join("|", allColumns.OrderBy(c => c, StringComparer.OrdinalIgnoreCase));
+            _customDependencies.Add(line);
+        }
+
+        RefreshColumnConfigurationIndicators();
+        UpdateStatusText();
+    }
+
+    private void SetValueList(ColumnValueListConfig config)
+    {
+        _customValueLists.RemoveAll(v =>
+            string.Equals(v.Column, config.Column, StringComparison.OrdinalIgnoreCase));
+        _customValueLists.Add(new ColumnValueListConfig
+        {
+            Column = config.Column,
+            File = config.File,
+            Values = config.Values?.ToList()
+        });
+
+        RefreshColumnConfigurationIndicators();
+        UpdateStatusText();
+    }
+
+    private void RemoveValueList(string columnRef)
+    {
+        _customValueLists.RemoveAll(v =>
+            string.Equals(v.Column, columnRef, StringComparison.OrdinalIgnoreCase));
+        RefreshColumnConfigurationIndicators();
+        UpdateStatusText();
+    }
+
+    private void RefreshColumnConfigurationIndicators()
+    {
+        foreach (var node in EnumerateNodes(_roots).Where(n => n.Kind == SqlScopeNodeKind.Column))
+        {
+            var columnRef = GetColumnRef(node);
+            var hints = new List<string>();
+
+            if (_customDependencies.Any(g =>
+                    ParseDependencyGroup(g).Any(c =>
+                        string.Equals(c, columnRef, StringComparison.OrdinalIgnoreCase))))
+            {
+                hints.Add("custom dependency");
+            }
+
+            var valueList = _customValueLists.FirstOrDefault(v =>
+                string.Equals(v.Column, columnRef, StringComparison.OrdinalIgnoreCase));
+            if (valueList is not null)
+            {
+                hints.Add(valueList.HasFile ? "value file" : "value list");
+            }
+
+            node.ConfigurationHint = hints.Count == 0 ? string.Empty : string.Join(", ", hints);
+        }
+    }
+
+    private void UpdateStatusText()
+    {
+        var parts = new List<string>();
+        if (_selectedPatterns.Count == 0)
+        {
+            parts.Add("Select one or more databases, schemas, tables, or columns.");
+        }
+        else
+        {
+            parts.Add($"{_selectedPatterns.Count} selected: {string.Join(", ", _selectedPatterns.OrderBy(p => p, StringComparer.OrdinalIgnoreCase).Select(FormatPatternForDisplay))}");
+        }
+
+        if (_customDependencies.Count > 0)
+            parts.Add($"{_customDependencies.Count} custom dependency group(s)");
+
+        if (_customValueLists.Count > 0)
+            parts.Add($"{_customValueLists.Count} value list(s)");
+
+        StatusText.Text = string.Join(" · ", parts);
+    }
 }
 
 public sealed class ColumnSelectionCheckboxVisibilityConverter : IMultiValueConverter
@@ -841,6 +1063,7 @@ public sealed class SqlScopeTreeNode : INotifyPropertyChanged
     private bool _isVisible = true;
     private bool _isLoadingChildren;
     private bool _isTreeSelected;
+    private string _configurationHint = string.Empty;
 
     public SqlScopeTreeNode? Parent { get; set; }
     public ObservableCollection<SqlScopeTreeNode> Children { get; } = [];
@@ -851,7 +1074,25 @@ public sealed class SqlScopeTreeNode : INotifyPropertyChanged
 
     public string? TableFullName { get; init; }
     public ColumnInfo? ColumnInfo { get; init; }
-    public string ColumnMetadataText { get; init; } = string.Empty;
+    public string BaseColumnMetadataText { get; init; } = string.Empty;
+
+    public string ConfigurationHint
+    {
+        get => _configurationHint;
+        set
+        {
+            if (string.Equals(_configurationHint, value, StringComparison.Ordinal))
+                return;
+
+            _configurationHint = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ConfigurationHint)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ColumnMetadataText)));
+        }
+    }
+
+    public string ColumnMetadataText => string.IsNullOrEmpty(ConfigurationHint)
+        ? BaseColumnMetadataText
+        : $"{BaseColumnMetadataText} · {ConfigurationHint}";
 
     public bool CanExpand => Kind is SqlScopeNodeKind.Database or SqlScopeNodeKind.Schema or SqlScopeNodeKind.Table
         && !IsPlaceholder;

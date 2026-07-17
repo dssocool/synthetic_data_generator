@@ -42,4 +42,14 @@ public sealed class SqlServerMetadataService
         var reader = new SchemaReader(connectionString);
         return await reader.GetTableInfoAsync(database, schema, table, ct);
     }
+
+    public async Task<IReadOnlyList<string>> SearchColumnsAsync(
+        string connectionString,
+        string filter,
+        int maxResults = 200,
+        CancellationToken ct = default)
+    {
+        var reader = new SchemaReader(connectionString);
+        return await reader.SearchColumnsAsync(filter, maxResults, ct);
+    }
 }

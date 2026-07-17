@@ -69,10 +69,14 @@ public partial class NewRuleDialog : Window
             {
                 ScopePicker.SetSelectedPatterns(
                     AppsettingsYamlBuilder.ParseIncludeLines(WizardState.IncludeTables));
+                ScopePicker.SetColumnConfiguration(
+                    WizardState.CustomDependencies,
+                    WizardState.CustomValueLists);
             }
             else
             {
                 ScopePicker.SetSelectedPatterns([]);
+                ScopePicker.SetColumnConfiguration([], []);
             }
 
             await ScopePicker.LoadDatabasesAsync(connectionString);
@@ -249,6 +253,15 @@ public partial class NewRuleDialog : Window
                 Environment.NewLine,
                 ScopePicker.SelectedPatterns.OrderBy(p => p, StringComparer.OrdinalIgnoreCase));
             WizardState.EnableDataOverwrite = ScopePicker.AllowColumnSelection;
+            WizardState.CustomDependencies = ScopePicker.CustomDependencies.ToList();
+            WizardState.CustomValueLists = ScopePicker.CustomValueLists
+                .Select(v => new Models.ColumnValueListConfig
+                {
+                    Column = v.Column,
+                    File = v.File,
+                    Values = v.Values?.ToList()
+                })
+                .ToList();
             WizardState.PreviewTables = null;
             WizardState.AppsettingsPath = null;
         }
@@ -299,6 +312,9 @@ public partial class NewRuleDialog : Window
             ScopePicker.AllowColumnSelection = WizardState.EnableDataOverwrite;
             ScopePicker.SetSelectedPatterns(
                 AppsettingsYamlBuilder.ParseIncludeLines(WizardState.IncludeTables));
+            ScopePicker.SetColumnConfiguration(
+                WizardState.CustomDependencies,
+                WizardState.CustomValueLists);
             if (!string.IsNullOrWhiteSpace(WizardState.ConnectionString))
             {
                 _loadedConnectionString = WizardState.ConnectionString;

@@ -16,6 +16,8 @@ public sealed class SavedRule
     public bool EnableDataOverwrite { get; set; }
     public string Locale { get; set; } = "en";
     public string IncludeTables { get; set; } = string.Empty;
+    public List<string> CustomDependencies { get; set; } = [];
+    public List<ColumnValueListConfig> CustomValueLists { get; set; } = [];
 
     public string SimulatedServerName { get; set; } = string.Empty;
     public string SqlQuery { get; set; } = string.Empty;

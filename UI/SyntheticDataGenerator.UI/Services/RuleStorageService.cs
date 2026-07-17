@@ -44,6 +44,15 @@ public sealed class RuleStorageService
             EnableDataOverwrite = state.EnableDataOverwrite,
             Locale = state.Locale,
             IncludeTables = state.IncludeTables,
+            CustomDependencies = state.CustomDependencies.ToList(),
+            CustomValueLists = state.CustomValueLists
+                .Select(v => new ColumnValueListConfig
+                {
+                    Column = v.Column,
+                    File = v.File,
+                    Values = v.Values?.ToList()
+                })
+                .ToList(),
             SimulatedServerName = state.SimulatedServerName,
             SqlQuery = state.SqlQuery
         };
@@ -93,6 +102,15 @@ public sealed class RuleStorageService
         state.EnableDataOverwrite = rule.EnableDataOverwrite;
         state.Locale = rule.Locale;
         state.IncludeTables = rule.IncludeTables;
+        state.CustomDependencies = rule.CustomDependencies?.ToList() ?? [];
+        state.CustomValueLists = rule.CustomValueLists?
+            .Select(v => new ColumnValueListConfig
+            {
+                Column = v.Column,
+                File = v.File,
+                Values = v.Values?.ToList()
+            })
+            .ToList() ?? [];
         state.SimulatedServerName = rule.SimulatedServerName;
         state.SqlQuery = rule.SqlQuery;
         state.AppsettingsPath = null;

@@ -47,7 +47,8 @@
                     </TreeView.ItemContainerStyle>
                     <TreeView.ItemTemplate>
                         <HierarchicalDataTemplate ItemsSource="{Binding Children}">
-                            <Grid Margin="2">
+                            <Grid Margin="2"
+                                  MouseRightButtonUp="OnItemRightClick">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />

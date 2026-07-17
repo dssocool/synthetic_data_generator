@@ -1,0 +1,90 @@
+<Window x:Class="SyntheticDataGenerator.UI.ValueListDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Set Value List"
+        Height="420"
+        Width="480"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Icon="Assets/app.ico">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   x:Name="ColumnNameText"
+                   FontWeight="Bold"
+                   Foreground="#1A5276"
+                   Margin="0,0,0,12" />
+
+        <StackPanel Grid.Row="1" Margin="0,0,0,12">
+            <RadioButton x:Name="InlineValuesOption"
+                         Content="Value list (one value per line)"
+                         GroupName="ValueSource"
+                         IsChecked="True"
+                         Click="OnValueSourceChanged" />
+            <RadioButton x:Name="ValueFileOption"
+                         Content="Select a value file"
+                         GroupName="ValueSource"
+                         Margin="0,4,0,0"
+                         Click="OnValueSourceChanged" />
+        </StackPanel>
+
+        <TextBox x:Name="InlineValuesInput"
+                 Grid.Row="2"
+                 Grid.RowSpan="2"
+                 AcceptsReturn="True"
+                 TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto"
+                 Padding="4"
+                 BorderBrush="#DDDDDD"
+                 Margin="0,0,0,8" />
+
+        <Grid x:Name="FilePanel"
+              Grid.Row="2"
+              Grid.RowSpan="2"
+              Visibility="Collapsed"
+              Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="FilePathInput"
+                     Padding="4"
+                     IsReadOnly="True"
+                     BorderBrush="#DDDDDD" />
+            <Button Grid.Column="1"
+                    Content="Browse..."
+                    Margin="8,0,0,0"
+                    Padding="12,4"
+                    Click="OnBrowseClick" />
+        </Grid>
+
+        <StackPanel Grid.Row="4"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right">
+            <Button Content="Clear"
+                    MinWidth="80"
+                    Margin="0,0,8,0"
+                    Padding="12,4"
+                    Click="OnClearClick" />
+            <Button Content="Cancel"
+                    MinWidth="80"
+                    Margin="0,0,8,0"
+                    Padding="12,4"
+                    IsCancel="True"
+                    Click="OnCancelClick" />
+            <Button Content="OK"
+                    MinWidth="80"
+                    Padding="12,4"
+                    IsDefault="True"
+                    Click="OnOkClick" />
+        </StackPanel>
+    </Grid>
+</Window>
