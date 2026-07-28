@@ -48,26 +48,29 @@
         </Style>
     </Window.Resources>
 
-    <DockPanel>
-        <Menu DockPanel.Dock="Top">
-            <MenuItem Header="_File">
-                <MenuItem Header="_Create New Rule" Click="OnCreateNewRuleClick" />
-                <Separator />
-                <MenuItem Header="E_xit" Click="OnExitClick" />
-            </MenuItem>
-        </Menu>
-
-        <Grid Margin="16">
+    <Grid Margin="16">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <TextBlock Grid.Row="0"
-                       Text="Saved Rules"
-                       FontSize="18"
-                       FontWeight="SemiBold"
-                       Margin="0,0,0,12" />
+            <Grid Grid.Row="0" Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0"
+                           Text="Saved Rules"
+                           FontSize="18"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+
+                <Button Grid.Column="1"
+                        Content="Create New Rule"
+                        Padding="12,4"
+                        Click="OnCreateNewRuleClick" />
+            </Grid>
 
             <ListView x:Name="RulesList"
                       Grid.Row="1"
@@ -110,6 +113,5 @@
                     </GridView>
                 </ListView.View>
             </ListView>
-        </Grid>
-    </DockPanel>
+    </Grid>
 </Window>
